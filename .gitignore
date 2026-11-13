@@ -1,0 +1,27 @@
+# Maxfiy sozlamalar (tokenlar, API kalitlar, parollar) — hech qachon commit qilinmaydi.
+# Namuna uchun .env.example dan foydalaning.
+.env
+.env.*
+!.env.example
+
+# Go build natijalari
+/bot
+/preview
+*.exe
+*.test
+*.out
+/bin/
+/dist/
+
+# cmd/preview va scripts/design_preview.py yaratadigan namuna fayllar
+/previews/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

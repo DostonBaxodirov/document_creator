@@ -1,0 +1,1266 @@
+// Package bot Telegram bilan ishlash qatlami: buyruqlar, FSM bo'yicha
+// marshrutlash, generatsiya vazifalari navbati va xatoliklarni boshqarish.
+//
+// Handler tashqi qatlamlarga (baza, AI, PPTX/DOCX generatorlari) faqat shu
+// paketda e'lon qilingan interfeyslar orqali bog'lanadi — bu ularni testlarda
+// almashtirishni osonlashtiradi.
+//
+// Natija fayl turi ish turiga bog'liq: taqdimot — .pptx, mustaqil ish va
+// amaliy topshiriq — .docx.
+package bot
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"html"
+	"os"
+	"regexp"
+	"runtime/debug"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"go.uber.org/zap"
+	tele "gopkg.in/telebot.v3"
+
+	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/generator"
+	"telegram-presentation-bot/internal/storage"
+)
+
+// SessionStore — foydalanuvchi sessiyalari ombori.
+type SessionStore interface {
+	GetOrCreate(ctx context.Context, userID, chatID int64, username string) (*storage.Session, error)
+	Get(ctx context.Context, userID int64) (*storage.Session, error)
+	Save(ctx context.Context, s *storage.Session) error
+	CompareAndSwapState(ctx context.Context, userID int64, from, to string) (bool, error)
+	ListByState(ctx context.Context, state string) ([]storage.Session, error)
+}
+
+// ContentGenerator — matnni yaratuvchi AI servis.
+type ContentGenerator interface {
+	GeneratePresentation(ctx context.Context, req ai.PresentationRequest) (*ai.Presentation, error)
+	GenerateDocument(ctx context.Context, req ai.DocumentRequest) (*ai.Document, error)
+}
+
+// SlidesBuilder — taqdimot (.pptx) faylini yaratuvchi generator.
+type SlidesBuilder interface {
+	Build(ctx context.Context, deck generator.Deck) (string, error)
+	// ContentSlides umumiy slaydlar sonidan nechtasini AI yozishini qaytaradi.
+	ContentSlides(total int) int
+}
+
+// PaperBuilder — mustaqil ish / amaliy topshiriq (.docx) faylini yaratuvchi generator.
+type PaperBuilder interface {
+	Build(ctx context.Context, paper generator.Paper) (string, error)
+	// ContentWords sahifalar sonidan asosiy matnning taxminiy hajmini (so'zlarda) hisoblaydi.
+	ContentWords(pages int) int
+}
+
+// Builders — fayl generatorlari.
+type Builders struct {
+	Slides SlidesBuilder
+	Papers PaperBuilder
+}
+
+// Options — handler sozlamalari.
+type Options struct {
+	Limits            Limits
+	MaxConcurrentJobs int
+	JobTimeout        time.Duration
+	// DesignPreview — dizayn mavzulari ko'rinishi rasmi (ixtiyoriy). Fayl
+	// bo'lmasa, dizayn tanlash xabari rasmsiz yuboriladi.
+	DesignPreview string
+}
+
+const (
+	pptxMIME       = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	docxMIME       = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	requestTimeout = 10 * time.Second // bitta update uchun baza amallari vaqti
+	lockStripes    = 64               // foydalanuvchi qulflari soni (xotira cheklangan bo'lishi uchun)
+)
+
+// Foydalanuvchiga yuboriladigan matnlar.
+const (
+	msgWelcome = "👋 Assalomu alaykum, <b>%s</b>!\n\n" +
+		"Men sun'iy intellekt yordamida tayyorlab beraman:\n" +
+		"📊 <b>taqdimot</b> — PowerPoint (.pptx), 4 xil dizaynda\n" +
+		"📚 <b>mustaqil ish</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx)\n\n" +
+		"Bir nechta savolga javob bering — qolganini o'zim qilaman ✨"
+	msgChooseWorkType = "📌 <b>Ish turini tanlang:</b>"
+	msgPressButton    = "👇 Iltimos, quyidagi tugmalardan birini tanlang."
+	msgIdle           = "Yangi ish buyurtma qilish uchun /start buyrug'ini bosing."
+	msgBusy           = "⏳ Ishingiz tayyorlanmoqda, biroz kuting. To'xtatish uchun — /cancel"
+	msgUnknownCommand = "🤔 Noma'lum buyruq. Mavjud buyruqlar: /start, /cancel, /help"
+	msgTextOnly       = "✍️ Iltimos, javobni matn ko'rinishida yuboring."
+	msgInternalError  = "😔 Kutilmagan xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring yoki /start bosing."
+	msgStaleButton    = "Bu tugma eskirgan. Yangi buyurtma uchun /start bosing."
+	msgCancelled      = "❌ Bekor qilindi. Yangi ish uchun /start bosing."
+	msgNothingCancel  = "Bekor qiladigan jarayon yo'q. Yangi ish uchun /start bosing."
+	msgStopping       = "⏹ Generatsiya to'xtatilmoqda..."
+	msgQueued         = "🕒 Hozir so'rovlar ko'p — siz navbatdasiz. Ishingiz tez orada boshlanadi."
+	msgGeneratingDeck = "⏳ <b>Tayyorlanmoqda...</b> Odatda 1–2 daqiqa vaqt oladi."
+	msgGeneratingDoc  = "⏳ <b>Tayyorlanmoqda...</b> Hujjat bo'limma-bo'lim yoziladi, odatda 2–5 daqiqa vaqt oladi."
+	msgDone           = "✅ <b>Tayyor!</b> Omad tilayman 🎓\n\nYana ish kerak bo'lsa — /start"
+	msgJobCancelled   = "⏹ Generatsiya bekor qilindi. Yangi ish uchun /start bosing."
+	msgInterrupted    = "⚠️ Bot qayta ishga tushirildi va ishingiz yakunlanmay qoldi.\n" +
+		"Ma'lumotlaringiz saqlangan — «Qayta urinish» tugmasini bosing."
+	msgDesignHint = "👇 Iltimos, quyidagi tugmalardan biri bilan dizaynni tanlang."
+	msgHelp       = "ℹ️ <b>Bot qanday ishlaydi?</b>\n\n" +
+		"1️⃣ /start — yangi buyurtma\n" +
+		"2️⃣ Ish turini tanlang: slayd, mustaqil ish yoki amaliy topshiriq\n" +
+		"3️⃣ Mavzu, hajm (slaydlar yoki sahifalar soni), F.I.Sh., universitet va tekshiruvchini kiriting\n" +
+		"     🎨 taqdimot uchun 4 xil dizayndan birini tanlaysiz\n" +
+		"4️⃣ Ma'lumotlarni tasdiqlang — bot tayyor faylni yuboradi:\n" +
+		"     📊 taqdimot — <b>.pptx</b> (PowerPoint)\n" +
+		"     📚 mustaqil ish, 🛠 amaliy topshiriq — <b>.docx</b> (Word)\n\n" +
+		"/cancel — joriy jarayonni bekor qilish\n" +
+		"/help — ushbu yordam"
+)
+
+// errAI AI bosqichidagi xatolarni belgilaydi (foydalanuvchiga mos xabar tanlash uchun).
+var errAI = errors.New("ai")
+
+// job — ishlayotgan generatsiya vazifasi (foydalanuvchi /cancel bilan to'xtatishi uchun).
+type job struct {
+	cancel context.CancelFunc
+	byUser atomic.Bool
+}
+
+// Handler — Telegram update'larini qayta ishlovchi asosiy struktura.
+type Handler struct {
+	bot      *tele.Bot
+	sessions SessionStore
+	ai       ContentGenerator
+	builders Builders
+	log      *zap.Logger
+	opts     Options
+
+	jobsCtx context.Context // barcha generatsiyalar uchun ota kontekst (to'xtashda bekor qilinadi)
+	slots   chan struct{}   // semafor: bir vaqtdagi generatsiyalar sonini cheklaydi
+	wg      sync.WaitGroup  // ishlayotgan generatsiyalarni kutish uchun
+	running sync.Map        // userID -> *job
+
+	// previewID — Telegram serveriga bir marta yuklangan dizaynlar rasmi
+	// identifikatori (keyingi safar fayl qayta yuklanmaydi).
+	previewMu sync.Mutex
+	previewID string
+
+	// Bir foydalanuvchining update'lari parallel kelganda (telebot handlerlarni
+	// alohida goroutine'larda ishga tushiradi) FSM holati buzilmasligi uchun
+	// "o'qish → o'zgartirish → saqlash" ketma-ketligi qulf ostida bajariladi.
+	locks [lockStripes]sync.Mutex
+}
+
+// NewHandler yangi Handler yaratadi. jobsCtx bekor qilinganda barcha
+// ishlayotgan generatsiyalar to'xtatiladi.
+func NewHandler(jobsCtx context.Context, sessions SessionStore, aiClient ContentGenerator,
+	builders Builders, log *zap.Logger, opts Options) *Handler {
+	if opts.MaxConcurrentJobs < 1 {
+		opts.MaxConcurrentJobs = 1
+	}
+	return &Handler{
+		sessions: sessions,
+		ai:       aiClient,
+		builders: builders,
+		log:      log.Named("bot"),
+		opts:     opts,
+		jobsCtx:  jobsCtx,
+		slots:    make(chan struct{}, opts.MaxConcurrentJobs),
+	}
+}
+
+// Register middleware va barcha marshrutlarni botga ulaydi.
+// Middleware'lar Handle dan OLDIN ulanishi shart (telebot talabi).
+func (h *Handler) Register(b *tele.Bot) {
+	h.bot = b
+
+	b.Use(h.recoverMiddleware, h.privateOnly, h.logUpdates)
+
+	b.Handle("/start", h.onStart)
+	b.Handle("/cancel", h.onCancel)
+	b.Handle("/help", h.onHelp)
+	b.Handle(tele.OnText, h.onText)
+	b.Handle(tele.OnMedia, h.onMedia)
+
+	b.Handle(&tele.Btn{Unique: cbWorkType}, h.onWorkType)
+	b.Handle(&tele.Btn{Unique: cbDesign}, h.onDesign)
+	b.Handle(&tele.Btn{Unique: cbConfirm}, h.onConfirm)
+	b.Handle(&tele.Btn{Unique: cbRestart}, h.onRestart)
+	b.Handle(&tele.Btn{Unique: cbCancel}, h.onCancelButton)
+
+	if err := b.SetCommands([]tele.Command{
+		{Text: "start", Description: "Yangi ish buyurtma qilish"},
+		{Text: "cancel", Description: "Joriy jarayonni bekor qilish"},
+		{Text: "help", Description: "Yordam"},
+	}); err != nil {
+		h.log.Warn("failed to set bot commands", zap.Error(err))
+	}
+}
+
+// OnError telebot handlerlari qaytargan xatolarni qayta ishlaydi
+// (tele.Settings.OnError ga beriladi).
+func (h *Handler) OnError(err error, c tele.Context) {
+	if c == nil {
+		h.log.Error("telebot error", zap.Error(err))
+		return
+	}
+	h.log.Error("handler error", append(userFields(c), zap.Error(err))...)
+	if c.Callback() != nil {
+		_ = c.Respond(&tele.CallbackResponse{Text: "Xatolik yuz berdi, qayta urinib ko'ring."})
+	}
+	_ = c.Send(msgInternalError)
+}
+
+// Wait ishlayotgan generatsiyalar tugashini timeout bilan kutadi.
+// Hammasi tugagan bo'lsa true qaytaradi.
+func (h *Handler) Wait(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// RecoverInterrupted bot to'satdan to'xtab qolgan (crash, deploy) paytda
+// "generating" holatida qolib ketgan sessiyalarni tasdiqlash holatiga
+// qaytaradi va foydalanuvchilarga qayta urinish tugmasini yuboradi.
+func (h *Handler) RecoverInterrupted(ctx context.Context) {
+	list, err := h.sessions.ListByState(ctx, string(StateGenerating))
+	if err != nil {
+		h.log.Error("failed to list interrupted jobs", zap.Error(err))
+		return
+	}
+	recovered := 0
+	for _, s := range list {
+		ok, err := h.sessions.CompareAndSwapState(ctx, s.UserID, string(StateGenerating), string(StateConfirm))
+		if err != nil || !ok {
+			continue
+		}
+		recovered++
+		if _, err := h.bot.Send(&tele.Chat{ID: s.ChatID}, msgInterrupted, retryKeyboard()); err != nil {
+			h.log.Warn("failed to notify user about interrupted job", zap.Int64("user_id", s.UserID), zap.Error(err))
+		}
+	}
+	if recovered > 0 {
+		h.log.Info("recovered interrupted jobs", zap.Int("count", recovered))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Middleware
+// ---------------------------------------------------------------------------
+
+// recoverMiddleware handler ichidagi panic'ni ushlaydi: bot qotib qolmaydi,
+// xato stack bilan logga yoziladi, foydalanuvchi esa xabardor qilinadi.
+func (h *Handler) recoverMiddleware(next tele.HandlerFunc) tele.HandlerFunc {
+	return func(c tele.Context) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				h.log.Error("panic recovered in handler",
+					append(userFields(c), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))...)
+				if c.Callback() != nil {
+					_ = c.Respond()
+				}
+				_ = c.Send(msgInternalError)
+				err = nil
+			}
+		}()
+		return next(c)
+	}
+}
+
+// privateOnly bot faqat shaxsiy chatlarda ishlashini ta'minlaydi.
+func (h *Handler) privateOnly(next tele.HandlerFunc) tele.HandlerFunc {
+	return func(c tele.Context) error {
+		if c.Sender() == nil || c.Chat() == nil || c.Chat().Type != tele.ChatPrivate {
+			return nil
+		}
+		return next(c)
+	}
+}
+
+// logUpdates har bir update'ni debug darajasida logga yozadi.
+func (h *Handler) logUpdates(next tele.HandlerFunc) tele.HandlerFunc {
+	return func(c tele.Context) error {
+		if ce := h.log.Check(zap.DebugLevel, "update"); ce != nil {
+			fields := userFields(c)
+			if cb := c.Callback(); cb != nil {
+				fields = append(fields, zap.String("callback", cb.Unique), zap.String("data", c.Data()))
+			} else {
+				fields = append(fields, zap.String("text", c.Text()))
+			}
+			ce.Write(fields...)
+		}
+		return next(c)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Buyruqlar
+// ---------------------------------------------------------------------------
+
+// onStart yangi buyurtmani boshlaydi.
+func (h *Handler) onStart(c tele.Context) error {
+	defer h.lock(c.Sender().ID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		return err
+	}
+	if State(s.State) == StateGenerating {
+		return c.Send(msgBusy)
+	}
+	if err := h.beginFlow(ctx, s); err != nil {
+		return err
+	}
+
+	name := c.Sender().FirstName
+	if name == "" {
+		name = "do'stim"
+	}
+	if err := c.Send(fmt.Sprintf(msgWelcome, html.EscapeString(name)), removeKeyboard()); err != nil {
+		return err
+	}
+	return c.Send(msgChooseWorkType, workTypeKeyboard())
+}
+
+// onHelp yordam matnini yuboradi.
+func (h *Handler) onHelp(c tele.Context) error {
+	return c.Send(msgHelp)
+}
+
+// onCancel /cancel buyrug'i.
+func (h *Handler) onCancel(c tele.Context) error {
+	return c.Send(h.cancelFlow(c), removeKeyboard())
+}
+
+// onCancelButton "❌ Bekor qilish" inline tugmasi.
+func (h *Handler) onCancelButton(c tele.Context) error {
+	_ = c.Respond()
+	h.removeButtons(c)
+	return c.Send(h.cancelFlow(c), removeKeyboard())
+}
+
+// cancelFlow joriy jarayonni bekor qiladi va foydalanuvchiga javob matnini qaytaradi.
+func (h *Handler) cancelFlow(c tele.Context) string {
+	userID := c.Sender().ID
+	defer h.lock(userID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		h.log.Error("cancel: failed to load session", zap.Int64("user_id", userID), zap.Error(err))
+		return msgInternalError
+	}
+
+	switch State(s.State) {
+	case StateGenerating:
+		// Generatsiya o'z goroutine'ida ishlaydi: uni kontekst orqali to'xtatamiz,
+		// holatni esa runJob o'zi "idle" ga o'tkazadi.
+		if v, ok := h.running.Load(userID); ok {
+			j := v.(*job)
+			j.byUser.Store(true)
+			j.cancel()
+			return msgStopping
+		}
+		// Vazifa topilmadi (masalan, jarayon to'satdan to'xtagan) — holatni tiklaymiz.
+	case StateIdle, "":
+		return msgNothingCancel
+	}
+
+	resetDraft(s)
+	s.State = string(StateIdle)
+	if err := h.sessions.Save(ctx, s); err != nil {
+		h.log.Error("cancel: failed to save session", zap.Int64("user_id", userID), zap.Error(err))
+		return msgInternalError
+	}
+	return msgCancelled
+}
+
+// ---------------------------------------------------------------------------
+// Matnli xabarlar (FSM router)
+// ---------------------------------------------------------------------------
+
+// onText foydalanuvchi holatiga qarab matnni tegishli qadamga yo'naltiradi.
+func (h *Handler) onText(c tele.Context) error {
+	text := c.Text()
+	if strings.HasPrefix(text, "/") {
+		return c.Send(msgUnknownCommand)
+	}
+
+	defer h.lock(c.Sender().ID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		return err
+	}
+
+	state := State(s.State)
+	switch state {
+	case StateIdle, "":
+		return c.Send(msgIdle, removeKeyboard())
+	case StateWorkType:
+		return c.Send(msgPressButton, workTypeKeyboard())
+	case StateDesign:
+		return c.Send(msgDesignHint, designKeyboard())
+	case StateConfirm:
+		return h.sendSummary(c, s)
+	case StateGenerating:
+		return c.Send(msgBusy)
+	}
+
+	st, ok := steps[state]
+	if !ok {
+		// Bazada noma'lum holat (masalan, eski versiyadan qolgan) — xavfsiz tiklash.
+		h.log.Warn("unknown session state, resetting", zap.Int64("user_id", s.UserID), zap.String("state", s.State))
+		resetDraft(s)
+		s.State = string(StateIdle)
+		if err := h.sessions.Save(ctx, s); err != nil {
+			return err
+		}
+		return c.Send(msgIdle, removeKeyboard())
+	}
+
+	if err := st.apply(h.opts.Limits, s, text); err != nil {
+		var ie *inputError
+		if errors.As(err, &ie) {
+			return c.Send("⚠️ " + html.EscapeString(ie.msg))
+		}
+		return err
+	}
+
+	next := st.nextState(s)
+	s.State = string(next)
+	if err := h.sessions.Save(ctx, s); err != nil {
+		return err
+	}
+
+	switch next {
+	case StateConfirm:
+		if err := c.Send("👌 Ma'lumotlar qabul qilindi.", removeKeyboard()); err != nil {
+			return err
+		}
+		return h.sendSummary(c, s)
+	case StateDesign:
+		if err := c.Send(fmt.Sprintf("👌 Slaydlar soni: <b>%d</b>", s.Volume), removeKeyboard()); err != nil {
+			return err
+		}
+		return h.askDesign(c)
+	}
+	return h.ask(c, s, next)
+}
+
+// onMedia rasm, stiker va boshqa media xabarlarga javob beradi.
+func (h *Handler) onMedia(c tele.Context) error {
+	return c.Send(msgTextOnly)
+}
+
+// ---------------------------------------------------------------------------
+// Inline tugmalar
+// ---------------------------------------------------------------------------
+
+// onWorkType ish turi tanlanganda chaqiriladi.
+func (h *Handler) onWorkType(c tele.Context) error {
+	defer h.lock(c.Sender().ID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		return err
+	}
+	if State(s.State) != StateWorkType {
+		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+	}
+
+	opt, ok := findWorkType(ai.WorkType(c.Data()))
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+	}
+
+	s.WorkType = string(opt.Type)
+	s.State = string(StateTopic)
+	if err := h.sessions.Save(ctx, s); err != nil {
+		return err
+	}
+
+	_ = c.Respond(&tele.CallbackResponse{Text: opt.Name})
+	h.edit(c, fmt.Sprintf("✅ Ish turi: <b>%s</b>", html.EscapeString(opt.Name)))
+	return h.ask(c, s, StateTopic)
+}
+
+// onDesign taqdimot dizayni tanlanganda chaqiriladi.
+func (h *Handler) onDesign(c tele.Context) error {
+	defer h.lock(c.Sender().ID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		return err
+	}
+	if State(s.State) != StateDesign {
+		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+	}
+	theme, ok := generator.FindTheme(c.Data())
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+	}
+
+	s.Design = theme.ID
+	s.State = string(StateStudent)
+	if err := h.sessions.Save(ctx, s); err != nil {
+		return err
+	}
+
+	_ = c.Respond(&tele.CallbackResponse{Text: theme.Name})
+	h.editPrompt(c, fmt.Sprintf("🎨 Dizayn: <b>%s %s</b>", theme.Emoji, html.EscapeString(theme.Name)))
+	return h.ask(c, s, StateStudent)
+}
+
+// askDesign dizayn tanlash xabarini yuboradi: dizaynlar ko'rinishi rasmi
+// (bo'lsa) va har bir dizayn uchun tugma.
+func (h *Handler) askDesign(c tele.Context) error {
+	text := designPrompt()
+	h.previewMu.Lock()
+	cached := h.previewID
+	h.previewMu.Unlock()
+
+	var file tele.File
+	switch {
+	case cached != "":
+		file = tele.File{FileID: cached}
+	case h.opts.DesignPreview != "" && fileExists(h.opts.DesignPreview):
+		file = tele.FromDisk(h.opts.DesignPreview)
+	default:
+		return c.Send(text, designKeyboard())
+	}
+
+	// Tarmoq so'rovi qulfsiz bajariladi: birinchi yuklashlar bir vaqtga to'g'ri
+	// kelsa, rasm ikki marta yuklanishi mumkin — bu zararsiz.
+	msg, err := h.bot.Send(c.Recipient(), &tele.Photo{File: file, Caption: text}, designKeyboard())
+	h.previewMu.Lock()
+	defer h.previewMu.Unlock()
+	if err != nil {
+		// Rasmni yuborib bo'lmasa (masalan, file_id eskirgan) — rasmsiz davom etamiz.
+		h.log.Warn("failed to send design preview", zap.Error(err))
+		if h.previewID == cached {
+			h.previewID = ""
+		}
+		return c.Send(text, designKeyboard())
+	}
+	if msg != nil && msg.Photo != nil && h.previewID == "" {
+		h.previewID = msg.Photo.FileID
+	}
+	return nil
+}
+
+// designPrompt dizayn tanlash xabari matni.
+func designPrompt() string {
+	var b strings.Builder
+	b.WriteString("🎨 <b>Taqdimot dizaynini tanlang:</b>\n\n")
+	for i, t := range generator.Themes() {
+		fmt.Fprintf(&b, "%d. %s <b>%s</b> — %s\n", i+1, t.Emoji, html.EscapeString(t.Name), html.EscapeString(t.Description))
+	}
+	b.WriteString("\n<i>Har bir slayd o'z maketida chiqadi: reja, kartochkalar, bosqichlar, taqqoslash, faktlar va xulosa.</i>")
+	return b.String()
+}
+
+// onRestart "Qaytadan to'ldirish" tugmasi — buyurtmani boshidan boshlaydi.
+func (h *Handler) onRestart(c tele.Context) error {
+	defer h.lock(c.Sender().ID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		return err
+	}
+	if State(s.State) == StateGenerating {
+		return c.Respond(&tele.CallbackResponse{Text: "Ishingiz allaqachon tayyorlanmoqda."})
+	}
+	if err := h.beginFlow(ctx, s); err != nil {
+		return err
+	}
+
+	_ = c.Respond()
+	h.removeButtons(c)
+	return c.Send(msgChooseWorkType, workTypeKeyboard())
+}
+
+// onConfirm ma'lumotlar tasdiqlanganda (yoki "Qayta urinish" bosilganda) generatsiyani boshlaydi.
+func (h *Handler) onConfirm(c tele.Context) error {
+	userID := c.Sender().ID
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	// Atomar o'tish: tugma ikki marta bosilsa ham generatsiya faqat bir marta boshlanadi.
+	ok, err := h.sessions.CompareAndSwapState(ctx, userID, string(StateConfirm), string(StateGenerating))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: "Bu so'rov allaqachon qabul qilingan yoki eskirgan."})
+	}
+
+	s, err := h.sessions.Get(ctx, userID)
+	if err != nil {
+		_, _ = h.sessions.CompareAndSwapState(ctx, userID, string(StateGenerating), string(StateConfirm))
+		return err
+	}
+
+	_ = c.Respond(&tele.CallbackResponse{Text: "Qabul qilindi ✅"})
+	waitMsg := msgGeneratingDeck
+	if ai.WorkType(s.WorkType).IsDocument() {
+		waitMsg = msgGeneratingDoc
+	}
+	h.edit(c, summaryText(s)+"\n\n"+waitMsg)
+
+	h.wg.Add(1)
+	go h.runJob(s)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Generatsiya vazifasi
+// ---------------------------------------------------------------------------
+
+// runJob AI → fayl (PPTX/DOCX) → Telegram zanjirini alohida goroutine'da bajaradi.
+func (h *Handler) runJob(s *storage.Session) {
+	defer h.wg.Done()
+
+	chat := &tele.Chat{ID: s.ChatID}
+	log := h.log.With(
+		zap.Int64("user_id", s.UserID),
+		zap.String("work_type", s.WorkType),
+		zap.Int("volume", s.Volume))
+
+	ctx, cancel := context.WithTimeout(h.jobsCtx, h.opts.JobTimeout)
+	defer cancel()
+
+	j := &job{cancel: cancel}
+	h.running.Store(s.UserID, j)
+	defer h.running.Delete(s.UserID)
+
+	// Goroutine ichidagi panic butun dasturni to'xtatmasligi va foydalanuvchi
+	// "generating" holatida qotib qolmasligi uchun.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic recovered in generation job", zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			h.finishWithError(s, chat, log, fmt.Errorf("panic: %v", r), false)
+		}
+	}()
+
+	started := time.Now()
+	log.Info("generation started")
+
+	path, err := h.generate(ctx, chat, s, log)
+	if path != "" {
+		defer removeFile(path, log) // vaqtinchalik fayl har qanday holatda o'chiriladi
+	}
+	if err != nil {
+		h.finishWithError(s, chat, log, err, j.byUser.Load())
+		return
+	}
+
+	log.Info("generation finished", zap.Duration("took", time.Since(started)))
+	h.finishWithSuccess(s, chat, log)
+}
+
+// generate navbatni kutadi, AI dan matn oladi, faylni (PPTX yoki DOCX) yaratadi
+// va foydalanuvchiga yuboradi. Fayl yaratilgan bo'lsa, xato bo'lganda ham
+// uning yo'li qaytariladi (o'chirish uchun).
+func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Session, log *zap.Logger) (string, error) {
+	// 1. Navbat: bo'sh joy bo'lmasa, foydalanuvchini ogohlantirib kutamiz.
+	select {
+	case h.slots <- struct{}{}:
+	default:
+		_, _ = h.bot.Send(chat, msgQueued)
+		select {
+		case h.slots <- struct{}{}:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	defer func() { <-h.slots }()
+
+	stopAction := h.keepUploadAction(ctx, chat)
+	defer stopAction()
+
+	opt, ok := findWorkType(ai.WorkType(s.WorkType))
+	if !ok {
+		return "", fmt.Errorf("noma'lum ish turi: %q", s.WorkType)
+	}
+
+	// 2. AI + fayl: ish turiga qarab taqdimot yoki hujjat.
+	var (
+		out *output
+		err error
+	)
+	if opt.Type.IsDocument() {
+		out, err = h.buildPaper(ctx, chat, s, opt, log)
+	} else {
+		out, err = h.buildSlides(ctx, chat, s, opt, log)
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return out.path, err
+	}
+
+	// 3. Telegram'ga hujjat sifatida yuborish.
+	doc := &tele.Document{
+		File:     tele.FromDisk(out.path),
+		FileName: out.fileName,
+		MIME:     out.mime,
+		Caption:  out.caption,
+	}
+	if _, err := h.bot.Send(chat, doc); err != nil {
+		return out.path, fmt.Errorf("telegram: hujjatni yuborib bo'lmadi: %w", err)
+	}
+	log.Info("document sent", append([]zap.Field{zap.String("file_name", doc.FileName)}, out.logFields...)...)
+	return out.path, nil
+}
+
+// output — tayyor fayl va uni Telegram'ga yuborish uchun ma'lumotlar.
+type output struct {
+	path      string
+	fileName  string
+	mime      string
+	caption   string
+	logFields []zap.Field
+}
+
+// buildSlides taqdimotni yaratadi: titul va yakuniy slaydlarni generator
+// o'zi chizadi, AI faqat mazmunli slaydlarni yozadi. Katta taqdimot bir necha
+// so'rov bilan yoziladi — jarayon holati alohida xabarda ko'rsatiladi.
+func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
+	b := h.builders.Slides
+	content := b.ContentSlides(s.Volume)
+
+	report, stopProgress := h.startProgress(ctx, chat, log, "Slaydlar yozilmoqda...")
+	pres, err := h.ai.GeneratePresentation(ctx, ai.PresentationRequest{Topic: s.Topic, SlideCount: content, OnProgress: report})
+	stopProgress()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errAI, err)
+	}
+
+	deck := generator.Deck{
+		Topic:       s.Topic,
+		Subtitle:    pres.Subtitle,
+		WorkType:    opt.Title,
+		StudentName: s.StudentName,
+		University:  s.University,
+		TeacherName: s.TeacherName,
+		Year:        strconv.Itoa(time.Now().Year()),
+		Theme:       s.Design,
+		Slides:      make([]generator.Slide, 0, len(pres.Slides)),
+	}
+	for _, sl := range pres.Slides {
+		items := make([]generator.Item, len(sl.Items))
+		for i, it := range sl.Items {
+			items[i] = generator.Item{Heading: it.Heading, Text: it.Text, Value: it.Value, Points: it.Points}
+		}
+		deck.Slides = append(deck.Slides, generator.Slide{
+			Layout: sl.Layout, Title: sl.Title, Lead: sl.Lead, Items: items, Highlight: sl.Highlight,
+		})
+	}
+	path, err := b.Build(ctx, deck)
+	if err != nil {
+		return nil, fmt.Errorf("pptx: %w", err)
+	}
+
+	total := len(deck.Slides) + (s.Volume - content) // + titul va yakuniy slayd
+	design := s.Design
+	if t, ok := generator.FindTheme(s.Design); ok {
+		design = t.Emoji + " " + t.Name
+	}
+	return &output{
+		path:     path,
+		fileName: documentFileName(s.Topic, ".pptx"),
+		mime:     pptxMIME,
+		caption: fmt.Sprintf("📎 <b>%s</b>\n%s · %d ta slayd · %s",
+			html.EscapeString(s.Topic), html.EscapeString(opt.Name), total, html.EscapeString(design)),
+		logFields: []zap.Field{zap.Int("slides", total), zap.String("design", s.Design)},
+	}, nil
+}
+
+// buildPaper mustaqil ish yoki amaliy topshiriqni (.docx) yaratadi. Hujjat
+// bir necha AI so'rovi bilan yoziladi, shuning uchun jarayon holati
+// foydalanuvchiga alohida xabarda ko'rsatib boriladi.
+func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
+	b := h.builders.Papers
+
+	report, stopProgress := h.startProgress(ctx, chat, log, "Bo'limlar yozilmoqda...")
+	doc, err := h.ai.GenerateDocument(ctx, ai.DocumentRequest{
+		WorkType:   opt.Type,
+		Topic:      s.Topic,
+		Words:      b.ContentWords(s.Volume),
+		OnProgress: report,
+	})
+	stopProgress()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errAI, err)
+	}
+
+	paper := generator.Paper{
+		Topic:        s.Topic,
+		WorkType:     opt.Title,
+		StudentName:  s.StudentName,
+		University:   s.University,
+		TeacherName:  s.TeacherName,
+		Year:         strconv.Itoa(time.Now().Year()),
+		Introduction: toParagraphs(doc.Introduction),
+		Conclusion:   toParagraphs(doc.Conclusion),
+		References:   doc.References,
+		Chapters:     make([]generator.Section, 0, len(doc.Chapters)),
+	}
+	for _, ch := range doc.Chapters {
+		paper.Chapters = append(paper.Chapters, generator.Section{Title: ch.Title, Paragraphs: toParagraphs(ch.Paragraphs)})
+	}
+	path, err := b.Build(ctx, paper)
+	if err != nil {
+		return nil, fmt.Errorf("docx: %w", err)
+	}
+
+	return &output{
+		path:     path,
+		fileName: documentFileName(s.Topic, ".docx"),
+		mime:     docxMIME,
+		caption: fmt.Sprintf("📎 <b>%s</b>\n%s · %d sahifa",
+			html.EscapeString(s.Topic), html.EscapeString(opt.Name), s.Volume),
+		logFields: []zap.Field{
+			zap.Int("pages_requested", s.Volume),
+			zap.Int("chapters", len(paper.Chapters)),
+			zap.Int("references", len(paper.References)),
+		},
+	}, nil
+}
+
+func toParagraphs(in []ai.Paragraph) []generator.Paragraph {
+	out := make([]generator.Paragraph, len(in))
+	for i, p := range in {
+		out[i] = generator.Paragraph{Text: p.Text, Code: p.Code}
+	}
+	return out
+}
+
+// startProgress hujjat yozilayotganda bosqichlar holatini bitta xabarda
+// ko'rsatib boradi: birinchi holatda xabar yuboriladi, keyin tahrirlanadi,
+// stop chaqirilganda esa o'chiriladi.
+//
+// report AI goroutine'laridan chaqiriladi va hech qachon bloklanmaydi:
+// navbatda faqat eng so'nggi holat saqlanadi, Telegram'ga esa ko'pi bilan
+// 2 soniyada bir marta murojaat qilinadi (API cheklovlariga tushmaslik uchun).
+//
+// writing — asosiy bosqich nomi ("Bo'limlar yozilmoqda...", "Slaydlar yozilmoqda...").
+func (h *Handler) startProgress(ctx context.Context, chat *tele.Chat, log *zap.Logger, writing string) (report func(done, total int), stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	updates := make(chan [2]int, 1)
+	finished := make(chan struct{})
+
+	report = func(done, total int) {
+		v := [2]int{done, total}
+		for {
+			select {
+			case updates <- v:
+				return
+			default:
+				// Eski holatni tashlab yuboramiz — faqat oxirgisi muhim.
+				select {
+				case <-updates:
+				default:
+				}
+			}
+		}
+	}
+
+	go func() {
+		defer close(finished)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("panic in progress loop", zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			}
+		}()
+
+		var msg *tele.Message
+		defer func() {
+			if msg != nil {
+				if err := h.bot.Delete(msg); err != nil {
+					log.Debug("failed to delete progress message", zap.Error(err))
+				}
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case v := <-updates:
+				text := progressText(v[0], v[1], writing)
+				var err error
+				if msg == nil {
+					msg, err = h.bot.Send(chat, text)
+				} else {
+					_, err = h.bot.Edit(msg, text)
+				}
+				if err != nil && !errors.Is(err, tele.ErrMessageNotModified) {
+					log.Debug("failed to update progress message", zap.Error(err))
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Second):
+				}
+			}
+		}
+	}()
+
+	stop = func() {
+		cancel()
+		<-finished
+	}
+	return report, stop
+}
+
+// progressText jarayon holati matni: "✍️ Bo'limlar yozilmoqda... ▰▰▰▱▱▱▱▱▱▱ 3/8".
+func progressText(done, total int, writing string) string {
+	total = max(total, 1)
+	done = min(max(done, 0), total)
+
+	const width = 10
+	filled := done * width / total
+	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", width-filled)
+
+	stage := writing
+	switch {
+	case done == 0:
+		stage = "Reja tuzilmoqda..."
+	case done == total:
+		stage = "Fayl tayyorlanmoqda..."
+	}
+	return fmt.Sprintf("✍️ <b>%s</b>\n%s %d/%d", stage, bar, done, total)
+}
+
+// finishWithSuccess sessiyani yakunlaydi va statistikani yangilaydi.
+func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *zap.Logger) {
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	now := time.Now().UTC()
+	resetDraft(s)
+	s.State = string(StateIdle)
+	s.GeneratedCount++
+	s.LastGeneratedAt = &now
+	if err := h.sessions.Save(ctx, s); err != nil {
+		log.Error("failed to save session after success", zap.Error(err))
+	}
+	if _, err := h.bot.Send(chat, msgDone); err != nil {
+		log.Warn("failed to send done message", zap.Error(err))
+	}
+}
+
+// finishWithError xatoni logga yozadi va foydalanuvchiga tushunarli xabar yuboradi.
+// Foydalanuvchi o'zi bekor qilgan bo'lsa — sessiya tozalanadi, aks holda
+// ma'lumotlar saqlanib, "Qayta urinish" tugmasi taklif qilinadi.
+func (h *Handler) finishWithError(s *storage.Session, chat *tele.Chat, log *zap.Logger, err error, byUser bool) {
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	if byUser {
+		log.Info("generation cancelled by user")
+		resetDraft(s)
+		s.State = string(StateIdle)
+		if err := h.sessions.Save(ctx, s); err != nil {
+			log.Error("failed to save session after cancel", zap.Error(err))
+		}
+		_, _ = h.bot.Send(chat, msgJobCancelled)
+		return
+	}
+
+	log.Error("generation failed", zap.Error(err))
+	if _, err := h.sessions.CompareAndSwapState(ctx, s.UserID, string(StateGenerating), string(StateConfirm)); err != nil {
+		log.Error("failed to restore confirm state", zap.Error(err))
+	}
+
+	var msg string
+	switch {
+	case h.jobsCtx.Err() != nil:
+		msg = "🔧 Bot texnik sabablarga ko'ra qayta ishga tushirilmoqda. Bir necha daqiqadan so'ng «Qayta urinish» tugmasini bosing."
+	case errors.Is(err, context.DeadlineExceeded):
+		msg = "⌛ Tayyorlash juda uzoq davom etdi. Iltimos, qayta urinib ko'ring yoki hajmni (slaydlar/sahifalar sonini) kamaytiring."
+	case errors.Is(err, errAI):
+		msg = "😔 Sun'iy intellekt xizmatida vaqtinchalik muammo yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring."
+	default:
+		msg = "😔 Faylni tayyorlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+	}
+	if _, err := h.bot.Send(chat, msg, retryKeyboard()); err != nil {
+		log.Warn("failed to send error message", zap.Error(err))
+	}
+}
+
+// keepUploadAction generatsiya davomida "hujjat yuborilmoqda..." statusini
+// ko'rsatib turadi (Telegram uni ~5 soniyadan keyin o'chiradi).
+func (h *Handler) keepUploadAction(ctx context.Context, chat *tele.Chat) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				h.log.Error("panic in chat action loop", zap.Any("panic", r))
+			}
+		}()
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			_ = h.bot.Notify(chat, tele.UploadingDocument)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return cancel
+}
+
+// ---------------------------------------------------------------------------
+// Yordamchi funksiyalar
+// ---------------------------------------------------------------------------
+
+// lock foydalanuvchi bo'yicha qulfni oladi va uni ochuvchi funksiyani qaytaradi:
+//
+//	defer h.lock(userID)()
+func (h *Handler) lock(userID int64) func() {
+	m := &h.locks[uint64(userID)%lockStripes]
+	m.Lock()
+	return m.Unlock
+}
+
+// loadSession sessiyani oladi va chat/username o'zgargan bo'lsa yangilaydi.
+func (h *Handler) loadSession(ctx context.Context, c tele.Context) (*storage.Session, error) {
+	u, chat := c.Sender(), c.Chat()
+	s, err := h.sessions.GetOrCreate(ctx, u.ID, chat.ID, u.Username)
+	if err != nil {
+		return nil, err
+	}
+	s.ChatID, s.Username = chat.ID, u.Username
+	return s, nil
+}
+
+// beginFlow buyurtmani noldan boshlaydi (profil ma'lumotlari saqlanadi).
+func (h *Handler) beginFlow(ctx context.Context, s *storage.Session) error {
+	resetDraft(s)
+	s.State = string(StateWorkType)
+	return h.sessions.Save(ctx, s)
+}
+
+// ask berilgan qadam savolini (kerak bo'lsa javob tugmalari bilan) yuboradi.
+func (h *Handler) ask(c tele.Context, s *storage.Session, state State) error {
+	st, ok := steps[state]
+	if !ok {
+		return fmt.Errorf("qadam topilmadi: %s", state)
+	}
+	markup := removeKeyboard()
+	if st.suggest != nil {
+		if options := st.suggest(h.opts.Limits, s); len(options) > 0 {
+			markup = replyKeyboard(options)
+		}
+	}
+	return c.Send(st.prompt(h.opts.Limits, s), markup)
+}
+
+// sendSummary yig'ilgan ma'lumotlarni tasdiqlash tugmalari bilan yuboradi.
+func (h *Handler) sendSummary(c tele.Context, s *storage.Session) error {
+	return c.Send(summaryText(s)+"\n\nHammasi to'g'rimi?", confirmKeyboard())
+}
+
+// edit callback xabarini tahrirlaydi (inline tugmalar ham olib tashlanadi).
+// "message is not modified" kabi zararsiz xatolar e'tiborsiz qoldiriladi.
+func (h *Handler) edit(c tele.Context, text string) {
+	if err := c.Edit(text); err != nil && !errors.Is(err, tele.ErrMessageNotModified) {
+		h.log.Debug("failed to edit message", zap.Error(err))
+	}
+}
+
+// editPrompt callback xabarini tahrirlaydi: rasmli xabarda — izohini,
+// oddiy xabarda — matnini (inline tugmalar ham olib tashlanadi).
+func (h *Handler) editPrompt(c tele.Context, text string) {
+	var err error
+	if m := c.Message(); m != nil && m.Photo != nil {
+		err = c.EditCaption(text)
+	} else {
+		err = c.Edit(text)
+	}
+	if err != nil && !errors.Is(err, tele.ErrMessageNotModified) {
+		h.log.Debug("failed to edit prompt message", zap.Error(err))
+	}
+}
+
+// removeButtons callback xabaridagi inline tugmalarni olib tashlaydi.
+func (h *Handler) removeButtons(c tele.Context) {
+	if c.Message() == nil {
+		return
+	}
+	if _, err := h.bot.EditReplyMarkup(c.Message(), nil); err != nil && !errors.Is(err, tele.ErrMessageNotModified) {
+		h.log.Debug("failed to remove buttons", zap.Error(err))
+	}
+}
+
+// summaryText buyurtma ma'lumotlarini HTML ko'rinishida qaytaradi.
+func summaryText(s *storage.Session) string {
+	name := s.WorkType
+	if opt, ok := findWorkType(ai.WorkType(s.WorkType)); ok {
+		name = opt.Name
+	}
+	volume, format := "🔢 <b>Slaydlar soni:</b>", "PowerPoint (.pptx)"
+	if ai.WorkType(s.WorkType).IsDocument() {
+		volume, format = "📄 <b>Sahifalar soni:</b>", "Word (.docx)"
+	}
+	e := html.EscapeString
+	if !ai.WorkType(s.WorkType).IsDocument() {
+		if t, ok := generator.FindTheme(s.Design); ok {
+			format += "\n🎨 <b>Dizayn:</b> " + t.Emoji + " " + e(t.Name)
+		}
+	}
+	return fmt.Sprintf("📋 <b>Ma'lumotlarni tekshiring</b>\n\n"+
+		"📌 <b>Ish turi:</b> %s\n"+
+		"📝 <b>Mavzu:</b> %s\n"+
+		"%s %d\n"+
+		"📎 <b>Fayl:</b> %s\n"+
+		"👤 <b>Talaba:</b> %s\n"+
+		"🏛 <b>Universitet:</b> %s\n"+
+		"👨‍🏫 <b>Tekshiruvchi:</b> %s",
+		e(name), e(s.Topic), volume, s.Volume, format, e(s.StudentName), e(s.University), e(s.TeacherName))
+}
+
+func workTypeKeyboard() *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{}
+	rows := make([]tele.Row, 0, len(workTypes))
+	for _, o := range workTypes {
+		rows = append(rows, m.Row(m.Data(o.Button, cbWorkType, string(o.Type))))
+	}
+	m.Inline(rows...)
+	return m
+}
+
+// designKeyboard dizayn tanlash tugmalari (qatorda 2 tadan).
+func designKeyboard() *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{}
+	themes := generator.Themes()
+	rows := make([]tele.Row, 0, (len(themes)+1)/2)
+	for i := 0; i < len(themes); i += 2 {
+		var btns []tele.Btn
+		for j, t := range themes[i:min(i+2, len(themes))] {
+			label := fmt.Sprintf("%d. %s %s", i+j+1, t.Emoji, t.Name)
+			btns = append(btns, m.Data(label, cbDesign, t.ID))
+		}
+		rows = append(rows, m.Row(btns...))
+	}
+	m.Inline(rows...)
+	return m
+}
+
+func confirmKeyboard() *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{}
+	m.Inline(
+		m.Row(m.Data("✅ Tasdiqlash", cbConfirm)),
+		m.Row(m.Data("🔄 Qaytadan to'ldirish", cbRestart), m.Data("❌ Bekor qilish", cbCancel)),
+	)
+	return m
+}
+
+func retryKeyboard() *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{}
+	m.Inline(m.Row(m.Data("🔄 Qayta urinish", cbConfirm), m.Data("❌ Bekor qilish", cbCancel)))
+	return m
+}
+
+// replyKeyboard javob variantlari klaviaturasi: qisqa variantlar (sonlar)
+// qatorda 3 tadan, uzunlari — har biri alohida qatorda.
+func replyKeyboard(options []string) *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
+	perRow := 1
+	short := true
+	for _, o := range options {
+		if len([]rune(o)) > 4 {
+			short = false
+			break
+		}
+	}
+	if short {
+		perRow = 3
+	}
+
+	var rows []tele.Row
+	for i := 0; i < len(options); i += perRow {
+		var btns []tele.Btn
+		for _, o := range options[i:min(i+perRow, len(options))] {
+			btns = append(btns, m.Text(o))
+		}
+		rows = append(rows, m.Row(btns...))
+	}
+	m.Reply(rows...)
+	return m
+}
+
+func removeKeyboard() *tele.ReplyMarkup {
+	return &tele.ReplyMarkup{RemoveKeyboard: true}
+}
+
+var unsafeFileChars = regexp.MustCompile(`[\\/:*?"<>|\x00-\x1f]+`)
+
+// documentFileName mavzudan xavfsiz fayl nomi yasaydi: "Suniy_intellekt....pptx".
+// ext — kengaytma (".pptx" yoki ".docx").
+func documentFileName(topic, ext string) string {
+	name := unsafeFileChars.ReplaceAllString(topic, " ")
+	name = strings.Join(strings.Fields(name), "_")
+	if r := []rune(name); len(r) > 60 {
+		name = strings.TrimRight(string(r[:60]), "_.-")
+	}
+	if name == "" {
+		name = "hujjat"
+		if ext == ".pptx" {
+			name = "taqdimot"
+		}
+	}
+	return name + ext
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+// removeFile vaqtinchalik faylni o'chiradi.
+func removeFile(path string, log *zap.Logger) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warn("failed to remove temp file", zap.String("path", path), zap.Error(err))
+	}
+}
+
+func requestContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), requestTimeout)
+}
+
+func userFields(c tele.Context) []zap.Field {
+	if c == nil || c.Sender() == nil {
+		return nil
+	}
+	return []zap.Field{zap.Int64("user_id", c.Sender().ID), zap.String("username", c.Sender().Username)}
+}

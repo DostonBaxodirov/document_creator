@@ -1,0 +1,163 @@
+// Telegram Presentation Bot — dasturning kirish nuqtasi.
+//
+// Bu yerda barcha bog'liqliklar (konfiguratsiya, logger, baza, AI klient,
+// PPTX va DOCX generatorlari, Telegram bot) yaratiladi va bir-biriga ulanadi
+// (Dependency Injection), so'ng bot ishga tushiriladi va SIGINT/SIGTERM
+// signallarida xavfsiz to'xtatiladi.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	tele "gopkg.in/telebot.v3"
+
+	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/bot"
+	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/generator"
+	"telegram-presentation-bot/internal/storage"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "fatal:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// 1. Konfiguratsiya.
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// 2. Logger.
+	log, err := newLogger(cfg.Env, cfg.LogLevel)
+	if err != nil {
+		return fmt.Errorf("logger: %w", err)
+	}
+	defer func() { _ = log.Sync() }()
+
+	// SIGINT (Ctrl+C) yoki SIGTERM (docker stop) kelganda ctx bekor qilinadi.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// 3. Ma'lumotlar bazasi.
+	db, err := storage.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := storage.Close(db); err != nil {
+			log.Warn("failed to close database", zap.Error(err))
+		}
+	}()
+	if err := storage.Migrate(db); err != nil {
+		return err
+	}
+	sessions := storage.NewSessionRepository(db)
+
+	// 4. AI klient va fayl generatorlari: taqdimot — .pptx (shablon asosida),
+	// mustaqil ish va amaliy topshiriq — .docx.
+	aiClient, err := ai.New(ctx, cfg.AI, log)
+	if err != nil {
+		return err
+	}
+	pptx, err := generator.NewPPTX(cfg.Generator.TemplatePath, cfg.Generator.OutputDir, log)
+	if err != nil {
+		return err
+	}
+	docx, err := generator.NewDOCX(cfg.Generator.OutputDir, cfg.Generator.DocumentHeader, log)
+	if err != nil {
+		return err
+	}
+
+	// 5. Handler. Generatsiyalar signal kontekstidan alohida kontekstda ishlaydi:
+	// to'xtash signali kelganda ular darhol uzilmaydi, balki ShutdownTimeout
+	// davomida yakunlanishiga imkon beriladi.
+	jobsCtx, cancelJobs := context.WithCancel(context.Background())
+	defer cancelJobs()
+
+	handler := bot.NewHandler(jobsCtx, sessions, aiClient, bot.Builders{Slides: pptx, Papers: docx}, log, bot.Options{
+		Limits: bot.Limits{
+			MinSlides: cfg.Limits.MinSlides,
+			MaxSlides: cfg.Limits.MaxSlides,
+			MinPages:  cfg.Limits.MinPages,
+			MaxPages:  cfg.Limits.MaxPages,
+		},
+		MaxConcurrentJobs: cfg.Generator.MaxConcurrentJobs,
+		JobTimeout:        cfg.Generator.JobTimeout,
+		// Dizaynlar ko'rinishi rasmi shablon yonida turadi (go run ./cmd/preview bilan yangilanadi).
+		DesignPreview: filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "designs.png"),
+	})
+
+	// 6. Telegram bot.
+	b, err := tele.NewBot(tele.Settings{
+		Token:     cfg.Telegram.Token,
+		Poller:    &tele.LongPoller{Timeout: cfg.Telegram.PollTimeout},
+		ParseMode: tele.ModeHTML,
+		OnError:   handler.OnError,
+		// Handlerlar parallel ishlaydi; bir foydalanuvchi ichidagi tartibni
+		// Handler o'zining qulflari bilan ta'minlaydi.
+		Synchronous: false,
+	})
+	if err != nil {
+		return fmt.Errorf("telegram: botni yaratib bo'lmadi: %w", err)
+	}
+	handler.Register(b)
+
+	// Oldingi ishga tushirishda yakunlanmay qolgan generatsiyalarni tiklash.
+	handler.RecoverInterrupted(ctx)
+
+	go b.Start()
+	log.Info("bot started",
+		zap.String("username", b.Me.Username),
+		zap.String("ai_provider", cfg.AI.Provider),
+		zap.Int("max_concurrent_jobs", cfg.Generator.MaxConcurrentJobs))
+
+	// 7. To'xtash signalini kutish.
+	<-ctx.Done()
+	log.Info("shutdown signal received, stopping bot")
+
+	b.Stop() // yangi update'lar qabul qilinmaydi
+
+	if !handler.Wait(cfg.Telegram.ShutdownTimeout) {
+		log.Warn("shutdown timeout reached, cancelling running jobs")
+		cancelJobs()
+		if !handler.Wait(15 * time.Second) {
+			log.Error("some jobs did not finish in time")
+		}
+	}
+
+	log.Info("bot stopped gracefully")
+	return nil
+}
+
+// newLogger muhitga mos zap logger yaratadi: production — JSON,
+// development — rangli, o'qish uchun qulay format.
+func newLogger(env, level string) (*zap.Logger, error) {
+	lvl, err := zapcore.ParseLevel(level)
+	if err != nil {
+		return nil, fmt.Errorf("LOG_LEVEL noto'g'ri: %q", level)
+	}
+
+	var zcfg zap.Config
+	if env == "development" {
+		zcfg = zap.NewDevelopmentConfig()
+		zcfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		zcfg = zap.NewProductionConfig()
+		zcfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	}
+	zcfg.Level = zap.NewAtomicLevelAt(lvl)
+	return zcfg.Build()
+}

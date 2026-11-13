@@ -1,0 +1,352 @@
+// Package config ilovaning barcha sozlamalarini muhit o'zgaruvchilaridan
+// (va mavjud bo'lsa .env faylidan) o'qiydi va tekshiradi.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
+)
+
+// AI provayderlari nomlari.
+const (
+	ProviderGemini   = "gemini"
+	ProviderOpenAI   = "openai"
+	ProviderDeepSeek = "deepseek"
+)
+
+// DisabledValue — ixtiyoriy matnli sozlamani o'chirish uchun qiymat
+// (bo'sh qiymat standart qiymat bilan almashtiriladi, shuning uchun "-" ishlatiladi).
+const DisabledValue = "-"
+
+// Config — ilovaning to'liq konfiguratsiyasi.
+type Config struct {
+	Env       string // "production" yoki "development" (log formatiga ta'sir qiladi)
+	LogLevel  string // debug | info | warn | error
+	Telegram  TelegramConfig
+	AI        AIConfig
+	DB        DBConfig
+	Generator GeneratorConfig
+	Limits    LimitsConfig
+}
+
+// TelegramConfig — Telegram bot sozlamalari.
+type TelegramConfig struct {
+	Token           string
+	PollTimeout     time.Duration // long polling kutish vaqti
+	ShutdownTimeout time.Duration // to'xtashda ishlayotgan vazifalarni kutish vaqti
+}
+
+// AIConfig — sun'iy intellekt provayderi sozlamalari.
+type AIConfig struct {
+	Provider string // "gemini", "openai" yoki "deepseek"
+
+	GeminiAPIKey string
+	GeminiModel  string
+
+	OpenAIAPIKey  string
+	OpenAIModel   string
+	OpenAIBaseURL string // OpenAI bilan mos (compatible) API manzili
+
+	DeepSeekAPIKey   string
+	DeepSeekModel    string
+	DeepSeekBaseURL  string
+	DeepSeekThinking bool // fikrlash (thinking) rejimi: sekinroq va qimmatroq, lekin chuqurroq
+
+	Temperature      *float32      // nil bo'lsa — provayderning standart qiymati ishlatiladi
+	MaxTokens        int           // javob uzunligi chegarasi (0 — provayderning standart qiymati)
+	Timeout          time.Duration // bitta so'rov uchun maksimal vaqt
+	MaxRetries       int           // xato bo'lganda qayta urinishlar soni
+	ParallelRequests int           // hujjat bo'limlarini yozishda bir vaqtdagi so'rovlar soni
+}
+
+// DBConfig — PostgreSQL ulanish sozlamalari.
+type DBConfig struct {
+	Host            string
+	Port            int
+	User            string
+	Password        string
+	Name            string
+	SSLMode         string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnectRetries  int           // baza tayyor bo'lmasa necha marta qayta urinish
+	ConnectDelay    time.Duration // urinishlar orasidagi pauza
+}
+
+// DSN PostgreSQL uchun URL ko'rinishidagi ulanish satrini qaytaradi.
+// Parol url.UserPassword orqali kodlanadi, shuning uchun maxsus belgilar xavfsiz.
+func (d DBConfig) DSN() string {
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(d.User, d.Password),
+		Host:   net.JoinHostPort(d.Host, strconv.Itoa(d.Port)),
+		Path:   "/" + d.Name,
+	}
+	q := u.Query()
+	q.Set("sslmode", d.SSLMode)
+	q.Set("TimeZone", "UTC")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// GeneratorConfig — fayl generatsiyasi (PPTX/DOCX) va vazifalar navbati sozlamalari.
+type GeneratorConfig struct {
+	TemplatePath      string        // .pptx asosiy paketi (slayd master va mavzu); dizaynlar koddan chiziladi
+	OutputDir         string        // vaqtinchalik fayllar papkasi (bo'sh bo'lsa — os.TempDir())
+	DocumentHeader    string        // .docx titul varag'ining eng yuqori qatori (bo'sh bo'lsa — chiqarilmaydi)
+	MaxConcurrentJobs int           // bir vaqtda bajariladigan generatsiyalar soni
+	JobTimeout        time.Duration // bitta generatsiya (AI + PPTX + yuborish) uchun maksimal vaqt
+}
+
+// LimitsConfig — foydalanuvchi kiritadigan qiymatlar chegaralari.
+type LimitsConfig struct {
+	MinSlides int // taqdimot: umumiy slaydlar soni (titul va yakuniy slayd bilan)
+	MaxSlides int
+	MinPages  int // mustaqil ish / amaliy topshiriq: umumiy sahifalar soni (titul, reja, adabiyotlar bilan)
+	MaxPages  int
+}
+
+// Load .env faylini (agar mavjud bo'lsa) yuklaydi, muhit o'zgaruvchilarini o'qiydi
+// va konfiguratsiyani tekshiradi. Muhitda allaqachon o'rnatilgan qiymatlar
+// .env dagi qiymatlardan ustun turadi.
+func Load() (*Config, error) {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("config: .env faylini o'qib bo'lmadi: %w", err)
+	}
+
+	p := &parser{}
+	cfg := &Config{
+		Env:      p.str("APP_ENV", "production"),
+		LogLevel: p.str("LOG_LEVEL", "info"),
+		Telegram: TelegramConfig{
+			Token:           p.str("TELEGRAM_BOT_TOKEN", ""),
+			PollTimeout:     p.duration("TELEGRAM_POLL_TIMEOUT", 10*time.Second),
+			ShutdownTimeout: p.duration("SHUTDOWN_TIMEOUT", 60*time.Second),
+		},
+		AI: AIConfig{
+			Provider: strings.ToLower(p.str("AI_PROVIDER", ProviderGemini)),
+
+			GeminiAPIKey: p.str("GEMINI_API_KEY", ""),
+			GeminiModel:  p.str("GEMINI_MODEL", "gemini-flash-latest"),
+
+			OpenAIAPIKey:  p.str("OPENAI_API_KEY", ""),
+			OpenAIModel:   p.str("OPENAI_MODEL", "gpt-4o-mini"),
+			OpenAIBaseURL: strings.TrimRight(p.str("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
+
+			DeepSeekAPIKey:   p.str("DEEPSEEK_API_KEY", ""),
+			DeepSeekModel:    p.str("DEEPSEEK_MODEL", "deepseek-flash"),
+			DeepSeekBaseURL:  strings.TrimRight(p.str("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "/"),
+			DeepSeekThinking: p.bool("DEEPSEEK_THINKING", false),
+
+			Temperature:      p.optionalFloat32("AI_TEMPERATURE"),
+			MaxTokens:        p.int("AI_MAX_TOKENS", 0),
+			Timeout:          p.duration("AI_TIMEOUT", 120*time.Second),
+			MaxRetries:       p.int("AI_MAX_RETRIES", 2),
+			ParallelRequests: p.int("AI_PARALLEL_REQUESTS", 3),
+		},
+		DB: DBConfig{
+			Host:            p.str("DB_HOST", "localhost"),
+			Port:            p.int("DB_PORT", 5432),
+			User:            p.str("DB_USER", "postgres"),
+			Password:        p.str("DB_PASSWORD", "postgres"),
+			Name:            p.str("DB_NAME", "presentation_bot"),
+			SSLMode:         p.str("DB_SSLMODE", "disable"),
+			MaxOpenConns:    p.int("DB_MAX_OPEN_CONNS", 10),
+			MaxIdleConns:    p.int("DB_MAX_IDLE_CONNS", 5),
+			ConnMaxLifetime: p.duration("DB_CONN_MAX_LIFETIME", 30*time.Minute),
+			ConnectRetries:  p.int("DB_CONNECT_RETRIES", 10),
+			ConnectDelay:    p.duration("DB_CONNECT_DELAY", 3*time.Second),
+		},
+		Generator: GeneratorConfig{
+			TemplatePath:      p.str("TEMPLATE_PATH", "templates/template.pptx"),
+			OutputDir:         p.str("OUTPUT_DIR", ""),
+			DocumentHeader:    p.optionalStr("DOCUMENT_HEADER", "O'ZBEKISTON RESPUBLIKASI OLIY TA'LIM, FAN VA INNOVATSIYALAR VAZIRLIGI"),
+			MaxConcurrentJobs: p.int("MAX_CONCURRENT_JOBS", 4),
+			JobTimeout:        p.duration("JOB_TIMEOUT", 10*time.Minute),
+		},
+		Limits: LimitsConfig{
+			MinSlides: p.int("MIN_SLIDES", 5),
+			MaxSlides: p.int("MAX_SLIDES", 25),
+			MinPages:  p.int("MIN_PAGES", 5),
+			MaxPages:  p.int("MAX_PAGES", 30),
+		},
+	}
+
+	// Avval formatdagi xatolar (masalan, "abc" son o'rnida), keyin mantiqiy tekshiruvlar.
+	if len(p.errs) > 0 {
+		return nil, fmt.Errorf("config: %w", errors.Join(p.errs...))
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	return cfg, nil
+}
+
+// validate qiymatlarning mantiqiy to'g'riligini tekshiradi.
+func (c *Config) validate() error {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+
+	if c.Telegram.Token == "" {
+		add("TELEGRAM_BOT_TOKEN majburiy")
+	}
+
+	switch c.AI.Provider {
+	case ProviderGemini:
+		if c.AI.GeminiAPIKey == "" {
+			add("AI_PROVIDER=gemini uchun GEMINI_API_KEY majburiy")
+		}
+	case ProviderOpenAI:
+		if c.AI.OpenAIAPIKey == "" {
+			add("AI_PROVIDER=openai uchun OPENAI_API_KEY majburiy")
+		}
+	case ProviderDeepSeek:
+		if c.AI.DeepSeekAPIKey == "" {
+			add("AI_PROVIDER=deepseek uchun DEEPSEEK_API_KEY majburiy")
+		}
+	default:
+		add("AI_PROVIDER noto'g'ri: %q (gemini, openai yoki deepseek bo'lishi kerak)", c.AI.Provider)
+	}
+	if c.AI.MaxRetries < 0 {
+		add("AI_MAX_RETRIES manfiy bo'lishi mumkin emas")
+	}
+	if c.AI.Timeout <= 0 {
+		add("AI_TIMEOUT musbat bo'lishi kerak")
+	}
+	if t := c.AI.Temperature; t != nil && (*t < 0 || *t > 2) {
+		add("AI_TEMPERATURE 0 va 2 oralig'ida bo'lishi kerak")
+	}
+	if c.AI.MaxTokens < 0 {
+		add("AI_MAX_TOKENS manfiy bo'lishi mumkin emas")
+	}
+	if c.AI.ParallelRequests < 1 || c.AI.ParallelRequests > 10 {
+		add("AI_PARALLEL_REQUESTS 1 dan 10 gacha bo'lishi kerak")
+	}
+
+	if c.DB.Port <= 0 || c.DB.Port > 65535 {
+		add("DB_PORT noto'g'ri: %d", c.DB.Port)
+	}
+	if c.DB.Name == "" {
+		add("DB_NAME majburiy")
+	}
+	if c.DB.ConnectRetries < 1 {
+		add("DB_CONNECT_RETRIES kamida 1 bo'lishi kerak")
+	}
+
+	if c.Generator.TemplatePath == "" {
+		add("TEMPLATE_PATH majburiy")
+	}
+	if c.Generator.MaxConcurrentJobs < 1 {
+		add("MAX_CONCURRENT_JOBS kamida 1 bo'lishi kerak")
+	}
+	if c.Generator.JobTimeout <= 0 {
+		add("JOB_TIMEOUT musbat bo'lishi kerak")
+	}
+
+	// Kamida 3 ta slayd: titul + kamida 1 ta mazmunli slayd + yakuniy slayd.
+	if c.Limits.MinSlides < 3 {
+		add("MIN_SLIDES kamida 3 bo'lishi kerak")
+	}
+	if c.Limits.MaxSlides < c.Limits.MinSlides {
+		add("MAX_SLIDES (%d) MIN_SLIDES (%d) dan kichik bo'lmasligi kerak", c.Limits.MaxSlides, c.Limits.MinSlides)
+	}
+	if c.Limits.MaxSlides > 60 {
+		add("MAX_SLIDES 60 dan oshmasligi kerak")
+	}
+
+	// Kamida 4 sahifa: titul + reja + kamida 1 sahifa matn + adabiyotlar.
+	if c.Limits.MinPages < 4 {
+		add("MIN_PAGES kamida 4 bo'lishi kerak")
+	}
+	if c.Limits.MaxPages < c.Limits.MinPages {
+		add("MAX_PAGES (%d) MIN_PAGES (%d) dan kichik bo'lmasligi kerak", c.Limits.MaxPages, c.Limits.MinPages)
+	}
+	if c.Limits.MaxPages > 60 {
+		add("MAX_PAGES 60 dan oshmasligi kerak")
+	}
+
+	return errors.Join(errs...)
+}
+
+// parser muhit o'zgaruvchilarini tiplarga o'giradi va format xatolarini yig'adi,
+// shunda foydalanuvchi barcha xatolarni bir vaqtda ko'radi.
+type parser struct {
+	errs []error
+}
+
+func (p *parser) str(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return def
+}
+
+// optionalStr str kabi, lekin DisabledValue ("-") berilsa bo'sh satr qaytaradi.
+func (p *parser) optionalStr(key, def string) string {
+	if v := p.str(key, def); v != DisabledValue {
+		return v
+	}
+	return ""
+}
+
+func (p *parser) bool(key string, def bool) bool {
+	raw := p.str(key, "")
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("%s true yoki false bo'lishi kerak, berilgan: %q", key, raw))
+		return def
+	}
+	return v
+}
+
+func (p *parser) int(key string, def int) int {
+	raw := p.str(key, "")
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("%s butun son bo'lishi kerak, berilgan: %q", key, raw))
+		return def
+	}
+	return v
+}
+
+func (p *parser) duration(key string, def time.Duration) time.Duration {
+	raw := p.str(key, "")
+	if raw == "" {
+		return def
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("%s davomiylik bo'lishi kerak (masalan 30s, 5m), berilgan: %q", key, raw))
+		return def
+	}
+	return v
+}
+
+func (p *parser) optionalFloat32(key string) *float32 {
+	raw := p.str(key, "")
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 32)
+	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("%s son bo'lishi kerak, berilgan: %q", key, raw))
+		return nil
+	}
+	f := float32(v)
+	return &f
+}

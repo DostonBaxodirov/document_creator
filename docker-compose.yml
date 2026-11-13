@@ -1,0 +1,53 @@
+# Ishga tushirish:
+#   cp .env.example .env   # va tokenlarni kiriting
+#   docker compose up -d --build
+#   docker compose logs -f bot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: presentation-bot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-presentation_bot}
+      TZ: Asia/Tashkent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Bazaga tashqaridan (masalan, DBeaver orqali) ulanish kerak bo'lsa, oching:
+    # ports:
+    #   - "5432:5432"
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: telegram-presentation-bot:latest
+    container_name: presentation-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Konteynerlar tarmog'ida baza servis nomi orqali topiladi.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # SHUTDOWN_TIMEOUT (60s) + zaxira: ishlayotgan generatsiyalar yakunlanishiga ulgursin.
+    stop_grace_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
