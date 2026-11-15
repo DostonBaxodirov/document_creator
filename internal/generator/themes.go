@@ -1,13 +1,20 @@
 package generator
 
 // themes.go — taqdimot dizayn mavzulari. Har bir mavzu o'z ranglar
-// palitrasi, shriftlari, kartochka uslubi, titul va yakuniy slaydi hamda
-// mazmunli slaydlar "ramkasi"ga (fon, sarlavha, pastki kolontitul) ega.
-// Mazmunli slaydlarning maketlari (layouts.go) esa barcha mavzular uchun
-// umumiy va faqat palitra orqali ranglanadi.
+// palitrasi, shriftlari, kartochka va belgi uslubi, titul va yakuniy slaydi
+// hamda mazmunli slaydlar "ramkasi"ga (fon, sarlavha joyi, kolontitul) ega.
+// Mazmunli slaydlarning maketlari (layouts.go, layouts_extra.go) umumiy,
+// lekin mavzu uslubi (kartochka turi, belgilar, mazmun maydoni shakli)
+// orqali har bir dizaynda boshqacha ko'rinadi; ayrim dizaynlar o'z maketiga
+// ham ega (theme.layouts). Har bir dizaynning "imzo" maketlari (signature)
+// AI promptiga uzatiladi — taqdimot tuzilishi dizaynga mos chiqadi.
+// Rasmli dizaynlar — themes_photo.go, tuzilishi boshqacha dizaynlar —
+// themes_extra.go da.
 
 import (
 	"fmt"
+	"math"
+	"slices"
 	"strconv"
 )
 
@@ -17,6 +24,7 @@ type ThemeInfo struct {
 	Name        string
 	Emoji       string
 	Description string
+	Photos      bool // rasmli dizayn: titul va mos slaydlarda AI chizgan rasmlar
 }
 
 // palette — mavzu ranglari (RRGGBB).
@@ -36,6 +44,12 @@ type palette struct {
 	panel     paint    // urg'u paneli (ta'rif, xulosa) foni
 	onPanel   string   // panel ustidagi matn
 	shadow    string   // soya rangi
+	// tints — "tint" uslubidagi kartochkalar foni (elementga xos och ranglar);
+	// bo'sh bo'lsa series rangidan hisoblanadi.
+	tints []string
+	// ink — katta raqamlar va qiymatlar matni rangi; bo'sh bo'lsa series
+	// rangi ishlatiladi (series och bo'lgan dizaynlarda o'qilishi uchun).
+	ink string
 }
 
 // cardStyle — kartochkalar ko'rinishi.
@@ -46,6 +60,14 @@ type cardStyle struct {
 	leftBar bool // chap tomonda rangli chiziq
 	topBar  bool // yuqorida to'liq rangli chiziq
 	tab     bool // yuqorida qisqa yorug' chiziq
+
+	hard      bool    // qalin chegara va siljigan qattiq soya (neo-brutalizm)
+	tint      bool    // fon — elementga xos och rang (palette.tints)
+	rule      bool    // fon yo'q, faqat yuqorida rangli chiziq (tipografik uslub)
+	ticks     bool    // burchaklarda "+" belgilari (chizma uslubi)
+	dash      string  // chegara chizig'i turi ("dash" — bo'r bilan chizilgandek)
+	borderW   float64 // chegara qalinligi, pt (0 — 1 pt)
+	fillAlpha int     // fon shaffof emasligi, % (0 — to'liq)
 }
 
 type theme struct {
@@ -59,7 +81,26 @@ type theme struct {
 	cards        cardStyle
 	bulletChar   string
 	dark         bool
+	neon         bool // to'q fonda belgilar va sarlavhalar atrofida yorug'lik (glow)
+	badgeSquare  bool // raqamli belgilar kvadrat shaklida
+	badgePlain   bool // raqamlar shaklsiz — fon rangidagi maydonda katta matn
 	transition   string
+
+	// Dizayn tuzilishi (AI promptiga uzatiladi — ThemeStructure).
+	signature []string // dizaynga xos maketlar: AI ularni albatta ishlatadi
+	compact   bool     // matn uchun joy kam (katta shrift, banner) — AI qisqaroq yozadi
+	// layouts — mavzuga xos maketlar (umumiy maket o'rniga chiziladi).
+	layouts map[string]layoutFunc
+
+	// Rasmli dizaynlar (themes_photo.go).
+	photos     bool     // titul, yakuniy va mos mazmunli slaydlarda rasm bor
+	photoStyle string   // AI rasm promptiga qo'shiladigan uslub (inglizcha)
+	photoLeft  bool     // mazmunli slaydda rasm chap tomonda (aks holda o'ngda)
+	photoFrame picFrame // mazmunli slayddagi rasm ramkasi
+	// photoBanner — rasm mazmunli slayd tepasida keng banner (yotiq rasm);
+	// banner mazmun kengligini kamaytirmaydi, shuning uchun deyarli barcha
+	// maketlarga rasm qo'yiladi.
+	photoBanner bool
 
 	cover   func(t *theme, c *canvas, d *Deck)
 	closing func(t *theme, c *canvas, d *Deck)
@@ -74,6 +115,9 @@ type slideInfo struct {
 	num, total  int
 	topic       string // qisqartirilgan mavzu
 	university  string // qisqartirilgan universitet nomi
+	// photo — slayd yonidagi rasm (rasmli dizaynlarda, mos maketda); chrome
+	// uni chizadi va matn uchun qolgan maydonni qaytaradi.
+	photo *Picture
 }
 
 // Mavzu identifikatorlari.
@@ -82,12 +126,59 @@ const (
 	ThemeModern   = "zamonaviy"
 	ThemeMinimal  = "minimal"
 	ThemeTech     = "texno"
+
+	// Rasmli dizaynlar.
+	ThemeJournal = "jurnal"
+	ThemeNature  = "tabiat"
+	ThemeOcean   = "okean"
+	ThemeSunset  = "shom"
+
+	// Tuzilishi boshqacha dizaynlar (themes_extra.go).
+	ThemeStrategy  = "strategiya"
+	ThemeRetro     = "retro"
+	ThemeTypo      = "tipografika"
+	ThemeBento     = "bento"
+	ThemeBoard     = "doska"
+	ThemeBlueprint = "chizma"
+	ThemePastel    = "pastel"
+	ThemePanorama  = "panorama" // rasmli
 )
 
 // DefaultTheme — foydalanuvchi tanlamagan bo'lsa ishlatiladigan mavzu.
 const DefaultTheme = ThemeAcademic
 
-var themes = []*theme{academicTheme, modernTheme, minimalTheme, techTheme}
+var themes = []*theme{
+	academicTheme, modernTheme, minimalTheme, techTheme,
+	journalTheme, natureTheme, oceanTheme, sunsetTheme,
+	strategyTheme, retroTheme, typoTheme, bentoTheme,
+	boardTheme, blueprintTheme, pastelTheme, panoramaTheme,
+}
+
+// Structure — dizayn tuzilishi: AI promptini tanlangan dizaynga moslash uchun.
+type Structure struct {
+	Layouts   []string // dizayn chizadigan maketlar (AI faqat shulardan tanlaydi)
+	Signature []string // dizaynga xos maketlar — AI ularni ishlatishi kerak
+	Compact   bool     // matn uchun joy kam — AI qisqaroq yozadi
+}
+
+// coreLayouts — barcha dizaynlarda ishlatiladigan asosiy maketlar.
+var coreLayouts = []string{
+	LayoutAgenda, LayoutBullets, LayoutCards, LayoutComparison,
+	LayoutProcess, LayoutFacts, LayoutDefinition, LayoutConclusion,
+}
+
+// ThemeStructure dizayn tuzilishini qaytaradi: asosiy maketlar va dizaynning
+// imzo maketlari. Noma'lum ID uchun — standart dizayn tuzilishi.
+func ThemeStructure(id string) Structure {
+	t := themeByID(id)
+	layouts := append([]string(nil), coreLayouts...)
+	for _, l := range t.signature {
+		if !slices.Contains(layouts, l) {
+			layouts = append(layouts, l)
+		}
+	}
+	return Structure{Layouts: layouts, Signature: slices.Clone(t.signature), Compact: t.compact}
+}
 
 // Themes barcha mavzular ro'yxatini (tanlash tugmalari uchun) qaytaradi.
 func Themes() []ThemeInfo {
@@ -138,22 +229,101 @@ func (t *theme) seriesColor(i int) string {
 	return t.pal.series[i%len(t.pal.series)]
 }
 
-// card mavzu uslubidagi kartochkani chizadi; i — ketma-ketlikdagi o'rni (rang uchun).
-func (t *theme) card(c *canvas, r rect, i int) {
-	s := shape{fill: solid(t.pal.surface)}
-	if t.cards.radius > 0 {
-		s.geom, s.adj = "roundRect", roundAdj(r, t.cards.radius)
+// tint i-element uchun och fon rangi ("tint" uslubidagi kartochkalar).
+func (t *theme) tint(i int) string {
+	if len(t.pal.tints) > 0 {
+		return t.pal.tints[max(i, 0)%len(t.pal.tints)]
 	}
-	if t.cards.shadow {
+	return mixHex(t.seriesColor(i), t.pal.surface, 0.85)
+}
+
+// cardBg kartochka fonining haqiqiy rangi (xira matnni oldindan aralashtirish
+// uchun: iPhone va Quick Look matn shaffofligini ko'rsatmaydi).
+func (t *theme) cardBg(i int) string {
+	cs := t.cards
+	switch {
+	case cs.rule:
+		return t.pal.bg
+	case cs.tint && i >= 0:
+		return t.tint(i)
+	case cs.fillAlpha > 0:
+		return mixHex(t.pal.bg, t.pal.surface, float64(cs.fillAlpha)/100)
+	}
+	return t.pal.surface
+}
+
+// inkColor i-element katta raqami yoki qiymati rangi.
+func (t *theme) inkColor(i int) string {
+	if t.pal.ink != "" {
+		return t.pal.ink
+	}
+	return t.seriesColor(i)
+}
+
+// boxShape kartochka (yoki panel) asosiy shakli; i < 0 — rangsiz (oddiy fon).
+func (t *theme) boxShape(r rect, i int) shape {
+	cs := t.cards
+	s := shape{fill: solid(t.pal.surface)}
+	switch {
+	case cs.rule:
+		s.fill = paint{}
+	case cs.tint && i >= 0:
+		s.fill = solid(t.tint(i))
+	case cs.fillAlpha > 0:
+		s.fill = solidA(t.pal.surface, cs.fillAlpha)
+	}
+	if cs.radius > 0 {
+		s.geom, s.adj = "roundRect", roundAdj(r, cs.radius)
+	}
+	if cs.shadow {
 		s.shadow = &shadow{blur: 18, dist: 3, dir: 90, color: t.pal.shadow, alpha: 13}
 	}
-	if t.cards.border {
-		s.line = &stroke{color: t.pal.line, width: 1}
+	if cs.border || cs.hard || cs.dash != "" || cs.ticks {
+		w := cs.borderW
+		if w == 0 {
+			w = 1
+		}
+		s.line = &stroke{color: t.pal.line, width: w, dash: cs.dash}
 	}
-	c.add(r, s)
+	return s
+}
 
+// hardShadow neo-brutalizm uslubidagi siljigan qattiq soya (shakldan oldin chiziladi).
+func (t *theme) hardShadow(c *canvas, r rect, s shape) {
+	if !t.cards.hard {
+		return
+	}
+	const off = 0.08
+	c.add(rect{r.X + off, r.Y + off, r.W, r.H}, shape{geom: s.geom, adj: s.adj, rot: s.rot, fill: solid(t.pal.shadow)})
+}
+
+// cornerTicks kartochka burchaklaridagi "+" belgilari (chizma uslubi).
+func (t *theme) cornerTicks(c *canvas, r rect) {
+	if !t.cards.ticks {
+		return
+	}
+	const arm, th = 0.09, 0.012
+	for _, p := range [][2]float64{{r.X, r.Y}, {r.right(), r.Y}, {r.X, r.bottom()}, {r.right(), r.bottom()}} {
+		c.add(rect{p[0] - arm, p[1] - th/2, 2 * arm, th}, shape{fill: solid(t.pal.accent)})
+		c.add(rect{p[0] - th/2, p[1] - arm, th, 2 * arm}, shape{fill: solid(t.pal.accent)})
+	}
+}
+
+// box kartochka fonini (soya va burchak belgilari bilan) chizadi, rangli chiziqlarsiz.
+func (t *theme) box(c *canvas, r rect, i int) {
+	s := t.boxShape(r, i)
+	t.hardShadow(c, r, s)
+	c.add(r, s)
+	t.cornerTicks(c, r)
+}
+
+// card mavzu uslubidagi kartochkani chizadi; i — ketma-ketlikdagi o'rni (rang uchun).
+func (t *theme) card(c *canvas, r rect, i int) {
+	t.box(c, r, i)
 	col := t.seriesColor(i)
 	switch {
+	case t.cards.rule:
+		c.add(rect{r.X, r.Y, r.W, 0.045}, shape{fill: solid(col)})
 	case t.cards.leftBar:
 		c.add(rect{r.X, r.Y, 0.06, r.H}, shape{fill: solid(col)})
 	case t.cards.topBar:
@@ -170,9 +340,14 @@ func (t *theme) cardPad(r rect, padX, padY float64) rect {
 		in.X += 0.05
 		in.W -= 0.05
 	}
-	if t.cards.topBar || t.cards.tab {
+	if t.cards.topBar || t.cards.tab || t.cards.rule {
 		in.Y += 0.04
 		in.H -= 0.04
+	}
+	if t.cards.rule {
+		// Fonsiz kartochkada matn chap chetga tekislanadi.
+		in.X -= padX * 0.6
+		in.W += padX * 0.6
 	}
 	return in
 }
@@ -186,54 +361,98 @@ func (t *theme) panelShape(r rect) shape {
 	if t.cards.shadow {
 		s.shadow = &shadow{blur: 20, dist: 4, dir: 90, color: t.pal.shadow, alpha: 22}
 	}
-	if t.dark {
+	switch {
+	case t.cards.hard:
+		s.line = &stroke{color: t.pal.line, width: max(t.cards.borderW, 1)}
+	case t.cards.dash != "":
+		s.line = &stroke{color: t.pal.onPanel, width: 1.25, alpha: 55, dash: t.cards.dash}
+	case t.cards.ticks:
+		s.line = &stroke{color: t.pal.onPanel, width: 0.75, alpha: 70}
+	case t.dark:
 		s.line = &stroke{color: t.pal.primary, width: 1, alpha: 45}
 	}
 	return s
 }
 
-// badge raqamli (yoki belgili) doirani chizadi.
-func (t *theme) badge(c *canvas, r rect, label string, i int) {
+// panel urg'u panelini (soya va burchak belgilari bilan) chizadi.
+func (t *theme) panel(c *canvas, r rect) {
+	s := t.panelShape(r)
+	t.hardShadow(c, r, s)
+	c.add(r, s)
+	t.cornerTicks(c, r)
+}
+
+// badgeShape raqamli (yoki belgili) belgi shakli va uning matn rangi.
+func (t *theme) badgeShape(i int) (shape, string) {
 	col := t.seriesColor(i)
-	size := r.H * 72 * 0.4
-	txt := run{text: label, size: size, bold: true, color: t.pal.onSeries, font: t.headFont}
 	s := shape{geom: "ellipse", fill: solid(col)}
-	if t.badgeOutline {
-		s.fill = solid(t.pal.bg)
-		s.line = &stroke{color: col, width: 1.5}
-		txt.color = col
+	txt := t.pal.onSeries
+	if t.badgeSquare {
+		s.geom, s.adj = "roundRect", []int{12000}
 	}
-	if t.dark {
+	switch {
+	case t.badgePlain:
+		s.geom, s.adj, s.fill, txt = "rect", nil, solid(t.pal.bg), t.inkColor(i)
+	case t.badgeOutline:
+		s.fill = solid(t.pal.bg)
+		s.line = &stroke{color: col, width: 1.5, dash: t.cards.dash}
+		txt = col
+	case t.cards.hard:
+		s.line = &stroke{color: t.pal.line, width: max(t.cards.borderW, 1)}
+	}
+	if t.neon {
 		s.glow = &glow{radius: 7, color: col, alpha: 35}
 	}
-	s.text = &textBody{anchor: "ctr", inset: [4]float64{0.01, 0.01, 0.01, 0.01}, paras: []para{{align: "ctr", runs: []run{txt}}}}
+	return s, txt
+}
+
+// badge raqamli (yoki belgili) doirani chizadi.
+func (t *theme) badge(c *canvas, r rect, label string, i int) {
+	s, color := t.badgeShape(i)
+	size := r.H * 72 * 0.4
+	if t.badgePlain {
+		size = r.H * 72 * 0.62
+	}
+	txt := run{text: label, size: size, bold: true, color: color, font: t.headFont}
+	align := "ctr"
+	if t.badgePlain {
+		align = "l"
+	}
+	s.text = &textBody{anchor: "ctr", inset: [4]float64{0.01, 0.01, 0.01, 0.01}, paras: []para{{align: align, runs: []run{txt}}}}
 	c.add(r, s)
 }
 
 // check — "bajarildi" belgili doira (xulosa slaydi uchun).
 func (t *theme) check(c *canvas, r rect, i int) {
-	col := t.seriesColor(i)
-	txt := run{text: "✓", size: r.H * 72 * 0.5, bold: true, color: t.pal.onSeries, font: "Segoe UI Symbol"}
-	s := shape{geom: "ellipse", fill: solid(col)}
-	if t.badgeOutline {
-		s.fill = solid(t.pal.bg)
-		s.line = &stroke{color: col, width: 1.5}
-		txt.color = col
+	s, color := t.badgeShape(i)
+	align := "ctr"
+	if t.badgePlain {
+		align = "l"
 	}
-	s.text = &textBody{anchor: "ctr", inset: [4]float64{0.01, 0.01, 0.01, 0.01}, paras: []para{{align: "ctr", runs: []run{txt}}}}
+	txt := run{text: "✓", size: r.H * 72 * 0.5, bold: true, color: color, font: "Segoe UI Symbol"}
+	s.text = &textBody{anchor: "ctr", inset: [4]float64{0.01, 0.01, 0.01, 0.01}, paras: []para{{align: align, runs: []run{txt}}}}
 	c.add(r, s)
+}
+
+// mixHex ikki rangni aralashtiradi: k=0 — a, k=1 — b.
+func mixHex(a, b string, k float64) string {
+	ca, cb := hexColor(a), hexColor(b)
+	m := func(x, y uint8) int { return int(math.Round(float64(x) + (float64(y)-float64(x))*k)) }
+	return fmt.Sprintf("%02X%02X%02X", m(ca.R, cb.R), m(ca.G, cb.G), m(ca.B, cb.B))
 }
 
 // titleBlock — titul slayddagi mavzu va qo'shimcha sarlavha.
 func (t *theme) titleBlock(d *Deck, size float64, color string, subSize float64, subColor string, subAlpha int, align string) textBody {
 	paras := []para{{align: align, lineSp: 0.95, runs: []run{{text: d.Topic, size: size, bold: true, color: color, font: t.headFont}}}}
-	if t.ID == ThemeMinimal {
+	if !t.headBold {
 		paras[0].runs[0].bold = false
 	}
 	if d.Subtitle != "" {
 		paras = append(paras, para{align: align, before: 14, runs: []run{{text: d.Subtitle, size: subSize, color: subColor, alpha: subAlpha, font: t.bodyFont}}})
 	}
-	return textBody{fit: true, minFit: 0.5, paras: paras}
+	// Mavzu 500 belgigacha bo'lishi mumkin — uzun mavzu sig'ishi uchun shrift
+	// asl o'lchamining 35% igacha kichraya oladi.
+	return textBody{fit: true, minFit: 0.35, paras: paras}
 }
 
 // people — "Bajardi" / "Tekshirdi" qatorlari.
@@ -284,7 +503,7 @@ func ring(c *canvas, cx, cy, r float64, color string, width float64, alpha int, 
 var academicTheme = &theme{
 	ThemeInfo: ThemeInfo{
 		ID: ThemeAcademic, Name: "Akademik", Emoji: "🏛",
-		Description: "to'q ko'k va oltin ranglar, klassik uslub",
+		Description: "klassik, ko'k va oltin",
 	},
 	pal: palette{
 		bg: "F7F5F0", surface: "FFFFFF", surface2: "EEF1F6",
@@ -296,6 +515,7 @@ var academicTheme = &theme{
 	headFont: "Cambria", bodyFont: "Calibri", headBold: true, quoteItalic: true,
 	cards:      cardStyle{shadow: true, leftBar: true},
 	bulletChar: "■",
+	signature:  []string{LayoutTimeline, LayoutPyramid, LayoutStatement},
 	transition: `<p:transition spd="med"><p:fade/></p:transition>`,
 	cover:      academicCover,
 	closing:    academicClosing,
@@ -372,7 +592,7 @@ func academicChrome(t *theme, c *canvas, s slideInfo) rect {
 var modernTheme = &theme{
 	ThemeInfo: ThemeInfo{
 		ID: ThemeModern, Name: "Zamonaviy", Emoji: "💜",
-		Description: "binafsha gradient, yumaloq kartochkalar",
+		Description: "binafsha gradient",
 	},
 	pal: palette{
 		bg: "F4F5FB", surface: "FFFFFF", surface2: "EEF0FF",
@@ -384,6 +604,7 @@ var modernTheme = &theme{
 	headFont: "Segoe UI", bodyFont: "Segoe UI", headBold: true,
 	cards:      cardStyle{radius: 0.16, shadow: true},
 	bulletChar: "●",
+	signature:  []string{LayoutHub, LayoutMatrix, LayoutStatement},
 	transition: `<p:transition spd="med"><p:push dir="u"/></p:transition>`,
 	cover:      modernCover,
 	closing:    modernClosing,
@@ -473,7 +694,7 @@ func modernChrome(t *theme, c *canvas, s slideInfo) rect {
 var minimalTheme = &theme{
 	ThemeInfo: ThemeInfo{
 		ID: ThemeMinimal, Name: "Minimal", Emoji: "🌿",
-		Description: "oq fon, yashil aksent, nafis va toza",
+		Description: "oq fon, nafis va toza",
 	},
 	pal: palette{
 		bg: "FFFFFF", surface: "F5F7F6", surface2: "E7F2EF",
@@ -485,6 +706,7 @@ var minimalTheme = &theme{
 	headFont: "Georgia", bodyFont: "Calibri", headBold: false, quoteItalic: true, badgeOutline: true,
 	cards:      cardStyle{topBar: true},
 	bulletChar: "–",
+	signature:  []string{LayoutStatement, LayoutTimeline},
 	transition: `<p:transition spd="med"><p:fade/></p:transition>`,
 	cover:      minimalCover,
 	closing:    minimalClosing,
@@ -576,7 +798,7 @@ func minimalChrome(t *theme, c *canvas, s slideInfo) rect {
 var techTheme = &theme{
 	ThemeInfo: ThemeInfo{
 		ID: ThemeTech, Name: "Texno", Emoji: "🌌",
-		Description: "to'q fon, neon ranglar, texnologik uslub",
+		Description: "to'q fon, neon ranglar",
 	},
 	pal: palette{
 		bg: "0B1120", surface: "111A2E", surface2: "152039",
@@ -589,6 +811,8 @@ var techTheme = &theme{
 	cards:      cardStyle{radius: 0.07, border: true, tab: true},
 	bulletChar: "►",
 	dark:       true,
+	neon:       true,
+	signature:  []string{LayoutCycle, LayoutHub, LayoutTimeline},
 	transition: `<p:transition spd="med"><p:wipe dir="r"/></p:transition>`,
 	cover:      techCover,
 	closing:    techClosing,

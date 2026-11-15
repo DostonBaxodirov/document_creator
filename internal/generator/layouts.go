@@ -3,7 +3,8 @@ package generator
 // layouts.go — mazmunli slaydlar maketlari. AI har bir slayd uchun maketni
 // tanlaydi; bu yerda u mavzu palitrasi va kartochka uslubida chiziladi.
 // Maket uchun ma'lumot yetarli bo'lmasa (masalan, "facts" da raqamlar yo'q),
-// normalizeSlide uni mosrog'iga almashtiradi.
+// normalizeSlide uni mosrog'iga almashtiradi. Qo'shimcha maketlar (vaqt
+// chizig'i, piramida, matritsa, sikl, markaz, tezis) — layouts_extra.go da.
 
 import (
 	"math"
@@ -20,7 +21,21 @@ const (
 	LayoutFacts      = "facts"      // katta raqamlar va faktlar
 	LayoutDefinition = "definition" // tushuncha ta'rifi + xususiyatlari
 	LayoutConclusion = "conclusion" // xulosa: asosiy fikrlar + yakuniy xulosa
+
+	LayoutTimeline  = "timeline"  // sanalar bilan xronologiya (vaqt chizig'i)
+	LayoutPyramid   = "pyramid"   // ierarxiya darajalari (piramida)
+	LayoutMatrix    = "matrix"    // 2x2 tasnif (masalan, SWOT)
+	LayoutCycle     = "cycle"     // takrorlanuvchi sikl bosqichlari
+	LayoutHub       = "hub"       // markaziy tushuncha va uning tarkibiy qismlari
+	LayoutStatement = "statement" // bitta asosiy tezis (katta matn) + dalillar
 )
+
+// layoutFunc — mazmunli slayd maketini chizuvchi funksiya.
+type layoutFunc func(t *theme, c *canvas, body rect, s *Slide)
+
+// narrowBody — bundan tor mazmun maydoni (yonida rasm bor) uchun maketlar
+// ixchamroq joylashadi (dyuym).
+const narrowBody = 9.0
 
 // Maketlardagi elementlar soni chegaralari.
 const (
@@ -28,6 +43,8 @@ const (
 	maxListItems   = 6
 	maxFactItems   = 4
 	maxValueRunes  = 14
+	maxLevelItems  = 5  // piramida darajalari
+	maxLabelRunes  = 40 // sikl va markaz maketlaridagi markaziy yozuv
 )
 
 // normalizeSlide maket uchun ma'lumot yetarliligini tekshiradi va kerak
@@ -41,10 +58,11 @@ func normalizeSlide(s Slide) Slide {
 	}
 	s.Items = items
 
+	n := len(s.Items)
 	switch s.Layout {
 	case LayoutAgenda, LayoutBullets, LayoutCards, LayoutProcess, LayoutConclusion:
 	case LayoutComparison:
-		if len(s.Items) < 2 {
+		if n < 2 {
 			s.Layout = LayoutBullets
 		}
 	case LayoutFacts:
@@ -54,10 +72,30 @@ func normalizeSlide(s Slide) Slide {
 				withValue++
 			}
 		}
-		if withValue < len(s.Items) || len(s.Items) < 2 {
+		if withValue < n || n < 2 {
 			s.Layout = LayoutCards
 		}
 	case LayoutDefinition:
+		if s.Highlight == "" {
+			s.Layout = LayoutBullets
+		}
+	case LayoutTimeline:
+		if n < 3 {
+			s.Layout = LayoutProcess
+		}
+	case LayoutPyramid:
+		if n < 3 || n > maxLevelItems {
+			s.Layout = LayoutCards
+		}
+	case LayoutMatrix:
+		if n != 4 {
+			s.Layout = LayoutCards
+		}
+	case LayoutCycle, LayoutHub:
+		if n < 3 {
+			s.Layout = LayoutCards
+		}
+	case LayoutStatement:
 		if s.Highlight == "" {
 			s.Layout = LayoutBullets
 		}
@@ -65,16 +103,20 @@ func normalizeSlide(s Slide) Slide {
 		s.Layout = LayoutBullets
 	}
 
-	if s.Layout == LayoutCards && len(s.Items) < 2 || s.Layout == LayoutProcess && len(s.Items) < 2 {
+	if s.Layout == LayoutCards && n < 2 || s.Layout == LayoutProcess && n < 2 {
 		s.Layout = LayoutBullets
 	}
-	if s.Layout == LayoutBullets && len(s.Items) == 0 && s.Highlight != "" {
+	if s.Layout == LayoutBullets && n == 0 && s.Highlight != "" {
 		s.Layout = LayoutDefinition
 	}
 	return s
 }
 
 func renderContent(t *theme, c *canvas, body rect, s *Slide) {
+	if f, ok := t.layouts[s.Layout]; ok {
+		f(t, c, body, s)
+		return
+	}
 	switch s.Layout {
 	case LayoutAgenda:
 		layoutAgenda(t, c, body, s)
@@ -90,6 +132,18 @@ func renderContent(t *theme, c *canvas, body rect, s *Slide) {
 		layoutDefinition(t, c, body, s)
 	case LayoutConclusion:
 		layoutConclusion(t, c, body, s)
+	case LayoutTimeline:
+		layoutTimeline(t, c, body, s)
+	case LayoutPyramid:
+		layoutPyramid(t, c, body, s)
+	case LayoutMatrix:
+		layoutMatrix(t, c, body, s)
+	case LayoutCycle:
+		layoutCycle(t, c, body, s)
+	case LayoutHub:
+		layoutHub(t, c, body, s)
+	case LayoutStatement:
+		layoutStatement(t, c, body, s)
 	default:
 		layoutBullets(t, c, body, s)
 	}
@@ -188,9 +242,14 @@ func distribute(need []float64, avail float64) []float64 {
 
 // itemParas — element sarlavhasi va izohi paragraflari.
 func (t *theme) itemParas(it Item, hs, ts float64, align string, gap float64) []para {
+	return t.itemParasC(it, hs, ts, align, gap, t.pal.text, t.pal.muted)
+}
+
+// itemParasC — itemParas berilgan ranglar bilan (rangli fon ustidagi matn uchun).
+func (t *theme) itemParasC(it Item, hs, ts float64, align string, gap float64, headColor, textColor string) []para {
 	var ps []para
 	if it.Heading != "" {
-		ps = append(ps, para{align: align, runs: []run{{text: it.Heading, size: hs, bold: true, color: t.pal.text, font: t.headFont}}})
+		ps = append(ps, para{align: align, runs: []run{{text: it.Heading, size: hs, bold: true, color: headColor, font: t.headFont}}})
 	}
 	text := it.Text
 	if text == "" && len(it.Points) > 0 {
@@ -202,28 +261,13 @@ func (t *theme) itemParas(it Item, hs, ts float64, align string, gap float64) []
 		}
 	}
 	if text != "" {
-		p := para{align: align, lineSp: 1.05, runs: []run{t.tx(text, ts, t.pal.muted)}}
+		p := para{align: align, lineSp: 1.05, runs: []run{t.tx(text, ts, textColor)}}
 		if len(ps) > 0 {
 			p.before = gap
 		}
 		ps = append(ps, p)
 	}
 	return ps
-}
-
-// surface — kartochka foni (rangli chiziqlarsiz).
-func (t *theme) surface(r rect) shape {
-	s := shape{fill: solid(t.pal.surface)}
-	if t.cards.radius > 0 {
-		s.geom, s.adj = "roundRect", roundAdj(r, t.cards.radius)
-	}
-	if t.cards.shadow {
-		s.shadow = &shadow{blur: 18, dist: 3, dir: 90, color: t.pal.shadow, alpha: 13}
-	}
-	if t.cards.border {
-		s.line = &stroke{color: t.pal.line, width: 1}
-	}
-	return s
 }
 
 // marker — ro'yxat elementi belgisi (mavzuga xos shakl).
@@ -238,6 +282,41 @@ func (t *theme) marker(c *canvas, cx, cy float64, i int) {
 	case ThemeTech:
 		m := 0.2
 		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "diamond", fill: solid(col), glow: &glow{radius: 5, color: col, alpha: 50}})
+	case ThemeJournal:
+		m := 0.14
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{fill: solid(col)})
+	case ThemeNature:
+		m := 0.18
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "ellipse", fill: solid(col)})
+	case ThemeOcean:
+		m := 0.18
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "roundRect", adj: []int{25000}, fill: solid(col)})
+	case ThemeSunset:
+		m := 0.18
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "ellipse", fill: solid(col), glow: &glow{radius: 5, color: col, alpha: 45}})
+	case ThemeStrategy:
+		m := 0.16
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{fill: solid(col)})
+	case ThemeRetro:
+		m := 0.24
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "ellipse", fill: solid(col), line: &stroke{color: t.pal.line, width: 1.5}})
+	case ThemeTypo:
+		c.text(rect{cx - 0.3, cy - 0.25, 0.6, 0.5}, textBody{anchor: "ctr", inset: [4]float64{0.01, 0, 0.01, 0}, paras: []para{{align: "ctr", runs: []run{
+			{text: pad2(i + 1), size: 17, bold: true, color: t.inkColor(i), font: t.headFont}}}}})
+	case ThemeBento:
+		m := 0.22
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "roundRect", adj: []int{30000}, fill: solid(col)})
+	case ThemeBoard:
+		ring(c, cx, cy, 0.11, col, 1.5, 100, "")
+	case ThemeBlueprint:
+		m := 0.18
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{line: &stroke{color: col, width: 1}})
+		c.add(rect{cx - 0.035, cy - 0.035, 0.07, 0.07}, shape{fill: solid(col)})
+	case ThemePastel:
+		m := 0.2
+		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "ellipse", fill: solid(col)})
+	case ThemePanorama:
+		c.add(rect{cx - 0.08, cy - 0.11, 0.2, 0.22}, shape{geom: "triangle", rot: 90, fill: solid(col)})
 	default:
 		m := 0.2
 		c.add(rect{cx - m/2, cy - m/2, m, m}, shape{geom: "ellipse", fill: linear(45, col, t.pal.secondary)})
@@ -251,9 +330,20 @@ func (t *theme) iconTile(c *canvas, r rect, label string, i int) {
 	if t.dark {
 		alpha = 20
 	}
-	c.add(r, shape{geom: "roundRect", adj: []int{22000}, fill: solidA(col, alpha), text: &textBody{
-		anchor: "ctr", inset: [4]float64{0.01, 0.01, 0.01, 0.01},
-		paras: []para{{align: "ctr", runs: []run{{text: label, size: r.H * 72 * 0.38, bold: true, color: col, font: t.headFont}}}}}})
+	s := shape{geom: "roundRect", adj: []int{22000}, fill: solidA(col, alpha)}
+	txt := t.inkColor(i)
+	switch {
+	case t.badgePlain:
+		s.fill = paint{}
+	case t.cards.hard:
+		s.fill, s.line = solid(t.tint(i)), &stroke{color: t.pal.line, width: max(t.cards.borderW, 1)}
+	case t.cards.dash != "" || t.cards.ticks:
+		s.fill, s.line = paint{}, &stroke{color: col, width: 1.25, dash: t.cards.dash}
+		txt = col
+	}
+	s.text = &textBody{anchor: "ctr", inset: [4]float64{0.01, 0.01, 0.01, 0.01},
+		paras: []para{{align: "ctr", runs: []run{{text: label, size: r.H * 72 * 0.38, bold: true, color: txt, font: t.headFont}}}}}
+	c.add(r, s)
 }
 
 // quoteMark — katta qo'shtirnoq belgisi.
@@ -264,7 +354,7 @@ func quoteMark(c *canvas, r rect, size float64, color string, alpha int) {
 
 // highlightPanel — asosiy fikr paneli (qo'shtirnoq bilan).
 func (t *theme) highlightPanel(c *canvas, r rect, text string) {
-	c.add(r, t.panelShape(r))
+	t.panel(c, r)
 	quoteMark(c, rect{r.X + 0.28, r.Y + 0.12, 1.3, 1.1}, 80, t.pal.onPanel, 35)
 	c.text(rect{r.X + 0.4, r.Y + 1.0, r.W - 0.8, r.H - 1.55}, textBody{fit: true, minFit: 0.6, paras: []para{{lineSp: 1.05, runs: []run{
 		{text: text, size: 19, italic: t.quoteItalic, color: t.pal.onPanel, font: t.headFont}}}}})
@@ -277,9 +367,13 @@ func (t *theme) noteStrip(c *canvas, r rect, text string) {
 	if t.cards.radius > 0 {
 		s.geom, s.adj = "roundRect", roundAdj(r, t.cards.radius)
 	}
-	if t.dark {
+	switch {
+	case t.cards.hard || t.cards.dash != "" || t.cards.ticks:
+		s.line = &stroke{color: t.pal.line, width: max(t.cards.borderW, 1), dash: t.cards.dash}
+	case t.dark:
 		s.line = &stroke{color: t.pal.line, width: 1}
 	}
+	t.hardShadow(c, r, s)
 	c.add(r, s)
 	quoteMark(c, rect{r.X + 0.25, r.Y + 0.02, 0.7, r.H}, 44, t.pal.accent, 100)
 	c.text(rect{r.X + 0.85, r.Y + 0.04, r.W - 1.1, r.H - 0.08}, textBody{anchor: "ctr", fit: true, minFit: 0.6, paras: []para{{runs: []run{
@@ -288,7 +382,7 @@ func (t *theme) noteStrip(c *canvas, r rect, text string) {
 
 // barOffset — kartochka yuqorisidagi rangli chiziq egallagan joy.
 func (t *theme) barOffset() float64 {
-	if t.cards.topBar || t.cards.tab {
+	if t.cards.topBar || t.cards.tab || t.cards.rule {
 		return 0.04
 	}
 	return 0
@@ -326,7 +420,7 @@ func layoutAgenda(t *theme, c *canvas, body rect, s *Slide) {
 		t.card(c, r, i)
 		in := t.cardPad(r, 0.1, 0.08)
 		c.text(rect{in.X, in.Y, numW, in.H}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: pad2(i + 1), size: min(32, r.H*72*0.42), bold: true, color: t.seriesColor(i), font: t.headFont}}}}})
+			{text: pad2(i + 1), size: min(32, r.H*72*0.42), bold: true, color: t.inkColor(i), font: t.headFont}}}}})
 		c.add(rect{in.X + numW + 0.05, r.Y + 0.22, 0.012, r.H - 0.44}, shape{fill: solid(t.pal.line)})
 		blocks = append(blocks, placed{
 			rect{in.X + numW + 0.15, in.Y, in.W - numW - 0.2, in.H},
@@ -342,7 +436,13 @@ func layoutAgenda(t *theme, c *canvas, body rect, s *Slide) {
 func layoutBullets(t *theme, c *canvas, body rect, s *Slide) {
 	items := capItems(s.Items, maxListItems)
 	area := body
-	if s.Highlight != "" {
+	if s.Highlight != "" && len(items) > 0 && body.W < narrowBody {
+		// Tor maydonda (yonida rasm bor) asosiy fikr pastki qatorga tushadi.
+		const stripH, stripGap = 0.82, 0.2
+		var strip rect
+		area, strip = body.splitY(body.H-stripH-stripGap, stripGap)
+		t.noteStrip(c, strip, s.Highlight)
+	} else if s.Highlight != "" {
 		var side rect
 		area, side = body.splitX(body.W*0.62, 0.35)
 		t.highlightPanel(c, side, s.Highlight)
@@ -402,11 +502,12 @@ func layoutBullets(t *theme, c *canvas, body rect, s *Slide) {
 	drawAll(c, blocks)
 }
 
-// layoutCards — 2-4 ta kartochka bir qatorda yoki 5-6 tasi ikki qatorda.
+// layoutCards — 2-4 ta kartochka bir qatorda yoki 5-6 tasi ikki qatorda
+// (tor maydonda 4 tasi 2x2 to'rda).
 func layoutCards(t *theme, c *canvas, body rect, s *Slide) {
 	items := capItems(s.Items, maxListItems)
 	n := len(items)
-	if n > 4 {
+	if n > 4 || n == 4 && body.W < narrowBody {
 		layoutCardGrid(t, c, body, items)
 		return
 	}
@@ -435,9 +536,13 @@ func layoutCards(t *theme, c *canvas, body rect, s *Slide) {
 	drawAll(c, blocks)
 }
 
-// layoutCardGrid — 5-6 ta kartochka ikki qatorda.
+// layoutCardGrid — 5-6 ta kartochka 3x2 yoki 4 tasi 2x2 to'rda.
 func layoutCardGrid(t *theme, c *canvas, body rect, items []Item) {
-	cells := body.grid(3, 2, 0.3, 0.28)
+	cols := 3
+	if len(items) <= 4 {
+		cols = 2
+	}
+	cells := body.grid(cols, (len(items)+cols-1)/cols, 0.3, 0.28)
 	const d = 0.48
 	blocks := make([]placed, 0, len(items))
 	for i, it := range items {
@@ -450,7 +555,11 @@ func layoutCardGrid(t *theme, c *canvas, body rect, items []Item) {
 			textBody{fit: true, paras: t.itemParas(it, 16, 12.5, "l", 5)},
 		})
 	}
-	fitTogether(blocks, growList)
+	grow := growList
+	if cols == 2 {
+		grow = growCards // 2x2 to'rda kartochkalar kattaroq — matn ham kattaroq bo'lishi mumkin
+	}
+	fitTogether(blocks, grow)
 	drawAll(c, blocks)
 }
 
@@ -495,16 +604,25 @@ func layoutComparison(t *theme, c *canvas, body rect, s *Slide) {
 	for i := range items {
 		r := rect{cols[i].X, top, cols[i].W, panelH}
 		col := t.seriesColor(i)
-		c.add(r, t.surface(r))
+		t.box(c, r, -1)
 		hr := rect{r.X, r.Y, r.W, headH}
 		hs := shape{fill: solid(col)}
-		if t.cards.radius > 0 {
-			hs.geom, hs.adj = "round2SameRect", []int{roundAdj(hr, t.cards.radius)[0], 0}
-		}
-		if t.dark {
+		if t.neon {
 			hs.glow = &glow{radius: 6, color: col, alpha: 30}
 		}
-		c.add(hr, hs)
+		if t.cards.hard {
+			hs.line = &stroke{color: t.pal.line, width: max(t.cards.borderW, 1)}
+		}
+		if t.cards.radius > 0 {
+			// Faqat yuqori burchaklari yumaloq sarlavha: yumaloq to'rtburchak va
+			// uning pastki yarmini yopuvchi oddiy to'rtburchak ("round2SameRect"
+			// shaklini iPhone/Quick Look ko'rsatmaydi).
+			hs.geom, hs.adj = "roundRect", roundAdj(hr, t.cards.radius)
+			c.add(hr, hs)
+			c.add(rect{hr.X, hr.Y + hr.H/2, hr.W, hr.H / 2}, shape{fill: solid(col)})
+		} else {
+			c.add(hr, hs)
+		}
 		heads[i].r.Y = top
 		bodies[i].r = textArea(r)
 	}
@@ -518,6 +636,11 @@ func layoutComparison(t *theme, c *canvas, body rect, s *Slide) {
 // layoutProcess — raqamli doiralar chiziq bilan bog'langan bosqichlar.
 func layoutProcess(t *theme, c *canvas, body rect, s *Slide) {
 	items := capItems(s.Items, maxListItems)
+	if body.W < narrowBody && body.H > 4.9 {
+		// Tor va baland maydonda (yon panelli dizayn) bosqichlar ustma-ust.
+		layoutProcessVertical(t, c, body, items)
+		return
+	}
 	n := len(items)
 	cols := body.cols(n, 0.25)
 	d := 0.8
@@ -572,13 +695,13 @@ func layoutFacts(t *theme, c *canvas, body rect, s *Slide) {
 	for i, it := range items {
 		in := t.cardPad(cols[i], padX, padY)
 		vals[i] = placed{rect{in.X - 0.05, in.Y, in.W + 0.1, vh}, textBody{anchor: "b", fit: true, minFit: 0.4, paras: []para{{runs: []run{
-			{text: it.Value, size: 48, bold: true, color: t.seriesColor(i), font: t.headFont}}}}}}
+			{text: it.Value, size: 48, bold: true, color: t.inkColor(i), font: t.headFont}}}}}}
 		texts[i] = placed{textArea(cols[i]), textBody{fit: true, paras: t.itemParas(Item{Heading: it.Heading, Text: it.Text, Points: it.Points}, 16, 13, "l", 5)}}
 	}
 	fitTogether(vals, 1)
 	fitTogether(texts, growCards)
 
-	cardH := min(full, max(full*0.6, contentHeight(texts)+vh+0.25+2*padY+t.barOffset()))
+	cardH := min(full, max(min(full*0.6, 2.9), contentHeight(texts)+vh+0.25+2*padY+t.barOffset()))
 	groupH := cardH
 	if s.Highlight != "" {
 		groupH += stripGap + stripH
@@ -607,7 +730,7 @@ func layoutDefinition(t *theme, c *canvas, body rect, s *Slide) {
 	if len(items) > 0 {
 		panel, side = body.splitX(body.W*0.5, 0.4)
 	}
-	c.add(panel, t.panelShape(panel))
+	t.panel(c, panel)
 	quoteMark(c, rect{panel.X + 0.3, panel.Y + 0.12, 1.5, 1.3}, 100, t.pal.onPanel, 30)
 	c.text(rect{panel.X + 0.45, panel.Y + 1.15, panel.W - 0.9, panel.H - 1.7}, textBody{fit: true, minFit: 0.55, paras: []para{{lineSp: 1.08, runs: []run{
 		{text: s.Highlight, size: 23, italic: t.quoteItalic, color: t.pal.onPanel, font: t.headFont}}}}})
@@ -644,7 +767,7 @@ func layoutConclusion(t *theme, c *canvas, body rect, s *Slide) {
 		if len(items) == 0 {
 			banner = rect{body.X, body.Y + (body.H-2.2)/2, body.W, 2.2}
 		}
-		c.add(banner, t.panelShape(banner))
+		t.panel(c, banner)
 		quoteMark(c, rect{banner.X + 0.3, banner.Y + 0.05, 0.9, 0.95}, 60, t.pal.onPanel, 40)
 		c.text(rect{banner.X + 1.05, banner.Y + 0.08, banner.W - 1.35, banner.H - 0.16}, textBody{anchor: "ctr", fit: true, minFit: 0.6, paras: []para{{runs: []run{
 			{text: s.Highlight, size: 18, italic: t.quoteItalic, color: t.pal.onPanel, font: t.headFont}}}}})

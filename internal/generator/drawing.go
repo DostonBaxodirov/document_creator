@@ -259,6 +259,9 @@ type canvas struct {
 	// clrMapOvr — slayd uchun rang xaritasi (to'q fonli mavzularda matn
 	// ranglari almashtiriladi); bo'sh bo'lsa — master'niki.
 	darkMap bool
+	// pics — slaydga joylangan rasmlar; i-rasm slayd .rels faylida rId{i+2}
+	// (rId1 — slayd maketi).
+	pics []*Picture
 }
 
 func newCanvas(bg paint) *canvas { return &canvas{nextID: 2, bg: bg} }
@@ -334,6 +337,63 @@ func (c *canvas) add(r rect, s shape) {
 		writeTextBody(b, r, s.text)
 	}
 	b.WriteString(`</p:sp>`)
+}
+
+// picFrame — rasm ramkasi.
+type picFrame struct {
+	radius float64 // burchak radiusi, dyuym (0 — to'g'ri burchak)
+	line   *stroke
+	shadow *shadow
+}
+
+// picRelID rasm uchun slayd ichidagi bog'lanish identifikatorini qaytaradi
+// (bir xil rasm bir slaydda qayta ishlatilsa — o'sha identifikator).
+func (c *canvas) picRelID(p *Picture) string {
+	for i, q := range c.pics {
+		if q == p {
+			return fmt.Sprintf("rId%d", i+2)
+		}
+	}
+	c.pics = append(c.pics, p)
+	return fmt.Sprintf("rId%d", len(c.pics)+1)
+}
+
+// pic rasmni r maydonga "cover" usulida (proporsiyani saqlab, ortiqchasini
+// qirqib) joylaydi. p nil bo'lsa hech narsa chizilmaydi.
+func (c *canvas) pic(r rect, p *Picture, f picFrame) {
+	if p == nil {
+		return
+	}
+	rid := c.picRelID(p)
+	id := c.nextID
+	c.nextID++
+	b := &c.b
+
+	fmt.Fprintf(b, `<p:pic><p:nvPicPr><p:cNvPr id="%d" name="Picture %d"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>`, id, id)
+	fmt.Fprintf(b, `<p:blipFill><a:blip r:embed="%s"/>`, rid)
+	if l, t, rr, bb := coverCrop(p.W, p.H, r); l+t+rr+bb > 0 {
+		fmt.Fprintf(b, `<a:srcRect l="%d" t="%d" r="%d" b="%d"/>`, l, t, rr, bb)
+	}
+	b.WriteString(`<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>`)
+	fmt.Fprintf(b, `<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>`,
+		emu(r.X), emu(r.Y), max(emu(r.W), 1), max(emu(r.H), 1))
+	if f.radius > 0 {
+		fmt.Fprintf(b, `<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val %d"/></a:avLst></a:prstGeom>`, roundAdj(r, f.radius)[0])
+	} else {
+		b.WriteString(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>`)
+	}
+	if l := f.line; l != nil {
+		fmt.Fprintf(b, `<a:ln w="%d">`, int(math.Round(l.width*12700)))
+		solidA(l.color, l.alpha).write(b)
+		b.WriteString(`</a:ln>`)
+	}
+	if sh := f.shadow; sh != nil {
+		fmt.Fprintf(b, `<a:effectLst><a:outerShdw blurRad="%d" dist="%d" dir="%d" algn="t" rotWithShape="0">`,
+			int(sh.blur*12700), int(sh.dist*12700), int(sh.dir*60000))
+		writeColor(b, sh.color, sh.alpha)
+		b.WriteString(`</a:outerShdw></a:effectLst>`)
+	}
+	b.WriteString(`</p:spPr></p:pic>`)
 }
 
 // text — fonsiz matn bloki.
@@ -490,14 +550,22 @@ func writeRunProps(b *strings.Builder, tag string, r run) {
 // bilan olingan: shrift o'rnida boshqasi (masalan LibreOffice yoki telefonda)
 // ishlatilganda ham matn maydondan chiqmasligi kerak.
 var fontWidths = map[string]float64{
-	"Calibri":         0.50,
-	"Calibri Light":   0.49,
-	"Cambria":         0.54,
-	"Georgia":         0.56,
-	"Segoe UI":        0.54,
-	"Century Gothic":  0.58,
-	"Arial":           0.53,
-	"Segoe UI Symbol": 0.60,
+	"Calibri":               0.50,
+	"Calibri Light":         0.49,
+	"Cambria":               0.54,
+	"Georgia":               0.56,
+	"Segoe UI":              0.54,
+	"Century Gothic":        0.58,
+	"Arial":                 0.53,
+	"Segoe UI Symbol":       0.60,
+	"Trebuchet MS":          0.53,
+	"Franklin Gothic":       0.50,
+	"Arial Black":           0.66,
+	"Verdana":               0.60,
+	"Tahoma":                0.53,
+	"Comic Sans MS":         0.56,
+	"Courier New":           0.62,
+	"Arial Rounded MT Bold": 0.57,
 }
 
 func charWidth(r run) float64 {

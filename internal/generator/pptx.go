@@ -2,6 +2,8 @@
 //   - pptx.go    — taqdimot (.pptx): paketni yig'ish;
 //   - themes.go  — taqdimot dizayn mavzulari (ranglar, shriftlar, titul va yakuniy slayd);
 //   - layouts.go — mazmunli slaydlar maketlari (reja, kartochkalar, jarayon, taqqoslash ...);
+//   - layouts_extra.go — qo'shimcha maketlar (vaqt chizig'i, piramida, matritsa, sikl ...);
+//   - themes_extra.go, themes_photo.go — tuzilishi boshqacha va rasmli dizaynlar;
 //   - drawing.go — slaydlarni chizish uchun DrawingML primitivlari;
 //   - docx.go    — mustaqil ish / amaliy topshiriq (.docx) noldan;
 //   - ooxml.go   — ikkalasi uchun umumiy yordamchilar (ZIP yozish, XML ekranlash).
@@ -48,12 +50,14 @@ const (
 	relTypeSlide       = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
 	relTypeSlideLayout = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout"
 	relTypeTheme       = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
+	relTypeImage       = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
 	contentTypeSlide   = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
 
 	maxTemplateBytes = 50 << 20 // shablon hajmi chegarasi (zip-bomb'dan himoya)
 	topicShortRunes  = 90       // pastki kolontitul uchun qisqartirilgan mavzu
 	footerUniRunes   = 60       // pastki kolontituldagi universitet nomi
 	firstSlideID     = 256      // OOXML talabi: slayd ID lari 256 dan boshlanadi
+	maxMediaBytes    = 35 << 20 // rasmlar umumiy hajmi (Telegram bot fayl chegarasi — 50 MB)
 
 	// extraSlides — AI yozmaydigan slaydlar soni: titul va yakuniy slayd.
 	extraSlides = 2
@@ -74,6 +78,9 @@ type Slide struct {
 	Lead      string // sarlavha ostidagi kirish gapi
 	Items     []Item
 	Highlight string // asosiy fikr, ta'rif yoki yakuniy xulosa
+	// Image — slayd yonidagi rasm (faqat rasmli dizaynlarda va mos maketlarda
+	// chiziladi — SlideTakesPhoto); nil bo'lsa slayd rasmsiz.
+	Image *Picture
 }
 
 // Deck — taqdimotni yaratish uchun barcha ma'lumotlar.
@@ -86,7 +93,10 @@ type Deck struct {
 	TeacherName string
 	Year        string
 	Theme       string // ThemeAcademic, ThemeModern ...; bo'sh bo'lsa — DefaultTheme
-	Slides      []Slide
+	// CoverImage — titul va yakuniy slayd rasmi (faqat rasmli dizaynlarda);
+	// nil bo'lsa, rasm o'rnida dizaynning bezakli foni chiziladi.
+	CoverImage *Picture
+	Slides     []Slide
 }
 
 // PPTX — .pptx fayllarni yaratuvchi generator.
@@ -138,6 +148,7 @@ func (g *PPTX) Build(ctx context.Context, deck Deck) (string, error) {
 
 	started := time.Now()
 	t := themeByID(deck.Theme)
+	limitPictures(&deck, maxMediaBytes)
 	slides := renderDeck(t, &deck)
 
 	files, newNames := g.assemble(t, &deck, slides)
@@ -150,64 +161,105 @@ func (g *PPTX) Build(ctx context.Context, deck Deck) (string, error) {
 		zap.String("file", out),
 		zap.String("theme", t.ID),
 		zap.Int("slides", len(slides)),
+		zap.Int("pictures", countPictures(slides)),
 		zap.Duration("took", time.Since(started)))
 	return out, nil
 }
 
+// slidePart — chizilgan slayd: XML va unga joylangan rasmlar (rId tartibida).
+type slidePart struct {
+	xml  string
+	pics []*Picture
+}
+
+func countPictures(slides []slidePart) int {
+	seen := make(map[*Picture]bool)
+	for _, s := range slides {
+		for _, p := range s.pics {
+			seen[p] = true
+		}
+	}
+	return len(seen)
+}
+
 // renderDeck barcha slaydlarni (titul, mazmunli, yakuniy) XML ko'rinishida chizadi.
-func renderDeck(t *theme, d *Deck) []string {
+func renderDeck(t *theme, d *Deck) []slidePart {
 	total := len(d.Slides) + extraSlides
-	out := make([]string, 0, total)
+	out := make([]slidePart, 0, total)
+	done := func(c *canvas) slidePart { return slidePart{xml: c.xml(t.transition), pics: c.pics} }
 
 	c := newCanvas(paint{})
 	t.cover(t, c, d)
-	out = append(out, c.xml(t.transition))
+	out = append(out, done(c))
 
 	topic := truncateRunes(d.Topic, topicShortRunes)
 	uni := truncateRunes(d.University, footerUniRunes)
 	for i, s := range d.Slides {
 		s = normalizeSlide(s)
+		var photo *Picture
+		if t.photos && s.Image != nil && t.photoFits(s) {
+			photo = s.Image
+		}
 		c := newCanvas(paint{})
 		body := t.chrome(t, c, slideInfo{
 			title: s.Title, lead: s.Lead,
 			num: i + 2, total: total,
 			topic: topic, university: uni,
+			photo: photo,
 		})
 		renderContent(t, c, body, &s)
-		out = append(out, c.xml(t.transition))
+		out = append(out, done(c))
 	}
 
 	c = newCanvas(paint{})
 	t.closing(t, c, d)
-	out = append(out, c.xml(t.transition))
+	out = append(out, done(c))
 	return out
 }
 
 // assemble yakuniy arxiv fayllari to'plamini tayyorlaydi.
 // Qaytariladigan newNames — yangi qo'shilgan slayd fayllari nomlari (tartib bilan).
-func (g *PPTX) assemble(t *theme, deck *Deck, slides []string) (map[string][]byte, []string) {
+func (g *PPTX) assemble(t *theme, deck *Deck, slides []slidePart) (map[string][]byte, []string) {
 	b := g.base
 	files := make(map[string][]byte, len(b.files)+2*len(slides))
 	for name, data := range b.files {
 		files[name] = data // asosiy paket baytlari o'zgartirilmaydi, faqat almashtiriladi
 	}
 
-	rels := []byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-		`<Relationship Id="rId1" Type="` + relTypeSlideLayout + `" Target="` + b.layoutTarget + `"/></Relationships>`)
+	const relsHead = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+	layoutRel := `<Relationship Id="rId1" Type="` + relTypeSlideLayout + `" Target="` + b.layoutTarget + `"/>`
 
 	var (
 		overrides strings.Builder
 		presRels  strings.Builder
 		ids       strings.Builder
 		newNames  = make([]string, 0, 2*len(slides))
+		media     = make(map[*Picture]string) // rasm -> ppt/media/ ichidagi fayl nomi
+		mediaExt  = make(map[string]string)   // kengaytma -> content type
 	)
 	for i, x := range slides {
 		n := i + 1
 		slidePath := fmt.Sprintf("ppt/slides/slide%d.xml", n)
 		relsPath := slideRelsPath(slidePath)
-		files[slidePath] = []byte(x)
-		files[relsPath] = rels
+
+		var rels strings.Builder
+		rels.WriteString(relsHead + layoutRel)
+		for j, p := range x.pics {
+			name, ok := media[p]
+			if !ok {
+				name = uniqueMediaName(files, len(media)+1, p.Ext)
+				media[p] = name
+				mediaExt[p.Ext] = p.contentType()
+				files["ppt/media/"+name] = p.Data
+				newNames = append(newNames, "ppt/media/"+name)
+			}
+			fmt.Fprintf(&rels, `<Relationship Id="rId%d" Type="%s" Target="../media/%s"/>`, j+2, relTypeImage, name)
+		}
+		rels.WriteString(`</Relationships>`)
+
+		files[slidePath] = []byte(x.xml)
+		files[relsPath] = []byte(rels.String())
 		newNames = append(newNames, slidePath, relsPath)
 
 		rid := "rId" + strconv.Itoa(b.nextRelID+i)
@@ -216,7 +268,8 @@ func (g *PPTX) assemble(t *theme, deck *Deck, slides []string) (map[string][]byt
 		fmt.Fprintf(&ids, `<p:sldId id="%d" r:id="%s"/>`, firstSlideID+i, rid)
 	}
 
-	files[contentTypesPath] = []byte(strings.Replace(b.contentTypes, "</Types>", overrides.String()+"</Types>", 1))
+	files[contentTypesPath] = []byte(addDefaultTypes(
+		strings.Replace(b.contentTypes, "</Types>", overrides.String()+"</Types>", 1), mediaExt))
 	files[presentationRels] = []byte(strings.Replace(b.presRels, "</Relationships>", presRels.String()+"</Relationships>", 1))
 	files[presentationPath] = []byte(strings.Replace(b.presentation, sldIDLstMarker, "<p:sldIdLst>"+ids.String()+"</p:sldIdLst>", 1))
 
@@ -239,6 +292,43 @@ func (g *PPTX) assemble(t *theme, deck *Deck, slides []string) (map[string][]byt
 		files[corePropsPath] = []byte(c)
 	}
 	return files, newNames
+}
+
+// addDefaultTypes [Content_Types].xml ga rasm kengaytmalari uchun Default
+// yozuvlarini qo'shadi (shablonda bo'lmasa). An'anaga ko'ra Default yozuvlari
+// Override yozuvlaridan oldin turadi.
+func addDefaultTypes(ct string, exts map[string]string) string {
+	names := make([]string, 0, len(exts))
+	for ext := range exts {
+		names = append(names, ext)
+	}
+	sort.Strings(names)
+	var defs strings.Builder
+	for _, ext := range names {
+		re := regexp.MustCompile(`(?i)<Default\b[^>]*\bExtension="` + regexp.QuoteMeta(ext) + `"`)
+		if !re.MatchString(ct) {
+			fmt.Fprintf(&defs, `<Default Extension="%s" ContentType="%s"/>`, ext, exts[ext])
+		}
+	}
+	if defs.Len() == 0 {
+		return ct
+	}
+	at := strings.Index(ct, "<Override")
+	if at < 0 {
+		at = strings.LastIndex(ct, "</Types>")
+	}
+	return ct[:at] + defs.String() + ct[at:]
+}
+
+// uniqueMediaName asosiy paketdagi fayllar bilan to'qnashmaydigan media fayl nomini tanlaydi.
+func uniqueMediaName(files map[string][]byte, n int, ext string) string {
+	for {
+		name := fmt.Sprintf("image%d.%s", n, ext)
+		if _, exists := files["ppt/media/"+name]; !exists {
+			return name
+		}
+		n += 1000
+	}
 }
 
 // writeZip arxivni vaqtinchalik faylga yozadi: [Content_Types].xml an'anaviy

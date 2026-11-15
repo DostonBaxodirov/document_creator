@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -176,6 +177,19 @@ func TestStressDeck(t *testing.T) {
 		{Layout: LayoutBullets, Title: strings.Repeat("Juda uzun sarlavha ", 6), Highlight: "Faqat asosiy fikr"},
 		{Layout: LayoutConclusion, Title: "Xulosa", Items: []Item{{Heading: "Bir", Text: long}}, Highlight: long},
 		{Layout: LayoutConclusion, Title: "Bo'sh xulosa", Highlight: "Faqat yakuniy fikr"},
+		{Layout: LayoutTimeline, Title: "Olti sana", Items: []Item{{Value: "1991", Heading: "A", Text: long}, {Heading: "B"}, {Value: "XIX asr", Heading: "C"}, {Value: "2010-2015", Heading: "D", Text: long}, {Heading: "E"}, {Heading: "F", Text: "x"}}},
+		{Layout: LayoutTimeline, Title: "Ikki sana", Items: []Item{{Value: "1991", Heading: "A"}, {Value: "2001", Heading: "B"}}},
+		{Layout: LayoutPyramid, Title: "Besh daraja", Items: []Item{{Heading: "A", Text: long}, {Heading: "B"}, {Heading: "C", Text: long}, {Heading: "D"}, {Heading: "E", Text: "x"}}},
+		{Layout: LayoutPyramid, Title: "Olti daraja", Items: []Item{{Heading: "A"}, {Heading: "B"}, {Heading: "C"}, {Heading: "D"}, {Heading: "E"}, {Heading: "F"}}},
+		{Layout: LayoutMatrix, Title: "SWOT", Highlight: "SWOT", Items: []Item{{Heading: "Kuchli", Text: long}, {Heading: "Zaif"}, {Heading: "Imkoniyat", Text: long}, {Heading: "Tahdid"}}},
+		{Layout: LayoutMatrix, Title: "Uzun markaz", Highlight: long, Items: []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}, {Heading: "d"}}},
+		{Layout: LayoutMatrix, Title: "Uch kvadrant", Items: []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}}},
+		{Layout: LayoutCycle, Title: "Olti bosqichli sikl", Highlight: "Sikl", Items: []Item{{Heading: "1", Text: long}, {Heading: "2"}, {Heading: "3"}, {Heading: "4"}, {Heading: "5"}, {Heading: "6", Text: long}}},
+		{Layout: LayoutCycle, Title: "Uch bosqich", Items: []Item{{Heading: "1"}, {Heading: "2"}, {Heading: "3"}}},
+		{Layout: LayoutHub, Title: "Markaz", Highlight: "Markaziy tushuncha", Items: []Item{{Heading: "1", Text: long}, {Heading: "2"}, {Heading: "3"}, {Heading: "4"}, {Heading: "5"}}},
+		{Layout: LayoutHub, Title: "Ikki tarmoq", Items: []Item{{Heading: "1"}, {Heading: "2"}}},
+		{Layout: LayoutStatement, Title: "Tezis", Highlight: long, Items: []Item{{Heading: "a", Text: long}, {Heading: "b"}, {Heading: "c"}, {Heading: "d"}}},
+		{Layout: LayoutStatement, Title: "Tezissiz"},
 	}
 	g := newTestPPTX(t)
 	for _, info := range Themes() {
@@ -203,11 +217,67 @@ func TestNormalizeSlide(t *testing.T) {
 		{"only highlight", Slide{Layout: LayoutBullets, Highlight: "h"}, LayoutDefinition},
 		{"single card", Slide{Layout: LayoutCards, Items: []Item{{Heading: "a"}}}, LayoutBullets},
 		{"empty items dropped", Slide{Layout: LayoutProcess, Items: []Item{{}, {Heading: "a"}, {}}}, LayoutBullets},
+		{"timeline ok", Slide{Layout: LayoutTimeline, Items: []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}}}, LayoutTimeline},
+		{"short timeline", Slide{Layout: LayoutTimeline, Items: []Item{{Heading: "a"}, {Heading: "b"}}}, LayoutProcess},
+		{"pyramid ok", Slide{Layout: LayoutPyramid, Items: []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}}}, LayoutPyramid},
+		{"tall pyramid", Slide{Layout: LayoutPyramid, Items: make6()}, LayoutCards},
+		{"matrix ok", Slide{Layout: LayoutMatrix, Items: []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}, {Heading: "d"}}}, LayoutMatrix},
+		{"matrix of three", Slide{Layout: LayoutMatrix, Items: []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}}}, LayoutCards},
+		{"cycle of two", Slide{Layout: LayoutCycle, Items: []Item{{Heading: "a"}, {Heading: "b"}}}, LayoutCards},
+		{"hub of one", Slide{Layout: LayoutHub, Items: []Item{{Heading: "a"}}}, LayoutBullets},
+		{"statement without highlight", Slide{Layout: LayoutStatement, Items: []Item{{Heading: "a"}}}, LayoutBullets},
+		{"statement only", Slide{Layout: LayoutStatement, Highlight: "h"}, LayoutStatement},
 	}
 	for _, tc := range cases {
 		if got := normalizeSlide(tc.in).Layout; got != tc.want {
 			t.Errorf("%s: layout = %q, kutilgan %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func make6() []Item {
+	return []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}, {Heading: "d"}, {Heading: "e"}, {Heading: "f"}}
+}
+
+// TestThemeStructure — har bir dizaynning o'z tuzilishi bor: imzo maketlari
+// ma'lum, asosiy maketlar doim mavjud va namunaviy taqdimotda ko'rinadi.
+func TestThemeStructure(t *testing.T) {
+	known := map[string]bool{}
+	for _, l := range append(slices.Clone(coreLayouts), LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement) {
+		known[l] = true
+	}
+	seen := map[string]string{}
+	for _, info := range Themes() {
+		st := ThemeStructure(info.ID)
+		if len(st.Signature) < 2 {
+			t.Errorf("%s: imzo maketlari kam: %v", info.ID, st.Signature)
+		}
+		for _, l := range st.Layouts {
+			if !known[l] {
+				t.Errorf("%s: noma'lum maket %q", info.ID, l)
+			}
+		}
+		for _, l := range append(slices.Clone(coreLayouts), st.Signature...) {
+			if !slices.Contains(st.Layouts, l) {
+				t.Errorf("%s: %q maketlar ro'yxatida yo'q", info.ID, l)
+			}
+		}
+		sample := SampleDeck(info.ID)
+		for _, l := range st.Signature {
+			if !slices.ContainsFunc(sample.Slides, func(s Slide) bool { return s.Layout == l }) {
+				t.Errorf("%s: namunada imzo maketi %q yo'q", info.ID, l)
+			}
+		}
+		if prev, ok := seen[info.ID]; ok {
+			t.Errorf("takroriy ID %s (%s)", info.ID, prev)
+		}
+		seen[info.ID] = info.Name
+	}
+	if len(Themes()) != 16 {
+		t.Errorf("dizaynlar soni %d, kutilgan 16", len(Themes()))
+	}
+	if st := ThemeStructure("mavjud-emas"); !slices.Equal(st.Signature, ThemeStructure(DefaultTheme).Signature) {
+		t.Errorf("noma'lum dizayn standart tuzilishni olishi kerak")
 	}
 }
 
@@ -232,5 +302,23 @@ func TestContentSlides(t *testing.T) {
 		if got := g.ContentSlides(total); got != want {
 			t.Errorf("ContentSlides(%d) = %d, kutilgan %d", total, got, want)
 		}
+	}
+}
+
+// TestLongTopic — 500 belgilik mavzu (bot chegarasi) barcha dizaynlarda
+// titul va yakuniy slaydga yoziladi.
+func TestLongTopic(t *testing.T) {
+	g := newTestPPTX(t)
+	topic := strings.Repeat("Raqamli iqtisodiyot sharoitida kichik biznes ", 12)[:500]
+	for _, info := range Themes() {
+		t.Run(info.ID, func(t *testing.T) {
+			d := SampleDeck(info.ID)
+			d.Topic = topic
+			files := buildAndRead(t, g, d)
+			checkWellFormed(t, files)
+			if !strings.Contains(string(files["ppt/slides/slide1.xml"]), "Raqamli iqtisodiyot") {
+				t.Errorf("titulda mavzu yo'q")
+			}
+		})
 	}
 }

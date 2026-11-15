@@ -22,6 +22,19 @@ const (
 	ProviderDeepSeek = "deepseek"
 )
 
+// Rasm provayderlari nomlari (IMAGE_STANDARD_PROVIDER, IMAGE_PREMIUM_PROVIDER).
+const (
+	ImageProviderOpenAI = "openai"
+	ImageProviderGemini = "gemini"
+	ImageProviderNone   = "none"
+)
+
+// Rasm tariflari: standard — arzon, premium — sifatli.
+const (
+	TierStandard = "standard"
+	TierPremium  = "premium"
+)
+
 // DisabledValue — ixtiyoriy matnli sozlamani o'chirish uchun qiymat
 // (bo'sh qiymat standart qiymat bilan almashtiriladi, shuning uchun "-" ishlatiladi).
 const DisabledValue = "-"
@@ -32,6 +45,7 @@ type Config struct {
 	LogLevel  string // debug | info | warn | error
 	Telegram  TelegramConfig
 	AI        AIConfig
+	Images    ImagesConfig
 	DB        DBConfig
 	Generator GeneratorConfig
 	Limits    LimitsConfig
@@ -65,6 +79,23 @@ type AIConfig struct {
 	Timeout          time.Duration // bitta so'rov uchun maksimal vaqt
 	MaxRetries       int           // xato bo'lganda qayta urinishlar soni
 	ParallelRequests int           // hujjat bo'limlarini yozishda bir vaqtdagi so'rovlar soni
+}
+
+// ImagesConfig — rasmli dizaynlar uchun AI rasm generatsiyasi sozlamalari.
+// API kalitlari AIConfig dan olinadi (OPENAI_API_KEY, GEMINI_API_KEY).
+type ImagesConfig struct {
+	StandardProvider string // arzon tarif provayderi: openai | gemini | none
+	PremiumProvider  string // sifatli tarif provayderi: openai | gemini | none
+	DefaultTier      string // tarifi belgilanmagan foydalanuvchilar uchun: standard | premium
+
+	OpenAIModel   string // masalan gpt-image-2
+	OpenAIQuality string // low | medium | high | auto
+	GeminiModel   string // masalan gemini-nano-banana-2.1
+	GeminiSize    string // 1K | 2K | 4K; bo'sh — modelning standart qiymati
+
+	Timeout  time.Duration // bitta rasm uchun maksimal vaqt
+	Parallel int           // bir vaqtda chiziladigan rasmlar soni (bitta taqdimot ichida)
+	Fallback bool          // asosiy provayder ishlamasa, boshqa tarif provayderiga o'tish
 }
 
 // DBConfig — PostgreSQL ulanish sozlamalari.
@@ -132,27 +163,8 @@ func Load() (*Config, error) {
 			PollTimeout:     p.duration("TELEGRAM_POLL_TIMEOUT", 10*time.Second),
 			ShutdownTimeout: p.duration("SHUTDOWN_TIMEOUT", 60*time.Second),
 		},
-		AI: AIConfig{
-			Provider: strings.ToLower(p.str("AI_PROVIDER", ProviderGemini)),
-
-			GeminiAPIKey: p.str("GEMINI_API_KEY", ""),
-			GeminiModel:  p.str("GEMINI_MODEL", "gemini-flash-latest"),
-
-			OpenAIAPIKey:  p.str("OPENAI_API_KEY", ""),
-			OpenAIModel:   p.str("OPENAI_MODEL", "gpt-4o-mini"),
-			OpenAIBaseURL: strings.TrimRight(p.str("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
-
-			DeepSeekAPIKey:   p.str("DEEPSEEK_API_KEY", ""),
-			DeepSeekModel:    p.str("DEEPSEEK_MODEL", "deepseek-flash"),
-			DeepSeekBaseURL:  strings.TrimRight(p.str("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "/"),
-			DeepSeekThinking: p.bool("DEEPSEEK_THINKING", false),
-
-			Temperature:      p.optionalFloat32("AI_TEMPERATURE"),
-			MaxTokens:        p.int("AI_MAX_TOKENS", 0),
-			Timeout:          p.duration("AI_TIMEOUT", 120*time.Second),
-			MaxRetries:       p.int("AI_MAX_RETRIES", 2),
-			ParallelRequests: p.int("AI_PARALLEL_REQUESTS", 3),
-		},
+		AI:     aiConfig(p),
+		Images: imagesConfig(p),
 		DB: DBConfig{
 			Host:            p.str("DB_HOST", "localhost"),
 			Port:            p.int("DB_PORT", 5432),
@@ -189,6 +201,98 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
+}
+
+// aiConfig matn generatsiyasi (AI provayder) sozlamalarini o'qiydi.
+func aiConfig(p *parser) AIConfig {
+	return AIConfig{
+		Provider: strings.ToLower(p.str("AI_PROVIDER", ProviderGemini)),
+
+		GeminiAPIKey: p.str("GEMINI_API_KEY", ""),
+		GeminiModel:  p.str("GEMINI_MODEL", "gemini-flash-latest"),
+
+		OpenAIAPIKey:  p.str("OPENAI_API_KEY", ""),
+		OpenAIModel:   p.str("OPENAI_MODEL", "gpt-4o-mini"),
+		OpenAIBaseURL: strings.TrimRight(p.str("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
+
+		DeepSeekAPIKey:   p.str("DEEPSEEK_API_KEY", ""),
+		DeepSeekModel:    p.str("DEEPSEEK_MODEL", "deepseek-flash"),
+		DeepSeekBaseURL:  strings.TrimRight(p.str("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "/"),
+		DeepSeekThinking: p.bool("DEEPSEEK_THINKING", false),
+
+		Temperature:      p.optionalFloat32("AI_TEMPERATURE"),
+		MaxTokens:        p.int("AI_MAX_TOKENS", 0),
+		Timeout:          p.duration("AI_TIMEOUT", 120*time.Second),
+		MaxRetries:       p.int("AI_MAX_RETRIES", 2),
+		ParallelRequests: p.int("AI_PARALLEL_REQUESTS", 3),
+	}
+}
+
+// imagesConfig rasm generatsiyasi sozlamalarini o'qiydi.
+func imagesConfig(p *parser) ImagesConfig {
+	return ImagesConfig{
+		StandardProvider: strings.ToLower(p.str("IMAGE_STANDARD_PROVIDER", ImageProviderOpenAI)),
+		PremiumProvider:  strings.ToLower(p.str("IMAGE_PREMIUM_PROVIDER", ImageProviderGemini)),
+		DefaultTier:      strings.ToLower(p.str("IMAGE_DEFAULT_TIER", TierStandard)),
+
+		OpenAIModel:   p.str("OPENAI_IMAGE_MODEL", "gpt-image-2"),
+		OpenAIQuality: strings.ToLower(p.str("OPENAI_IMAGE_QUALITY", "low")),
+		GeminiModel:   p.str("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1"),
+		GeminiSize:    strings.ToUpper(p.str("GEMINI_IMAGE_SIZE", "")),
+
+		Timeout:  p.duration("IMAGE_TIMEOUT", 90*time.Second),
+		Parallel: p.int("IMAGE_PARALLEL_REQUESTS", 4),
+		Fallback: p.bool("IMAGE_FALLBACK", true),
+	}
+}
+
+// LoadImages faqat rasm generatsiyasi uchun kerakli sozlamalarni (AI kalitlari
+// va rasm sozlamalari) o'qiydi. Telegram va baza sozlamalarini talab qilmaydi —
+// cmd/preview kabi yordamchi vositalar uchun.
+func LoadImages() (AIConfig, ImagesConfig, error) {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return AIConfig{}, ImagesConfig{}, fmt.Errorf("config: .env faylini o'qib bo'lmadi: %w", err)
+	}
+	p := &parser{}
+	ai, img := aiConfig(p), imagesConfig(p)
+	errs := append(p.errs, img.validate()...)
+	if len(errs) > 0 {
+		return ai, img, fmt.Errorf("config: %w", errors.Join(errs...))
+	}
+	return ai, img, nil
+}
+
+// validate rasm sozlamalarini tekshiradi.
+func (c ImagesConfig) validate() []error {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	for key, v := range map[string]string{"IMAGE_STANDARD_PROVIDER": c.StandardProvider, "IMAGE_PREMIUM_PROVIDER": c.PremiumProvider} {
+		switch v {
+		case ImageProviderOpenAI, ImageProviderGemini, ImageProviderNone:
+		default:
+			add("%s noto'g'ri: %q (openai, gemini yoki none bo'lishi kerak)", key, v)
+		}
+	}
+	if c.DefaultTier != TierStandard && c.DefaultTier != TierPremium {
+		add("IMAGE_DEFAULT_TIER noto'g'ri: %q (standard yoki premium bo'lishi kerak)", c.DefaultTier)
+	}
+	switch c.OpenAIQuality {
+	case "low", "medium", "high", "auto":
+	default:
+		add("OPENAI_IMAGE_QUALITY noto'g'ri: %q (low, medium, high yoki auto bo'lishi kerak)", c.OpenAIQuality)
+	}
+	switch c.GeminiSize {
+	case "", "1K", "2K", "4K":
+	default:
+		add("GEMINI_IMAGE_SIZE noto'g'ri: %q (1K, 2K, 4K yoki bo'sh bo'lishi kerak)", c.GeminiSize)
+	}
+	if c.Timeout <= 0 {
+		add("IMAGE_TIMEOUT musbat bo'lishi kerak")
+	}
+	if c.Parallel < 1 || c.Parallel > 10 {
+		add("IMAGE_PARALLEL_REQUESTS 1 dan 10 gacha bo'lishi kerak")
+	}
+	return errs
 }
 
 // validate qiymatlarning mantiqiy to'g'riligini tekshiradi.
@@ -231,6 +335,8 @@ func (c *Config) validate() error {
 	if c.AI.ParallelRequests < 1 || c.AI.ParallelRequests > 10 {
 		add("AI_PARALLEL_REQUESTS 1 dan 10 gacha bo'lishi kerak")
 	}
+
+	errs = append(errs, c.Images.validate()...)
 
 	if c.DB.Port <= 0 || c.DB.Port > 65535 {
 		add("DB_PORT noto'g'ri: %d", c.DB.Port)

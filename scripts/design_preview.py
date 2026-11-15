@@ -5,11 +5,16 @@ Bot taqdimot dizaynini tanlashda shu rasmni yuboradi. Mavzular (themes.go)
 o'zgartirilgandan keyin loyiha ildizidan ishga tushiring:
 
     python3 scripts/design_preview.py
+    python3 scripts/design_preview.py --photos standard   # rasmli dizaynlar haqiqiy AI rasmlar bilan
 
 Talablar: Go, LibreOffice (soffice), poppler-utils (pdftoppm), Pillow.
-Har bir mavzu uchun titul slayd va ikkita mazmunli slayd olinadi.
+Har bir mavzu uchun titul slayd va ikkita mazmunli slayd olinadi — namunaviy
+taqdimotda (generator.SampleDeck) ular dizaynning imzo maketlari.
+--photos berilsa, rasmli dizaynlar .env dagi kalitlar bilan haqiqiy AI
+rasmlarda chiziladi (pullik: ~20 ta rasm); aks holda namunaviy gradientlar.
 """
 
+import argparse
 import os
 import subprocess
 import sys
@@ -18,13 +23,26 @@ import tempfile
 from PIL import Image, ImageDraw, ImageFont
 
 OUT = os.path.join("templates", "designs.png")
-CONTENT_SLIDES = (3, 5)  # ta'rif va kartochkalar maketlari
+CONTENT_SLIDES = (3, 5)  # dizaynning imzo maketlari (rasmli dizaynlarda — rasmli kartochkalar)
 ACCENTS = {  # raqam doirasi rangi
     "akademik": "#C9A227",
     "zamonaviy": "#7C3AED",
     "minimal": "#0F766E",
     "texno": "#22D3EE",
+    "jurnal": "#D7263D",
+    "tabiat": "#2F5D50",
+    "okean": "#1CA7A8",
+    "shom": "#FF7A45",
+    "strategiya": "#6D1A36",
+    "retro": "#FF5C8A",
+    "tipografika": "#E3000F",
+    "bento": "#3B5BDB",
+    "doska": "#2F6B55",
+    "chizma": "#0E3A73",
+    "pastel": "#5B4BC4",
+    "panorama": "#F26B1D",
 }
+COLS = 4  # 16 ta dizayn — 4x4 to'r
 BG = "#151922"
 CELL_W, COVER_H, GAP, MARGIN, LABEL_H = 760, 428, 12, 32, 64
 
@@ -44,14 +62,21 @@ def font(size):
     return ImageFont.load_default()
 
 
-def render(tmp):
+def render(tmp, photos=None):
     lines = run("go", "run", "./cmd/preview", "-out", tmp).strip().splitlines()
     decks = [line.split("\t") for line in lines]
+    if photos:
+        # Rasmli dizaynlar haqiqiy AI rasmlar bilan qayta yaratiladi.
+        real = run("go", "run", "./cmd/preview", "-out", tmp, "-photos", photos).strip().splitlines()
+        by_name = {name: path for path, name in (line.split("\t") for line in real)}
+        decks = [[by_name.get(name, path), name] for path, name in decks]
     run("soffice", f"-env:UserInstallation=file://{tmp}/lo", "--headless",
         "--convert-to", "pdf", "--outdir", tmp, *[d[0] for d in decks])
     result = []
     for path, name in decks:
         theme = os.path.basename(path)[len("namuna-"):-len(".pptx")]
+        if photos:
+            theme = theme.removesuffix("-" + photos)
         pdf = path[:-len(".pptx")] + ".pdf"
         pages = []
         for n in (1, *CONTENT_SLIDES):
@@ -66,7 +91,7 @@ def compose(themes):
     small_w = (CELL_W - GAP) // 2
     small_h = round(small_w * 9 / 16)
     cell_h = LABEL_H + COVER_H + GAP + small_h
-    cols = 2
+    cols = COLS
     rows = (len(themes) + cols - 1) // cols
     W = MARGIN * (cols + 1) + CELL_W * cols
     H = MARGIN * (rows + 1) + cell_h * rows
@@ -93,10 +118,14 @@ def compose(themes):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--photos", choices=("standard", "premium"),
+                        help="rasmli dizaynlarni haqiqiy AI rasmlar bilan chizish (pullik)")
+    args = parser.parse_args()
     if not os.path.exists("go.mod"):
         sys.exit("Loyiha ildizidan ishga tushiring: python3 scripts/design_preview.py")
     with tempfile.TemporaryDirectory() as tmp:
-        img = compose(render(tmp))
+        img = compose(render(tmp, args.photos))
     img.save(OUT, optimize=True)
     print(f"{OUT}: {img.size[0]}x{img.size[1]}")
 

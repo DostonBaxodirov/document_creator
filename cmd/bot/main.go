@@ -23,6 +23,7 @@ import (
 	"telegram-presentation-bot/internal/bot"
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
+	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/storage"
 )
 
@@ -81,6 +82,19 @@ func run() error {
 		return err
 	}
 
+	// Rasmli dizaynlar uchun AI rasm generatsiyasi: arzon tarif (standard) va
+	// sifatli tarif (premium) provayderlari. Kalit bo'lmasa — rasmlarsiz.
+	imageSvc, err := images.New(ctx, cfg.AI, cfg.Images, log)
+	if err != nil {
+		return err
+	}
+	var imageService bot.ImageService
+	if imageSvc.Available() {
+		imageService = imageSvc
+	} else {
+		log.Warn("rasm provayderlari ulanmagan (OPENAI_API_KEY / GEMINI_API_KEY) — rasmli dizaynlar rasmsiz chiqadi")
+	}
+
 	// 5. Handler. Generatsiyalar signal kontekstidan alohida kontekstda ishlaydi:
 	// to'xtash signali kelganda ular darhol uzilmaydi, balki ShutdownTimeout
 	// davomida yakunlanishiga imkon beriladi.
@@ -97,7 +111,9 @@ func run() error {
 		MaxConcurrentJobs: cfg.Generator.MaxConcurrentJobs,
 		JobTimeout:        cfg.Generator.JobTimeout,
 		// Dizaynlar ko'rinishi rasmi shablon yonida turadi (go run ./cmd/preview bilan yangilanadi).
-		DesignPreview: filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "designs.png"),
+		DesignPreview:    filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "designs.png"),
+		Images:           imageService,
+		DefaultImageTier: images.Tier(cfg.Images.DefaultTier),
 	})
 
 	// 6. Telegram bot.

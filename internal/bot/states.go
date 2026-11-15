@@ -122,7 +122,7 @@ var steps = map[State]step{
 			return "📝 <b>Mavzuni kiriting.</b>\n\n<i>Masalan: Sun'iy intellektning ta'limdagi o'rni</i>"
 		},
 		apply: func(_ Limits, s *storage.Session, input string) error {
-			v, err := validateText(input, "Mavzu", 3, 200)
+			v, err := validateText(input, "Mavzu", 3, maxTopicRunes)
 			if err != nil {
 				return err
 			}
@@ -245,6 +245,9 @@ func resetDraft(s *storage.Session) {
 func normalizeSpaces(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
+
+// maxTopicRunes — mavzu uzunligi chegarasi (bazada Session.Topic — varchar(512)).
+const maxTopicRunes = 500
 
 // validateText umumiy matn maydonini tekshiradi: uzunlik va kamida 2 ta harf.
 func validateText(input, field string, minRunes, maxRunes int) (string, error) {

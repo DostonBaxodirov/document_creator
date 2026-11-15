@@ -3,9 +3,15 @@ package ai
 // presentation.go — taqdimot slaydlari generatsiyasi.
 //
 // Har bir slayd o'z maketiga (layout) ega: reja, punktlar, kartochkalar,
-// bosqichlar, taqqoslash, faktlar, ta'rif yoki xulosa — va har bir element
-// sarlavha hamda izohdan iborat. Shu tufayli slaydlar ham boy mazmunli,
-// ham turli ko'rinishda chiqadi.
+// bosqichlar, taqqoslash, faktlar, ta'rif, xulosa, vaqt chizig'i, piramida,
+// matritsa, sikl, markaziy tushuncha yoki tezis — va har bir element sarlavha
+// hamda izohdan iborat. Shu tufayli slaydlar ham boy mazmunli, ham turli
+// ko'rinishda chiqadi.
+//
+// Prompt tanlangan dizayn tuzilishiga moslanadi (PresentationRequest.Layouts,
+// Signature, Compact): AI faqat dizayn chizadigan maketlardan tanlaydi,
+// dizaynning imzo maketlarini albatta ishlatadi va matn hajmini dizayndagi
+// joyga moslaydi (katta shriftli dizaynlarda qisqaroq).
 //
 // Slaydlar soni kam bo'lsa (slidesPerRequest gacha) — bitta so'rov. Ko'p
 // bo'lsa — avval reja (har bir slayd sarlavhasi, maketi va mazmuni), so'ng
@@ -16,6 +22,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -33,11 +43,19 @@ const (
 	LayoutFacts      = "facts"
 	LayoutDefinition = "definition"
 	LayoutConclusion = "conclusion"
+	LayoutTimeline   = "timeline"
+	LayoutPyramid    = "pyramid"
+	LayoutMatrix     = "matrix"
+	LayoutCycle      = "cycle"
+	LayoutHub        = "hub"
+	LayoutStatement  = "statement"
 )
 
+// slideLayouts — barcha maketlar (generator ularning hammasini chiza oladi).
 var slideLayouts = []string{
 	LayoutAgenda, LayoutBullets, LayoutCards, LayoutComparison,
 	LayoutProcess, LayoutFacts, LayoutDefinition, LayoutConclusion,
+	LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement,
 }
 
 // layoutAliases — modellar ba'zan maket nomini o'zgacha yozadi.
@@ -46,10 +64,16 @@ var layoutAliases = map[string]string{
 	"list": LayoutBullets, "bullet": LayoutBullets, "points": LayoutBullets,
 	"grid": LayoutCards, "card": LayoutCards, "columns": LayoutCards,
 	"compare": LayoutComparison, "versus": LayoutComparison, "vs": LayoutComparison,
-	"timeline": LayoutProcess, "steps": LayoutProcess, "stages": LayoutProcess,
+	"steps": LayoutProcess, "stages": LayoutProcess,
 	"stats": LayoutFacts, "numbers": LayoutFacts, "figures": LayoutFacts,
-	"quote": LayoutDefinition, "term": LayoutDefinition,
+	"term":    LayoutDefinition,
 	"summary": LayoutConclusion, "xulosa": LayoutConclusion,
+	"chronology": LayoutTimeline, "history": LayoutTimeline, "dates": LayoutTimeline,
+	"hierarchy": LayoutPyramid, "levels": LayoutPyramid, "triangle": LayoutPyramid,
+	"swot": LayoutMatrix, "quadrant": LayoutMatrix, "quadrants": LayoutMatrix, "2x2": LayoutMatrix,
+	"loop": LayoutCycle, "circle": LayoutCycle, "circular": LayoutCycle,
+	"mindmap": LayoutHub, "radial": LayoutHub, "spokes": LayoutHub, "center": LayoutHub,
+	"quote": LayoutStatement, "thesis": LayoutStatement, "key-idea": LayoutStatement, "big-idea": LayoutStatement,
 }
 
 // PresentationRequest — taqdimot generatsiyasi uchun kiruvchi ma'lumotlar.
@@ -59,6 +83,49 @@ type PresentationRequest struct {
 	// OnProgress — katta taqdimotda reja va har bir slaydlar guruhi tayyor
 	// bo'lganda chaqiriladi (ixtiyoriy; kichik taqdimotda chaqirilmaydi).
 	OnProgress func(done, total int)
+	// Images — rasmli dizayn: AI har bir slayd (va titul) uchun rasm
+	// tavsifini ham yozadi ("image" maydoni). Oddiy dizaynlarda false.
+	Images bool
+
+	// Dizayn tuzilishi (generator.ThemeStructure). Layouts — AI tanlashi
+	// mumkin bo'lgan maketlar (bo'sh bo'lsa — barchasi); Signature — dizaynga
+	// xos maketlar, AI ularni ishlatishi kerak; Compact — dizaynda matn uchun
+	// joy kam, AI qisqaroq yozadi.
+	Layouts   []string
+	Signature []string
+	Compact   bool
+}
+
+// layouts so'rov uchun ruxsat etilgan maketlar (noma'lumlari tashlanadi).
+func (r PresentationRequest) layouts() []string {
+	var out []string
+	for _, l := range r.Layouts {
+		if slices.Contains(slideLayouts, l) && !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return slideLayouts
+	}
+	// Reja va xulosa tuzilish uchun doim kerak.
+	for _, l := range []string{LayoutConclusion, LayoutAgenda} {
+		if !slices.Contains(out, l) {
+			out = append([]string{l}, out...)
+		}
+	}
+	return out
+}
+
+// signature dizaynning imzo maketlari (ruxsat etilganlari).
+func (r PresentationRequest) signature() []string {
+	allowed := r.layouts()
+	var out []string
+	for _, l := range r.Signature {
+		if slices.Contains(allowed, l) && !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // SlideItem — slayddagi bitta element.
@@ -76,6 +143,8 @@ type Slide struct {
 	Lead      string      `json:"lead"` // sarlavha ostidagi kirish gapi
 	Items     []SlideItem `json:"items"`
 	Highlight string      `json:"highlight"` // asosiy fikr, ta'rif yoki yakuniy xulosa
+	// Image — slaydni bezaydigan rasm tavsifi (inglizcha; faqat Images rejimida).
+	Image string `json:"image,omitempty"`
 	// Bullets — model sxemadan chetga chiqib eski formatda javob bersa (zaxira).
 	Bullets []string `json:"bullets,omitempty"`
 }
@@ -84,6 +153,7 @@ type Slide struct {
 type Presentation struct {
 	Title    string  `json:"title"`
 	Subtitle string  `json:"subtitle"`
+	Image    string  `json:"image,omitempty"` // titul slayd rasmi tavsifi (Images rejimida)
 	Slides   []Slide `json:"slides"`
 }
 
@@ -101,6 +171,7 @@ const (
 	maxPointRunes     = 220
 	maxHighlightRunes = 480
 	maxFocusRunes     = 320
+	maxImageRunes     = 300
 )
 
 // GeneratePresentation slaydlarni yaratadi. Slaydlar soni kam bo'lsa qayta
@@ -120,7 +191,7 @@ func (c *client) GeneratePresentation(ctx context.Context, req PresentationReque
 
 // generateDeck butun taqdimotni bitta so'rov bilan yozadi.
 func (c *client) generateDeck(ctx context.Context, req PresentationRequest) (*Presentation, error) {
-	t := task{system: presentationSystemPrompt, user: buildDeckPrompt(req), schema: deckSchema()}
+	t := task{system: presentationSystemPrompt, user: buildDeckPrompt(req), schema: deckSchema(req.Images, req.layouts())}
 	return generateJSON(ctx, c, "presentation", t, req.SlideCount, func(raw string) (*Presentation, int, error) {
 		pres, err := parsePresentation(raw)
 		if err != nil {
@@ -141,7 +212,7 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 	plan, err := generateJSON(ctx, c, "presentation_outline", task{
 		system: presentationSystemPrompt,
 		user:   buildDeckOutlinePrompt(req),
-		schema: deckOutlineSchema(),
+		schema: deckOutlineSchema(req.Images, req.layouts()),
 	}, n, func(raw string) (*deckOutline, int, error) {
 		o, err := parseDeckOutline(raw)
 		if err != nil {
@@ -164,8 +235,8 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 		want := b[1] - b[0]
 		slides, err := generateJSON(ctx, c, "presentation_slides", task{
 			system: presentationSystemPrompt,
-			user:   buildSlidesBatchPrompt(req.Topic, plan, b[0], b[1]),
-			schema: slidesBatchSchema(),
+			user:   buildSlidesBatchPrompt(req, plan, b[0], b[1]),
+			schema: slidesBatchSchema(req.Images, req.layouts()),
 		}, want, func(raw string) ([]Slide, int, error) {
 			s, err := parseSlides(raw)
 			if err != nil {
@@ -187,7 +258,7 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 		return nil, err
 	}
 
-	pres := &Presentation{Title: plan.Title, Subtitle: plan.Subtitle}
+	pres := &Presentation{Title: plan.Title, Subtitle: plan.Subtitle, Image: plan.Image}
 	for _, s := range results {
 		pres.Slides = append(pres.Slides, s...)
 	}
@@ -279,23 +350,89 @@ Strict output rules:
 - Slide titles are short and specific (at most 8 words). Never repeat the same slide title.
 ` + finalTextRules
 
-// layoutGuide — har bir maket uchun talablar (barcha taqdimot promptlarida).
-const layoutGuide = `Slide layouts (the "layout" field) and the content each one needs:
-- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
-- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
-- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
-- "process": 3-5 sequential steps, stages or historical periods in order: "heading" (2-5 words, may start with a date or period), "text" (15-25 words).
-- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
-- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
-- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
-- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
-Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
-Fields a layout does not use are left empty.`
+// layoutGuides — har bir maket uchun talablar (prompt dizayn maketlaridan yig'iladi).
+var layoutGuides = map[string]string{
+	LayoutAgenda:     `"agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).`,
+	LayoutBullets:    `"bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).`,
+	LayoutCards:      `"cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).`,
+	LayoutProcess:    `"process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).`,
+	LayoutComparison: `"comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).`,
+	LayoutFacts:      `"facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.`,
+	LayoutDefinition: `"definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).`,
+	LayoutConclusion: `"conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).`,
+	LayoutTimeline:   `"timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.`,
+	LayoutPyramid:    `"pyramid": 3-5 levels of a hierarchy, ordered from the top (the narrowest, highest or most specific level) down to the base (the broadest, foundational level): "heading" (1-4 words), "text" (10-18 words).`,
+	LayoutMatrix:     `"matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").`,
+	LayoutCycle:      `"cycle": 3-6 stages of a repeating process in order, where the last stage leads back to the first: "heading" (1-4 words), "text" (8-16 words); "highlight" = the name of the cycle (1-3 words).`,
+	LayoutHub:        `"hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).`,
+	LayoutStatement:  `"statement": one key thesis of the topic shown in large type: "highlight" = the statement itself (15-30 words; a precise claim in your own words, not a quotation); 0-3 items supporting it: "heading" (1-4 words), "text" (6-14 words).`,
+}
 
-const slideJSONShape = `{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string}`
+// compactWords — ixcham dizaynlarda so'zlar sonini kamaytirish koeffitsiyenti.
+const compactWords = 0.75
 
-// structureRules — taqdimot tuzilishi (n — mazmunli slaydlar soni).
-func structureRules(n int) string {
+var wordRangeRe = regexp.MustCompile(`(\d+)-(\d+) words`)
+
+// scaleWords "20-35 words" kabi oraliqlarni k marta o'zgartiradi.
+func scaleWords(s string, k float64) string {
+	return wordRangeRe.ReplaceAllStringFunc(s, func(m string) string {
+		p := wordRangeRe.FindStringSubmatch(m)
+		lo, _ := strconv.Atoi(p[1])
+		hi, _ := strconv.Atoi(p[2])
+		nlo := max(1, int(math.Round(float64(lo)*k)))
+		nhi := max(nlo+1, int(math.Round(float64(hi)*k)))
+		return fmt.Sprintf("%d-%d words", nlo, nhi)
+	})
+}
+
+// layoutGuide — ruxsat etilgan maketlar uchun talablar (barcha taqdimot promptlarida).
+func layoutGuide(layouts []string, compact bool) string {
+	var b strings.Builder
+	b.WriteString(`Slide layouts (the "layout" field) — use only these — and the content each one needs:` + "\n")
+	for _, l := range slideLayouts {
+		if slices.Contains(layouts, l) {
+			b.WriteString("- " + layoutGuides[l] + "\n")
+		}
+	}
+	b.WriteString("Every slide except the agenda has \"lead\": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.\n")
+	b.WriteString("Fields a layout does not use are left empty.")
+	out := b.String()
+	if compact {
+		out = scaleWords(out, compactWords) + "\nThis design uses large type and leaves little room for text: keep every text short and within these word limits."
+	}
+	return out
+}
+
+// slideJSONShape — bitta slayd JSON shakli (images — rasm tavsifi maydoni bilan).
+func slideJSONShape(images bool) string {
+	img := ""
+	if images {
+		img = `, "image": string`
+	}
+	return `{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string` + img + `}`
+}
+
+// imageRule — rasmli dizaynda rasm tavsiflari uchun talablar. Tavsif ingliz
+// tilida: rasm modellari uni eng aniq tushunadi.
+const imageRule = `Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. ` +
+	`No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.`
+
+// coverImageRule — titul slayd rasmi.
+const coverImageRule = `The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.`
+
+// signatureHints — imzo maketiga mos mazmun (AI mazmunni maketga moslashi uchun).
+var signatureHints = map[string]string{
+	LayoutTimeline:  "a history or chronology becomes a timeline",
+	LayoutPyramid:   "a hierarchy of levels becomes a pyramid",
+	LayoutMatrix:    "a four-part classification or SWOT becomes a matrix",
+	LayoutCycle:     "a repeating process becomes a cycle",
+	LayoutHub:       "components or factors around one concept become a hub",
+	LayoutStatement: "the central thesis becomes a statement",
+}
+
+// structureRules — taqdimot tuzilishi (n — mazmunli slaydlar soni,
+// signature — dizaynning imzo maketlari).
+func structureRules(n int, signature []string) string {
 	var b strings.Builder
 	b.WriteString("Structure:\n")
 	switch {
@@ -308,6 +445,22 @@ func structureRules(n int) string {
 			b.WriteString("Choose for each main slide the layout that best fits its content and vary them: use at least 4 different layouts, and never the same layout on more than 2 consecutive slides.\n")
 		} else {
 			b.WriteString("Choose for each main slide the layout that best fits its content; avoid repeating the same layout.\n")
+		}
+		if main := n - 2; main >= 2 && len(signature) > 0 {
+			k := min(len(signature), max(1, main/2))
+			quoted := make([]string, len(signature))
+			var hints []string
+			for i, l := range signature {
+				quoted[i] = `"` + l + `"`
+				if h, ok := signatureHints[l]; ok {
+					hints = append(hints, h)
+				}
+			}
+			fmt.Fprintf(&b, "The chosen slide design is built around these signature layouts: %s. Use at least %d of them, on slides whose content naturally fits them", strings.Join(quoted, ", "), k)
+			if len(hints) > 0 {
+				fmt.Fprintf(&b, " (shape the content accordingly: %s)", strings.Join(hints, "; "))
+			}
+			b.WriteString(".\n")
 		}
 	case n == 2:
 		b.WriteString("1. Slide 1 explains the core of the topic (layout \"definition\" or \"bullets\").\n")
@@ -324,10 +477,21 @@ func buildDeckPrompt(req PresentationRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
 	fmt.Fprintf(&b, "Number of slides in \"slides\": exactly %d\n\n", n)
-	b.WriteString(structureRules(n))
-	b.WriteString("\n" + layoutGuide + "\n\n")
-	b.WriteString(`JSON shape: {"title": string, "subtitle": string, "slides": [` + slideJSONShape + `, ...]}` + "\n")
+	b.WriteString(structureRules(n, req.signature()))
+	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n")
+	if req.Images {
+		b.WriteString(imageRule + "\n")
+	}
+	b.WriteString("\n")
+	top := ""
+	if req.Images {
+		top = `, "image": string`
+	}
+	b.WriteString(`JSON shape: {"title": string, "subtitle": string` + top + `, "slides": [` + slideJSONShape(req.Images) + `, ...]}` + "\n")
 	b.WriteString(`The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.`)
+	if req.Images {
+		b.WriteString("\n" + coverImageRule)
+	}
 	return b.String()
 }
 
@@ -337,25 +501,37 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
 	fmt.Fprintf(&b, "Plan a presentation with exactly %d slides (do not write their content yet).\n\n", n)
-	b.WriteString(structureRules(n))
-	b.WriteString("\n" + layoutGuide + "\n\n")
+	b.WriteString(structureRules(n, req.signature()))
+	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n\n")
 	b.WriteString(`For each slide give "title", "layout" and "focus": one sentence (12-25 words) naming exactly what the slide will cover — specific sub-topics, facts or examples — so that slides do not overlap.` + "\n")
-	b.WriteString(`JSON shape: {"title": string, "subtitle": string, "slides": [{"title": string, "layout": string, "focus": string}, ...]}` + "\n")
+	top := ""
+	if req.Images {
+		top = `, "image": string`
+	}
+	b.WriteString(`JSON shape: {"title": string, "subtitle": string` + top + `, "slides": [{"title": string, "layout": string, "focus": string}, ...]}` + "\n")
 	b.WriteString(`The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.`)
+	if req.Images {
+		b.WriteString("\n" + coverImageRule)
+	}
 	return b.String()
 }
 
 // buildSlidesBatchPrompt — rejadagi [from, to) slaydlar mazmuni.
-func buildSlidesBatchPrompt(topic string, plan *deckOutline, from, to int) string {
+func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to int) string {
+	images := req.Images
 	var b strings.Builder
-	fmt.Fprintf(&b, "Topic: %q\n\nPresentation plan (all slides):\n", strings.TrimSpace(topic))
+	fmt.Fprintf(&b, "Topic: %q\n\nPresentation plan (all slides):\n", strings.TrimSpace(req.Topic))
 	for i, s := range plan.Slides {
 		fmt.Fprintf(&b, "%d. [%s] %s — %s\n", i+1, s.Layout, s.Title, s.Focus)
 	}
 	fmt.Fprintf(&b, "\nWrite the full content of slides %d-%d only (%d slides), exactly as planned: same order, titles and layouts. "+
 		"Stay within each slide's focus and do not repeat what other slides cover.\n\n", from+1, to, to-from)
-	b.WriteString(layoutGuide + "\n\n")
-	b.WriteString(`JSON shape: {"slides": [` + slideJSONShape + `, ...]}`)
+	b.WriteString(layoutGuide(req.layouts(), req.Compact) + "\n")
+	if images {
+		b.WriteString(imageRule + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(`JSON shape: {"slides": [` + slideJSONShape(images) + `, ...]}`)
 	return b.String()
 }
 
@@ -363,11 +539,11 @@ func buildSlidesBatchPrompt(topic string, plan *deckOutline, from, to int) strin
 // JSON sxemalar (Gemini structured output)
 // ---------------------------------------------------------------------------
 
-func slideSchema() *genai.Schema {
-	return &genai.Schema{
+func slideSchema(images bool, layouts []string) *genai.Schema {
+	s := &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
-			"layout": {Type: genai.TypeString, Format: "enum", Enum: slideLayouts},
+			"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
 			"title":  {Type: genai.TypeString},
 			"lead":   {Type: genai.TypeString},
 			"items": {Type: genai.TypeArray, Items: &genai.Schema{
@@ -386,31 +562,46 @@ func slideSchema() *genai.Schema {
 		Required:         []string{"layout", "title", "lead", "items"},
 		PropertyOrdering: []string{"layout", "title", "lead", "items", "highlight"},
 	}
+	if images {
+		addImageProperty(s)
+	}
+	return s
 }
 
-func deckSchema() *genai.Schema {
-	return &genai.Schema{
+// addImageProperty sxemaga majburiy "image" maydonini qo'shadi (rasmli dizayn uchun).
+func addImageProperty(s *genai.Schema) {
+	s.Properties["image"] = &genai.Schema{Type: genai.TypeString}
+	s.Required = append(s.Required, "image")
+	s.PropertyOrdering = append(s.PropertyOrdering, "image")
+}
+
+func deckSchema(images bool, layouts []string) *genai.Schema {
+	s := &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
 			"title":    {Type: genai.TypeString},
 			"subtitle": {Type: genai.TypeString},
-			"slides":   {Type: genai.TypeArray, Items: slideSchema()},
+			"slides":   {Type: genai.TypeArray, Items: slideSchema(images, layouts)},
 		},
 		Required:         []string{"title", "subtitle", "slides"},
 		PropertyOrdering: []string{"title", "subtitle", "slides"},
 	}
+	if images {
+		addImageProperty(s)
+	}
+	return s
 }
 
-func slidesBatchSchema() *genai.Schema {
+func slidesBatchSchema(images bool, layouts []string) *genai.Schema {
 	return &genai.Schema{
 		Type:       genai.TypeObject,
-		Properties: map[string]*genai.Schema{"slides": {Type: genai.TypeArray, Items: slideSchema()}},
+		Properties: map[string]*genai.Schema{"slides": {Type: genai.TypeArray, Items: slideSchema(images, layouts)}},
 		Required:   []string{"slides"},
 	}
 }
 
-func deckOutlineSchema() *genai.Schema {
-	return &genai.Schema{
+func deckOutlineSchema(images bool, layouts []string) *genai.Schema {
+	s := &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
 			"title":    {Type: genai.TypeString},
@@ -419,7 +610,7 @@ func deckOutlineSchema() *genai.Schema {
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"title":  {Type: genai.TypeString},
-					"layout": {Type: genai.TypeString, Format: "enum", Enum: slideLayouts},
+					"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
 					"focus":  {Type: genai.TypeString},
 				},
 				Required:         []string{"title", "layout", "focus"},
@@ -429,6 +620,10 @@ func deckOutlineSchema() *genai.Schema {
 		Required:         []string{"title", "subtitle", "slides"},
 		PropertyOrdering: []string{"title", "subtitle", "slides"},
 	}
+	if images {
+		addImageProperty(s)
+	}
+	return s
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +638,7 @@ func parsePresentation(raw string) (*Presentation, error) {
 	}
 	pres.Title = truncateRunes(stripMeta(cleanText(pres.Title)), maxTitleRunes)
 	pres.Subtitle = truncateRunes(strings.TrimRight(stripMeta(cleanText(pres.Subtitle)), "."), maxSubtitleRunes)
+	pres.Image = truncateRunes(cleanText(pres.Image), maxImageRunes)
 	pres.Slides = normalizeSlides(pres.Slides)
 	if len(pres.Slides) == 0 {
 		return nil, errors.New("javobda birorta ham to'liq slayd yo'q")
@@ -484,6 +680,7 @@ func (s *Slide) normalize() bool {
 	s.Title = truncateRunes(stripMeta(cleanText(s.Title)), maxTitleRunes)
 	s.Lead = truncateRunes(stripMeta(cleanText(s.Lead)), maxLeadRunes)
 	s.Highlight = truncateRunes(stripMeta(cleanText(s.Highlight)), maxHighlightRunes)
+	s.Image = truncateRunes(cleanText(s.Image), maxImageRunes)
 
 	items := make([]SlideItem, 0, len(s.Items))
 	for _, it := range s.Items {
@@ -566,6 +763,7 @@ type plannedSlide struct {
 type deckOutline struct {
 	Title    string         `json:"title"`
 	Subtitle string         `json:"subtitle"`
+	Image    string         `json:"image,omitempty"` // titul slayd rasmi tavsifi (Images rejimida)
 	Slides   []plannedSlide `json:"slides"`
 }
 
@@ -576,6 +774,7 @@ func parseDeckOutline(raw string) (*deckOutline, error) {
 	}
 	o.Title = truncateRunes(stripMeta(cleanText(o.Title)), maxTitleRunes)
 	o.Subtitle = truncateRunes(strings.TrimRight(stripMeta(cleanText(o.Subtitle)), "."), maxSubtitleRunes)
+	o.Image = truncateRunes(cleanText(o.Image), maxImageRunes)
 	slides := o.Slides[:0]
 	for _, s := range o.Slides {
 		s.Title = truncateRunes(cleanText(s.Title), maxTitleRunes)

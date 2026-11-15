@@ -44,8 +44,8 @@ func TestParsePresentation(t *testing.T) {
 	if s := p.Slides[0]; len(s.Items) != 1 || s.Items[0].Heading != "Tushuncha" {
 		t.Errorf("agenda items = %+v", s.Items)
 	}
-	if got := p.Slides[1].Layout; got != LayoutProcess {
-		t.Errorf("timeline -> %q, kutilgan process", got)
+	if got := p.Slides[1].Layout; got != LayoutTimeline {
+		t.Errorf("Timeline -> %q, kutilgan timeline", got)
 	}
 	if got := p.Slides[1].Items[0].Heading; got != "1956-yil: Dartmut" {
 		t.Errorf("sana bilan boshlangan sarlavha buzildi: %q", got)
@@ -93,7 +93,7 @@ func TestFitSlidesKeepsConclusion(t *testing.T) {
 
 func TestStructureRules(t *testing.T) {
 	for _, n := range []int{1, 2, 3, 8} {
-		r := structureRules(n)
+		r := structureRules(n, nil)
 		if n >= 3 && (!strings.Contains(r, `"agenda"`) || !strings.Contains(r, `"conclusion"`)) {
 			t.Errorf("n=%d: reja yoki xulosa talabi yo'q", n)
 		}
@@ -101,7 +101,107 @@ func TestStructureRules(t *testing.T) {
 			t.Errorf("n=%d: maketlar xilma-xilligi talabi yo'q", n)
 		}
 	}
-	if p := buildSlidesBatchPrompt("Mavzu", &deckOutline{Slides: []plannedSlide{{Title: "Reja", Layout: "agenda", Focus: "f"}, {Title: "B", Layout: "cards", Focus: "g"}}}, 1, 2); !strings.Contains(p, "slides 2-2") || !strings.Contains(p, "1. [agenda] Reja") {
+	if p := buildSlidesBatchPrompt(PresentationRequest{Topic: "Mavzu"}, &deckOutline{Slides: []plannedSlide{{Title: "Reja", Layout: "agenda", Focus: "f"}, {Title: "B", Layout: "cards", Focus: "g"}}}, 1, 2); !strings.Contains(p, "slides 2-2") || !strings.Contains(p, "1. [agenda] Reja") {
 		t.Errorf("batch prompt: %s", p)
+	}
+}
+
+func TestImageDescriptions(t *testing.T) {
+	long := strings.Repeat("word ", 100)
+	raw := `{"title": "T", "subtitle": "S", "image": "  Students   in a **library**  ",
+	  "slides": [{"layout": "bullets", "title": "A", "lead": "L", "items": [{"heading": "h", "text": "t"}], "image": "` + long + `"}]}`
+	p, err := parsePresentation(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Image != "Students in a library" {
+		t.Errorf("image = %q", p.Image)
+	}
+	if n := len([]rune(p.Slides[0].Image)); n > maxImageRunes+1 {
+		t.Errorf("slayd rasm tavsifi qirqilmadi: %d", n)
+	}
+
+	plain := buildDeckPrompt(PresentationRequest{Topic: "Mavzu", SlideCount: 5})
+	withImages := buildDeckPrompt(PresentationRequest{Topic: "Mavzu", SlideCount: 5, Images: true})
+	if strings.Contains(plain, `"image"`) {
+		t.Errorf("oddiy dizayn promptida rasm talabi bo'lmasligi kerak")
+	}
+	if !strings.Contains(withImages, `"image": string`) || !strings.Contains(withImages, "realistic photograph") {
+		t.Errorf("rasmli dizayn promptida rasm talabi yo'q:\n%s", withImages)
+	}
+	outline := buildDeckOutlinePrompt(PresentationRequest{Topic: "Mavzu", SlideCount: 10, Images: true})
+	if !strings.Contains(outline, `"subtitle": string, "image": string`) {
+		t.Errorf("reja promptida titul rasmi yo'q")
+	}
+	batch := buildSlidesBatchPrompt(PresentationRequest{Topic: "Mavzu", Images: true}, &deckOutline{Slides: []plannedSlide{{Title: "A", Layout: "cards", Focus: "f"}}}, 0, 1)
+	if !strings.Contains(batch, `"highlight": string, "image": string`) {
+		t.Errorf("guruh promptida rasm maydoni yo'q")
+	}
+
+	if s := deckSchema(true, slideLayouts); s.Properties["image"] == nil || s.Properties["slides"].Items.Properties["image"] == nil {
+		t.Errorf("rasmli sxemada image maydoni yo'q")
+	}
+	if s := deckSchema(false, slideLayouts); s.Properties["image"] != nil || s.Properties["slides"].Items.Properties["image"] != nil {
+		t.Errorf("oddiy sxemada image maydoni bo'lmasligi kerak")
+	}
+}
+
+// TestDesignAwarePrompt — prompt tanlangan dizayn tuzilishiga moslanadi.
+func TestDesignAwarePrompt(t *testing.T) {
+	req := PresentationRequest{
+		Topic: "Mavzu", SlideCount: 8,
+		Layouts:   []string{LayoutBullets, LayoutCards, LayoutTimeline, LayoutMatrix, "noma'lum"},
+		Signature: []string{LayoutMatrix, LayoutTimeline, LayoutHub},
+	}
+	if got := strings.Join(req.layouts(), ","); got != "agenda,conclusion,bullets,cards,timeline,matrix" {
+		t.Errorf("layouts = %s (reja va xulosa qo'shilishi, noma'lumi tashlanishi kerak)", got)
+	}
+	if got := strings.Join(req.signature(), ","); got != "matrix,timeline" {
+		t.Errorf("signature = %s (ruxsat etilmagan hub tashlanishi kerak)", got)
+	}
+
+	p := buildDeckPrompt(req)
+	for _, want := range []string{`- "timeline":`, `- "matrix":`, `- "agenda":`, `signature layouts: "matrix", "timeline". Use at least 2 of them`} {
+		if !strings.Contains(p, want) {
+			t.Errorf("promptda %q yo'q:\n%s", want, p)
+		}
+	}
+	for _, unwanted := range []string{`- "hub":`, `- "pyramid":`, `- "facts":`} {
+		if strings.Contains(p, unwanted) {
+			t.Errorf("promptda ruxsat etilmagan maket bor: %q", unwanted)
+		}
+	}
+	if enum := deckSchema(false, req.layouts()).Properties["slides"].Items.Properties["layout"].Enum; len(enum) != 6 {
+		t.Errorf("sxemadagi maketlar = %v", enum)
+	}
+	if enum := deckOutlineSchema(false, req.layouts()).Properties["slides"].Items.Properties["layout"].Enum; len(enum) != 6 {
+		t.Errorf("reja sxemasidagi maketlar = %v", enum)
+	}
+
+	// Bo'sh Layouts — barcha maketlar, imzo talabi yo'q.
+	all := buildDeckPrompt(PresentationRequest{Topic: "Mavzu", SlideCount: 8})
+	if !strings.Contains(all, `- "pyramid":`) || strings.Contains(all, "signature layouts") {
+		t.Errorf("standart prompt noto'g'ri:\n%s", all)
+	}
+
+	// Ixcham dizayn — so'zlar soni kamayadi.
+	compact := layoutGuide([]string{LayoutBullets}, true)
+	if !strings.Contains(compact, `(15-26 words)`) || !strings.Contains(compact, "little room for text") {
+		t.Errorf("ixcham prompt:\n%s", compact)
+	}
+	if got := scaleWords("text (6-14 words), points 3-5 points", 0.75); got != "text (5-11 words), points 3-5 points" {
+		t.Errorf("scaleWords = %q", got)
+	}
+}
+
+func TestNewLayoutAliases(t *testing.T) {
+	cases := map[string]string{
+		"SWOT": LayoutMatrix, "chronology": LayoutTimeline, "hierarchy": LayoutPyramid,
+		"loop": LayoutCycle, "mindmap": LayoutHub, "quote": LayoutStatement, "statement": LayoutStatement,
+	}
+	for in, want := range cases {
+		if got := normalizeLayout(in); got != want {
+			t.Errorf("normalizeLayout(%q) = %q, kutilgan %q", in, got, want)
+		}
 	}
 }

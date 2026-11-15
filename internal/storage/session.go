@@ -36,6 +36,11 @@ type Session struct {
 	University  string `gorm:"size:256"`
 	TeacherName string `gorm:"size:128"`
 
+	// Plan — foydalanuvchi tarifi: rasmli dizaynlarda qaysi rasm modeli
+	// ishlatilishini belgilaydi ("standard" — arzon, "premium" — sifatli).
+	// Bo'sh bo'lsa — IMAGE_DEFAULT_TIER. Har bir buyurtmada tozalanmaydi.
+	Plan string `gorm:"size:16"`
+
 	// Statistika.
 	GeneratedCount  int `gorm:"not null;default:0"`
 	LastGeneratedAt *time.Time

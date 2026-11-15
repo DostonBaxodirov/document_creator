@@ -28,6 +28,7 @@ import (
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/generator"
+	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/storage"
 )
 
@@ -60,6 +61,15 @@ type PaperBuilder interface {
 	ContentWords(pages int) int
 }
 
+// ImageService — rasmli dizaynlar uchun AI rasm generatsiyasi (internal/images).
+type ImageService interface {
+	// Available kamida bitta rasm provayderi ulanganini bildiradi.
+	Available() bool
+	// Generate rasmlarni tarif provayderi bilan chizadi; natijalar so'rovlar
+	// tartibida, chizilmagan rasm o'rnida Data nil bo'ladi.
+	Generate(ctx context.Context, tier images.Tier, reqs []images.Request, onDone func(done, total int)) []images.Result
+}
+
 // Builders — fayl generatorlari.
 type Builders struct {
 	Slides SlidesBuilder
@@ -74,6 +84,12 @@ type Options struct {
 	// DesignPreview — dizayn mavzulari ko'rinishi rasmi (ixtiyoriy). Fayl
 	// bo'lmasa, dizayn tanlash xabari rasmsiz yuboriladi.
 	DesignPreview string
+	// Images — AI rasm generatsiyasi (ixtiyoriy). nil yoki provayder ulanmagan
+	// bo'lsa, rasmli dizaynlar rasm o'rnida bezakli fon bilan chiqadi.
+	Images ImageService
+	// DefaultImageTier — tarifi (Session.Plan) belgilanmagan foydalanuvchilar
+	// uchun rasm tarifi.
+	DefaultImageTier images.Tier
 }
 
 const (
@@ -87,7 +103,7 @@ const (
 const (
 	msgWelcome = "👋 Assalomu alaykum, <b>%s</b>!\n\n" +
 		"Men sun'iy intellekt yordamida tayyorlab beraman:\n" +
-		"📊 <b>taqdimot</b> — PowerPoint (.pptx), 4 xil dizaynda\n" +
+		"📊 <b>taqdimot</b> — PowerPoint (.pptx), 8 xil dizaynda (4 tasi AI chizgan rasmlar bilan)\n" +
 		"📚 <b>mustaqil ish</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx)\n\n" +
 		"Bir nechta savolga javob bering — qolganini o'zim qilaman ✨"
 	msgChooseWorkType = "📌 <b>Ish turini tanlang:</b>"
@@ -113,7 +129,7 @@ const (
 		"1️⃣ /start — yangi buyurtma\n" +
 		"2️⃣ Ish turini tanlang: slayd, mustaqil ish yoki amaliy topshiriq\n" +
 		"3️⃣ Mavzu, hajm (slaydlar yoki sahifalar soni), F.I.Sh., universitet va tekshiruvchini kiriting\n" +
-		"     🎨 taqdimot uchun 4 xil dizayndan birini tanlaysiz\n" +
+		"     🎨 taqdimot uchun 8 xil dizayndan birini tanlaysiz (📷 — rasmli)\n" +
 		"4️⃣ Ma'lumotlarni tasdiqlang — bot tayyor faylni yuboradi:\n" +
 		"     📊 taqdimot — <b>.pptx</b> (PowerPoint)\n" +
 		"     📚 mustaqil ish, 🛠 amaliy topshiriq — <b>.docx</b> (Word)\n\n" +
@@ -575,9 +591,14 @@ func designPrompt() string {
 	var b strings.Builder
 	b.WriteString("🎨 <b>Taqdimot dizaynini tanlang:</b>\n\n")
 	for i, t := range generator.Themes() {
-		fmt.Fprintf(&b, "%d. %s <b>%s</b> — %s\n", i+1, t.Emoji, html.EscapeString(t.Name), html.EscapeString(t.Description))
+		photo := ""
+		if t.Photos {
+			photo = " 📷"
+		}
+		fmt.Fprintf(&b, "%d. %s <b>%s</b>%s — %s\n", i+1, t.Emoji, html.EscapeString(t.Name), photo, html.EscapeString(t.Description))
 	}
-	b.WriteString("\n<i>Har bir slayd o'z maketida chiqadi: reja, kartochkalar, bosqichlar, taqqoslash, faktlar va xulosa.</i>")
+	b.WriteString("\n📷 — mavzuga mos AI rasmlar bilan.\n")
+	b.WriteString("<i>Har bir dizaynning o'z tuzilishi bor: vaqt chizig'i, piramida, SWOT, sikl, sxema va boshqa maketlar.</i>")
 	return b.String()
 }
 
@@ -753,9 +774,17 @@ type output struct {
 func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Slides
 	content := b.ContentSlides(s.Volume)
+	photos := generator.ThemeHasPhotos(s.Design) && h.opts.Images != nil && h.opts.Images.Available()
 
-	report, stopProgress := h.startProgress(ctx, chat, log, "Slaydlar yozilmoqda...")
-	pres, err := h.ai.GeneratePresentation(ctx, ai.PresentationRequest{Topic: s.Topic, SlideCount: content, OnProgress: report})
+	// Prompt tanlangan dizayn tuzilishiga moslanadi: AI dizayn chizadigan
+	// maketlardan tanlaydi, uning imzo maketlarini ishlatadi va matn hajmini
+	// dizayndagi joyga moslaydi.
+	design := generator.ThemeStructure(s.Design)
+	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Slaydlar yozilmoqda..."))
+	pres, err := h.ai.GeneratePresentation(ctx, ai.PresentationRequest{
+		Topic: s.Topic, SlideCount: content, OnProgress: report, Images: photos,
+		Layouts: design.Layouts, Signature: design.Signature, Compact: design.Compact,
+	})
 	stopProgress()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errAI, err)
@@ -781,24 +810,132 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 			Layout: sl.Layout, Title: sl.Title, Lead: sl.Lead, Items: items, Highlight: sl.Highlight,
 		})
 	}
+	var pics picturesInfo
+	if photos {
+		pics = h.addPictures(ctx, chat, log, s, pres, &deck)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	path, err := b.Build(ctx, deck)
 	if err != nil {
 		return nil, fmt.Errorf("pptx: %w", err)
 	}
 
 	total := len(deck.Slides) + (s.Volume - content) // + titul va yakuniy slayd
-	design := s.Design
+	designName := s.Design
 	if t, ok := generator.FindTheme(s.Design); ok {
-		design = t.Emoji + " " + t.Name
+		designName = t.Emoji + " " + t.Name
+	}
+	caption := fmt.Sprintf("📎 <b>%s</b>\n%s · %d ta slayd · %s",
+		html.EscapeString(s.Topic), html.EscapeString(opt.Name), total, html.EscapeString(designName))
+	if pics.placed > 0 {
+		caption += fmt.Sprintf(" · 🖼 %d ta rasm", pics.placed)
+	}
+	fields := []zap.Field{zap.Int("slides", total), zap.String("design", s.Design)}
+	if photos {
+		fields = append(fields,
+			zap.Int("images", pics.placed),
+			zap.Int("images_requested", pics.requested),
+			zap.String("image_tier", string(pics.tier)),
+			zap.String("image_provider", pics.provider))
 	}
 	return &output{
-		path:     path,
-		fileName: documentFileName(s.Topic, ".pptx"),
-		mime:     pptxMIME,
-		caption: fmt.Sprintf("📎 <b>%s</b>\n%s · %d ta slayd · %s",
-			html.EscapeString(s.Topic), html.EscapeString(opt.Name), total, html.EscapeString(design)),
-		logFields: []zap.Field{zap.Int("slides", total), zap.String("design", s.Design)},
+		path:      path,
+		fileName:  documentFileName(s.Topic, ".pptx"),
+		mime:      pptxMIME,
+		caption:   caption,
+		logFields: fields,
 	}, nil
+}
+
+// picturesInfo — taqdimotga qo'shilgan rasmlar haqida (log va izoh uchun).
+type picturesInfo struct {
+	requested, placed int
+	tier              images.Tier
+	provider          string
+}
+
+// imageTier foydalanuvchining rasm tarifini aniqlaydi. Tarif shu yerda —
+// bitta joyda — hal qilinadi: pullik xizmat qo'shilganda foydalanuvchi
+// sotib olgan tarif (Session.Plan) shu funksiya orqali qo'llanadi.
+func (h *Handler) imageTier(s *storage.Session) images.Tier {
+	if t := images.Tier(strings.ToLower(strings.TrimSpace(s.Plan))); t.Valid() {
+		return t
+	}
+	if h.opts.DefaultImageTier.Valid() {
+		return h.opts.DefaultImageTier
+	}
+	return images.TierStandard
+}
+
+// addPictures AI yozgan rasm tavsiflari bo'yicha rasmlarni chizdiradi va
+// taqdimotga joylaydi: titul (va yakuniy) slayd uchun bitta yotiq rasm va
+// rasm sig'adigan mazmunli slaydlar uchun tik rasmlar. Chizilmagan rasm
+// o'rnida slayd rasmsiz (titulda — bezakli fon bilan) chiqadi.
+func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Logger, s *storage.Session, pres *ai.Presentation, deck *generator.Deck) picturesInfo {
+	info := picturesInfo{tier: h.imageTier(s)}
+
+	var (
+		reqs    []images.Request
+		targets []int // -1 — titul rasmi, aks holda deck.Slides indeksi
+	)
+	cover := pres.Image
+	for i := 0; cover == "" && i < len(pres.Slides); i++ {
+		cover = pres.Slides[i].Image
+	}
+	if cover != "" {
+		reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(s.Design, cover), Shape: images.Landscape})
+		targets = append(targets, -1)
+	}
+	// Banner rasmli dizaynda slayd rasmi yotiq, boshqalarida — tik (yon panel).
+	slideShape := images.Portrait
+	if generator.SlidePhotoWide(s.Design) {
+		slideShape = images.Landscape
+	}
+	for i, sl := range pres.Slides {
+		if sl.Image == "" || i >= len(deck.Slides) || !generator.SlideTakesPhoto(s.Design, deck.Slides[i]) {
+			continue
+		}
+		reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(s.Design, sl.Image), Shape: slideShape})
+		targets = append(targets, i)
+	}
+	info.requested = len(reqs)
+	if len(reqs) == 0 {
+		log.Warn("AI returned no image descriptions")
+		return info
+	}
+
+	report, stop := h.startProgress(ctx, chat, log, imageStage)
+	report(0, len(reqs))
+	started := time.Now()
+	results := h.opts.Images.Generate(ctx, info.tier, reqs, report)
+	stop()
+
+	for k, r := range results {
+		if r.Data == nil {
+			continue
+		}
+		pic, err := generator.NewPicture(r.Data)
+		if err != nil {
+			log.Warn("generated image rejected", zap.Error(err))
+			continue
+		}
+		if targets[k] < 0 {
+			deck.CoverImage = pic
+		} else {
+			deck.Slides[targets[k]].Image = pic
+		}
+		info.placed++
+		info.provider = r.Provider
+	}
+	log.Info("images generated",
+		zap.Int("placed", info.placed),
+		zap.Int("requested", info.requested),
+		zap.String("tier", string(info.tier)),
+		zap.String("provider", info.provider),
+		zap.Duration("took", time.Since(started)))
+	return info
 }
 
 // buildPaper mustaqil ish yoki amaliy topshiriqni (.docx) yaratadi. Hujjat
@@ -807,7 +944,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Papers
 
-	report, stopProgress := h.startProgress(ctx, chat, log, "Bo'limlar yozilmoqda...")
+	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Bo'limlar yozilmoqda..."))
 	doc, err := h.ai.GenerateDocument(ctx, ai.DocumentRequest{
 		WorkType:   opt.Type,
 		Topic:      s.Topic,
@@ -869,8 +1006,8 @@ func toParagraphs(in []ai.Paragraph) []generator.Paragraph {
 // navbatda faqat eng so'nggi holat saqlanadi, Telegram'ga esa ko'pi bilan
 // 2 soniyada bir marta murojaat qilinadi (API cheklovlariga tushmaslik uchun).
 //
-// writing — asosiy bosqich nomi ("Bo'limlar yozilmoqda...", "Slaydlar yozilmoqda...").
-func (h *Handler) startProgress(ctx context.Context, chat *tele.Chat, log *zap.Logger, writing string) (report func(done, total int), stop func()) {
+// stage — jarayon bosqichlari nomlari (textStage, imageStage).
+func (h *Handler) startProgress(ctx context.Context, chat *tele.Chat, log *zap.Logger, stage progressStage) (report func(done, total int), stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	updates := make(chan [2]int, 1)
 	finished := make(chan struct{})
@@ -913,7 +1050,7 @@ func (h *Handler) startProgress(ctx context.Context, chat *tele.Chat, log *zap.L
 			case <-ctx.Done():
 				return
 			case v := <-updates:
-				text := progressText(v[0], v[1], writing)
+				text := progressText(v[0], v[1], stage)
 				var err error
 				if msg == nil {
 					msg, err = h.bot.Send(chat, text)
@@ -939,8 +1076,24 @@ func (h *Handler) startProgress(ctx context.Context, chat *tele.Chat, log *zap.L
 	return report, stop
 }
 
+// progressStage — jarayon xabaridagi belgi va bosqichlar nomlari.
+type progressStage struct {
+	icon    string
+	first   string // done == 0
+	writing string // 0 < done < total
+	last    string // done == total
+}
+
+// textStage — AI matn yozish bosqichlari (writing — "Bo'limlar yozilmoqda..." kabi).
+func textStage(writing string) progressStage {
+	return progressStage{icon: "✍️", first: "Reja tuzilmoqda...", writing: writing, last: "Fayl tayyorlanmoqda..."}
+}
+
+// imageStage — rasmli dizaynda rasmlarni chizish bosqichi.
+var imageStage = progressStage{icon: "🖼", first: "Rasmlar chizilmoqda...", writing: "Rasmlar chizilmoqda...", last: "Slaydlar tayyorlanmoqda..."}
+
 // progressText jarayon holati matni: "✍️ Bo'limlar yozilmoqda... ▰▰▰▱▱▱▱▱▱▱ 3/8".
-func progressText(done, total int, writing string) string {
+func progressText(done, total int, st progressStage) string {
 	total = max(total, 1)
 	done = min(max(done, 0), total)
 
@@ -948,14 +1101,14 @@ func progressText(done, total int, writing string) string {
 	filled := done * width / total
 	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", width-filled)
 
-	stage := writing
+	stage := st.writing
 	switch {
 	case done == 0:
-		stage = "Reja tuzilmoqda..."
+		stage = st.first
 	case done == total:
-		stage = "Fayl tayyorlanmoqda..."
+		stage = st.last
 	}
-	return fmt.Sprintf("✍️ <b>%s</b>\n%s %d/%d", stage, bar, done, total)
+	return fmt.Sprintf("%s <b>%s</b>\n%s %d/%d", st.icon, stage, bar, done, total)
 }
 
 // finishWithSuccess sessiyani yakunlaydi va statistikani yangilaydi.
@@ -1136,6 +1289,9 @@ func summaryText(s *storage.Session) string {
 	if !ai.WorkType(s.WorkType).IsDocument() {
 		if t, ok := generator.FindTheme(s.Design); ok {
 			format += "\n🎨 <b>Dizayn:</b> " + t.Emoji + " " + e(t.Name)
+			if t.Photos {
+				format += " 📷 (AI rasmlar bilan)"
+			}
 		}
 	}
 	return fmt.Sprintf("📋 <b>Ma'lumotlarni tekshiring</b>\n\n"+
