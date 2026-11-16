@@ -95,12 +95,12 @@ func (t *theme) chip(c *canvas, x, y float64, text, fill, color string) {
 // thanksBlock — yakuniy slayd markazidagi matnlar (rahmat, chiziq, mavzu, talaba).
 func (t *theme) thanksBlock(c *canvas, d *Deck, title, topic, label, name string, bar paint) {
 	c.text(rect{1.0, 1.75, 11.33, 1.55}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 44, bold: true, color: title, font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 44, bold: true, color: title, font: t.headFont}}}}})
 	c.add(rect{slideW/2 - 0.5, 3.52, 1.0, 0.06}, shape{fill: bar})
 	c.text(rect{1.6, 3.78, 10.13, 1.15}, textBody{fit: true, paras: []para{{align: "ctr", runs: []run{t.tx(d.Topic, 18, topic)}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.6, 5.2, 10.13, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: label, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: label, font: t.bodyFont},
 			t.tx(d.StudentName, 16, name)}}}})
 	}
 }
@@ -186,12 +186,12 @@ func journalClosing(t *theme, c *canvas, d *Deck) {
 	x, w := 0.9, photo.X-1.6
 	c.add(rect{x + 0.05, 1.45, w, 0.025}, shape{fill: solid(p.text)})
 	c.text(rect{x, 1.6, w, 2.2}, textBody{fit: true, paras: []para{{runs: []run{
-		{text: thanksText, size: 42, bold: true, color: p.text, font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 42, bold: true, color: p.text, font: t.headFont}}}}})
 	c.add(rect{x + 0.05, 3.95, 0.8, 0.05}, shape{fill: solid(p.accent)})
 	c.text(rect{x, 4.1, w, 1.2}, textBody{fit: true, paras: []para{{runs: []run{t.tx(d.Topic, 18, p.muted)}}}})
 	if d.StudentName != "" {
 		c.text(rect{x, 5.5, w, 0.55}, textBody{anchor: "ctr", paras: []para{{runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: p.accent, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: p.accent, font: t.bodyFont},
 			t.tx(d.StudentName, 16, p.text)}}}})
 	}
 }

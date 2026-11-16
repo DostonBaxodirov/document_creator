@@ -1,5 +1,7 @@
 package generator
 
+import "strings"
+
 // themes_extra.go — tuzilishi boshqacha dizaynlar. Ular faqat rangi bilan
 // emas, slayd tuzilishi bilan ham farqlanadi: sarlavha joyi (yon panel,
 // plitka, markaz, chizma shtampi), kartochka turi (qattiq soyali, fonsiz
@@ -91,13 +93,13 @@ func strategyClosing(t *theme, c *canvas, d *Deck) {
 	c.add(rect{cw, 0, 0.08, slideH}, shape{fill: solid(p.accent)})
 
 	c.text(rect{0.8, 1.4, 6.6, 2.3}, textBody{anchor: "b", fit: true, paras: []para{{runs: []run{
-		{text: thanksText, size: 42, bold: true, color: "FFFFFF", font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 42, bold: true, color: "FFFFFF", font: t.headFont}}}}})
 	c.add(rect{0.85, 3.95, 0.8, 0.06}, shape{fill: solid(p.accent)})
 	c.text(rect{0.8, 4.15, 6.6, 1.3}, textBody{fit: true, paras: []para{{runs: []run{
 		{text: d.Topic, size: 18, color: "FFFFFF", alpha: 80, font: t.bodyFont}}}}})
 	if d.StudentName != "" {
 		c.text(rect{0.8, 5.7, 6.6, 0.55}, textBody{anchor: "ctr", paras: []para{{runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: p.accent, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: p.accent, font: t.bodyFont},
 			t.tx(d.StudentName, 16, "FFFFFF")}}}})
 	}
 	strategySquares(t, c, 8.7, 2.3)
@@ -186,7 +188,9 @@ func retroCover(t *theme, c *canvas, d *Deck) {
 
 	c.text(rect{0.75, 0.5, 7.9, 0.7}, textBody{anchor: "ctr", fit: true, paras: []para{{runs: []run{
 		{text: d.University, size: 12, bold: true, caps: true, spc: 1, color: p.text, font: t.bodyFont}}}}})
-	t.popLabel(c, 0.75, 1.5, run{text: d.WorkType, size: 13, bold: true, spc: 3, color: p.text, font: t.bodyFont}, p.accent, 0.52, 7)
+	// caps: ish turi nomi bosh harflarda — yorliq kengligi shunga qarab hisoblanadi
+	// (aks holda "ПРЕЗЕНТАЦИЯ" kabi uzunroq nomlar ikki qatorga bo'linadi).
+	t.popLabel(c, 0.75, 1.5, run{text: d.WorkType, size: 13, bold: true, caps: true, spc: 3, color: p.text, font: t.bodyFont}, p.accent, 0.52, 7)
 	c.text(rect{0.7, 2.3, 7.9, 3.0}, t.titleBlock(d, 40, p.text, 17, p.muted, 0, "l"))
 
 	if people := t.people(d, 15, p.text, p.text, 0, "l"); len(people) > 0 {
@@ -210,13 +214,13 @@ func retroClosing(t *theme, c *canvas, d *Deck) {
 
 	box := rect{1.6, 1.55, 10.13, 1.75}
 	s := shape{fill: solid(p.accent), line: &stroke{color: p.line, width: 2.5}, text: &textBody{anchor: "ctr", fit: true,
-		inset: [4]float64{0.3, 0.1, 0.3, 0.1}, paras: []para{{align: "ctr", runs: []run{{text: thanksText, size: 40, color: p.text, font: t.headFont}}}}}}
+		inset: [4]float64{0.3, 0.1, 0.3, 0.1}, paras: []para{{align: "ctr", runs: []run{{text: d.labels().Thanks, size: 40, color: p.text, font: t.headFont}}}}}}
 	t.hardShadow(c, box, s)
 	c.add(box, s)
 	c.text(rect{1.6, 3.75, 10.13, 1.15}, textBody{fit: true, paras: []para{{align: "ctr", runs: []run{t.tx(d.Topic, 19, p.muted)}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.6, 5.05, 10.13, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: p.text, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: p.text, font: t.bodyFont},
 			t.tx(d.StudentName, 16, p.text)}}}})
 	}
 }
@@ -296,8 +300,8 @@ func typoCover(t *theme, c *canvas, d *Deck) {
 		r            rect
 		label, value string
 	}{
-		{rect{0.7, 5.98, 3.3, 0.9}, "BAJARDI", d.StudentName},
-		{rect{4.1, 5.98, 3.3, 0.9}, "TEKSHIRDI", d.TeacherName},
+		{rect{0.7, 5.98, 3.3, 0.9}, strings.ToUpper(d.labels().Student), d.StudentName},
+		{rect{4.1, 5.98, 3.3, 0.9}, strings.ToUpper(d.labels().Teacher), d.TeacherName},
 	}
 	for _, col := range cols {
 		if col.value == "" {
@@ -316,12 +320,12 @@ func typoClosing(t *theme, c *canvas, d *Deck) {
 	c.add(rect{0.75, 0.55, 11.83, 0.03}, shape{fill: solid(p.text)})
 	c.add(rect{0.75, 1.3, 0.62, 0.62}, shape{fill: solid(p.accent)})
 	c.text(rect{0.66, 2.05, 11.6, 2.4}, textBody{fit: true, paras: []para{{lineSp: 0.95, runs: []run{
-		{text: thanksText, size: 58, bold: true, color: p.text, font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 58, bold: true, color: p.text, font: t.headFont}}}}})
 	c.add(rect{0.75, 4.6, 1.6, 0.07}, shape{fill: solid(p.accent)})
 	c.text(rect{0.66, 4.8, 10.5, 1.0}, textBody{fit: true, paras: []para{{runs: []run{t.tx(d.Topic, 18, p.muted)}}}})
 	if d.StudentName != "" {
 		c.text(rect{0.66, 5.95, 8, 0.85}, textBody{paras: []para{
-			{runs: []run{{text: "BAJARDI", size: 9.5, bold: true, spc: 2, color: p.accent, font: t.bodyFont}}},
+			{runs: []run{{text: strings.ToUpper(d.labels().Student), size: 9.5, bold: true, spc: 2, color: p.accent, font: t.bodyFont}}},
 			{before: 3, runs: []run{t.tx(d.StudentName, 15, p.text)}},
 		}})
 	}
@@ -411,11 +415,11 @@ func bentoClosing(t *theme, c *canvas, d *Deck) {
 	main := rect{0.45, 0.45, 8.15, 6.6}
 	tile(c, main, p.primary)
 	c.text(rect{main.X + 0.5, 1.4, main.W - 1.0, 2.3}, textBody{anchor: "b", fit: true, paras: []para{{runs: []run{
-		{text: thanksText, size: 44, bold: true, color: "FFFFFF", font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 44, bold: true, color: "FFFFFF", font: t.headFont}}}}})
 	c.add(rect{main.X + 0.55, 3.95, 0.9, 0.08}, shape{geom: "roundRect", adj: []int{50000}, fill: solid(p.accent)})
 	if d.StudentName != "" {
 		c.text(rect{main.X + 0.5, 4.3, main.W - 1.0, 0.6}, textBody{anchor: "ctr", paras: []para{{runs: []run{
-			{text: labelStudent + " ", size: 16, color: "FFFFFF", alpha: 65, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, color: "FFFFFF", alpha: 65, font: t.bodyFont},
 			{text: d.StudentName, size: 16, bold: true, color: "FFFFFF", font: t.bodyFont}}}}})
 	}
 	rx := main.right() + g
@@ -582,12 +586,12 @@ func boardClosing(t *theme, c *canvas, d *Deck) {
 	p := t.pal
 	boardFrame(t, c)
 	c.text(rect{1.0, 1.6, 11.33, 1.7}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 44, bold: true, color: p.text, font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 44, bold: true, color: p.text, font: t.headFont}}}}})
 	chalkUnderline(c, slideW/2, 3.5, 3.0, p.accent)
 	c.text(rect{1.6, 3.85, 10.13, 1.1}, textBody{fit: true, paras: []para{{align: "ctr", runs: []run{t.tx(d.Topic, 18, p.muted)}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.6, 5.2, 10.13, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: p.accent, font: t.headFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: p.accent, font: t.headFont},
 			t.tx(d.StudentName, 16, p.text)}}}})
 	}
 	c.add(rect{1.0, 0.7, 0.6, 0.6}, shape{geom: "star5", line: &stroke{color: p.series[1], width: 1.5}})
@@ -719,7 +723,7 @@ func blueprintCover(t *theme, c *canvas, d *Deck) {
 	c.text(tr, title)
 	dimLine(c, 0.75, tr.bottom()+0.3, 3.2, p.accent)
 	t.stampTable(c, rect{slideW - 0.3 - 5.6, slideH - 0.3 - 1.35, 5.6, 1.35}, 1.75, [][2]string{
-		{"BAJARDI", d.StudentName}, {"TEKSHIRDI", d.TeacherName}, {"YIL", d.Year},
+		{strings.ToUpper(d.labels().Student), d.StudentName}, {strings.ToUpper(d.labels().Teacher), d.TeacherName}, {strings.ToUpper(d.labels().Year), d.Year},
 	})
 }
 
@@ -727,11 +731,11 @@ func blueprintClosing(t *theme, c *canvas, d *Deck) {
 	p := t.pal
 	blueprintGrid(t, c)
 	c.text(rect{1.0, 1.5, 11.33, 1.7}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 40, bold: true, color: "FFFFFF", font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 40, bold: true, color: "FFFFFF", font: t.headFont}}}}})
 	dimLine(c, slideW/2-2.0, 3.45, 4.0, p.accent)
 	c.text(rect{1.6, 3.75, 10.13, 1.1}, textBody{fit: true, paras: []para{{align: "ctr", runs: []run{t.tx(d.Topic, 17, p.muted)}}}})
 	t.stampTable(c, rect{slideW - 0.3 - 5.0, slideH - 0.3 - 0.9, 5.0, 0.9}, 1.6, [][2]string{
-		{"BAJARDI", d.StudentName}, {"YIL", d.Year},
+		{strings.ToUpper(d.labels().Student), d.StudentName}, {strings.ToUpper(d.labels().Year), d.Year},
 	})
 }
 
@@ -829,7 +833,7 @@ func pastelClosing(t *theme, c *canvas, d *Deck) {
 	c.bg = solid(p.bg)
 	pastelBlobs(t, c, true)
 	c.text(rect{1.0, 1.6, 11.33, 1.7}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 44, color: p.text, font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 44, color: p.text, font: t.headFont}}}}})
 	topic := run{text: d.Topic, size: 16, color: p.primary, font: t.bodyFont}
 	pw := min(10.5, textWidth(topic)+0.9)
 	pill := rect{(slideW - pw) / 2, 3.6, pw, 0.85}
@@ -837,7 +841,7 @@ func pastelClosing(t *theme, c *canvas, d *Deck) {
 		anchor: "ctr", fit: true, inset: [4]float64{0.35, 0.05, 0.35, 0.05}, paras: []para{{align: "ctr", runs: []run{topic}}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.0, 4.85, 11.33, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, color: p.muted, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, color: p.muted, font: t.bodyFont},
 			{text: d.StudentName, size: 16, bold: true, color: p.text, font: t.bodyFont}}}}})
 	}
 }

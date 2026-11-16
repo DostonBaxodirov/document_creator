@@ -93,7 +93,7 @@ func TestFitSlidesKeepsConclusion(t *testing.T) {
 
 func TestStructureRules(t *testing.T) {
 	for _, n := range []int{1, 2, 3, 8} {
-		r := structureRules(n, nil)
+		r := structureRules(n, PresentationRequest{})
 		if n >= 3 && (!strings.Contains(r, `"agenda"`) || !strings.Contains(r, `"conclusion"`)) {
 			t.Errorf("n=%d: reja yoki xulosa talabi yo'q", n)
 		}

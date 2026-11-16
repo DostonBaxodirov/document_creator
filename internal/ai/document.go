@@ -24,6 +24,12 @@ type DocumentRequest struct {
 	// Ixtiyoriy. Chaqiruvlar ketma-ket (bir vaqtda bittadan) bo'ladi, lekin
 	// generatsiya goroutine'laridan — shuning uchun funksiya tez ishlashi kerak.
 	OnProgress func(done, total int)
+
+	// Language — kontent tili (inglizcha nom, masalan "Russian"); bo'sh bo'lsa,
+	// mavzu tilida yoziladi.
+	Language string
+	// Requirements — foydalanuvchining qo'shimcha talablari (ixtiyoriy).
+	Requirements string
 }
 
 // Paragraph — hujjatdagi bitta paragraf. Code=true bo'lsa — dastur kodi
@@ -499,10 +505,9 @@ const documentSystemPrompt = `You are an expert academic writer who prepares ind
 
 Strict output rules:
 - Respond with ONE valid JSON object and nothing else: no markdown fences around the JSON, no comments, no extra text.
-- Write ALL content in the same language as the topic. If the topic is in Uzbek, use the Uzbek Latin alphabet with correct letters (o', g', sh, ch).
 - Content must be accurate, neutral and academic. Never invent statistics, quotations, URLs or bibliographic references.
 - Do not use markdown (*, **, #) or emojis.
-` + finalTextRules
+` + languageRules + "\n" + finalTextRules
 
 func documentTypeName(w WorkType) string {
 	if w == WorkPractical {
@@ -525,7 +530,9 @@ func documentStyle(w WorkType) string {
 func buildOutlinePrompt(req DocumentRequest, chapters int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Task: plan the structure of a %s.\n", documentTypeName(req.WorkType))
-	fmt.Fprintf(&b, "Topic: %q\n\n", strings.TrimSpace(req.Topic))
+	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
+	b.WriteString(languageRule(req.Language))
+	b.WriteString("\n")
 	b.WriteString(`Return JSON: {"chapters": [{"title": string, "points": [string, ...]}, ...], "references": [string, ...]}` + "\n\n")
 	b.WriteString("Requirements:\n")
 	fmt.Fprintf(&b, "- \"chapters\": exactly %d main chapters. The introduction and the conclusion are written separately — do NOT include them.\n", chapters)
@@ -541,6 +548,7 @@ func buildOutlinePrompt(req DocumentRequest, chapters int) string {
 		"well-known textbooks and monographs, official websites (for example lex.uz). " +
 		"Never invent authors, titles, years or URLs — if unsure, give fewer entries. " +
 		"Each entry is a plain bibliographic record with no comments or notes.\n")
+	writeRequirements(&b, req.Requirements)
 	return b.String()
 }
 
@@ -549,7 +557,9 @@ func buildOutlinePrompt(req DocumentRequest, chapters int) string {
 func buildSectionPrompt(req DocumentRequest, ol *outline, s section) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are writing one part of a %s.\n", documentTypeName(req.WorkType))
-	fmt.Fprintf(&b, "Topic: %q\n\n", strings.TrimSpace(req.Topic))
+	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
+	b.WriteString(languageRule(req.Language))
+	b.WriteString("\n")
 
 	b.WriteString("Plan of the whole work:\n- Introduction\n")
 	for i, ch := range ol.Chapters {
@@ -586,5 +596,6 @@ func buildSectionPrompt(req DocumentRequest, ol *outline, s section) string {
 	}
 	b.WriteString("\nStyle: ")
 	b.WriteString(documentStyle(req.WorkType))
+	writeRequirements(&b, req.Requirements)
 	return b.String()
 }

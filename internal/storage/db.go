@@ -1,5 +1,5 @@
 // Package storage PostgreSQL bilan ishlash qatlami: ulanish, migratsiya
-// va foydalanuvchi sessiyalari (FSM holati) repozitoriysi.
+// foydalanuvchi sessiyalari (FSM holati), buyurtmalar va to'lovlar repozitoriylari.
 package storage
 
 import (
@@ -87,7 +87,7 @@ func open(ctx context.Context, cfg config.DBConfig, gormLog gormlogger.Interface
 
 // Migrate jadvallarni modelga moslab yaratadi yoki yangilaydi.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Session{}); err != nil {
+	if err := db.AutoMigrate(&Session{}, &User{}, &Order{}, &Payment{}); err != nil {
 		return fmt.Errorf("storage: migratsiya xatosi: %w", err)
 	}
 	return nil

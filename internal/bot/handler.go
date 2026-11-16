@@ -29,6 +29,7 @@ import (
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
+	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
 )
 
@@ -90,6 +91,15 @@ type Options struct {
 	// DefaultImageTier — tarifi (Session.Plan) belgilanmagan foydalanuvchilar
 	// uchun rasm tarifi.
 	DefaultImageTier images.Tier
+
+	// Billing — foydalanuvchilar, buyurtmalar va to'lovlar ombori. nil bo'lsa,
+	// to'lov va admin imkoniyatlari o'chiriladi.
+	Billing BillingStore
+	// Verifier — chekni o'qiydigan AI (ixtiyoriy). nil bo'lsa, barcha cheklar
+	// admin tekshiruviga yuboriladi.
+	Verifier ReceiptVerifier
+	// Payment — narxlar, bepul urinishlar, karta va admin paroli.
+	Payment PaymentOptions
 }
 
 const (
@@ -125,11 +135,13 @@ const (
 	msgInterrupted    = "⚠️ Bot qayta ishga tushirildi va ishingiz yakunlanmay qoldi.\n" +
 		"Ma'lumotlaringiz saqlangan — «Qayta urinish» tugmasini bosing."
 	msgDesignHint = "👇 Iltimos, quyidagi tugmalardan biri bilan dizaynni tanlang."
+	msgChooseLang = "🌐 <b>Ish qaysi tilda yozilsin?</b>\n\n<i>Matn, titul varaq va sarlavhalar shu tilda bo'ladi.</i>"
 	msgHelp       = "ℹ️ <b>Bot qanday ishlaydi?</b>\n\n" +
 		"1️⃣ /start — yangi buyurtma\n" +
-		"2️⃣ Ish turini tanlang: slayd, mustaqil ish yoki amaliy topshiriq\n" +
+		"2️⃣ Ish turini va tilini tanlang: 🇺🇿 o'zbekcha (lotin/kirill), 🇷🇺 ruscha yoki 🇬🇧 inglizcha\n" +
 		"3️⃣ Mavzu, hajm (slaydlar yoki sahifalar soni), F.I.Sh., universitet va tekshiruvchini kiriting\n" +
 		"     🎨 taqdimot uchun 8 xil dizayndan birini tanlaysiz (📷 — rasmli)\n" +
+		"     ✍️ xohlasangiz, qo'shimcha talablaringizni yozasiz (masalan: «ko'proq misollar»)\n" +
 		"4️⃣ Ma'lumotlarni tasdiqlang — bot tayyor faylni yuboradi:\n" +
 		"     📊 taqdimot — <b>.pptx</b> (PowerPoint)\n" +
 		"     📚 mustaqil ish, 🛠 amaliy topshiriq — <b>.docx</b> (Word)\n\n" +
@@ -154,6 +166,8 @@ type Handler struct {
 	builders Builders
 	log      *zap.Logger
 	opts     Options
+	billing  BillingStore
+	verifier ReceiptVerifier
 
 	jobsCtx context.Context // barcha generatsiyalar uchun ota kontekst (to'xtashda bekor qilinadi)
 	slots   chan struct{}   // semafor: bir vaqtdagi generatsiyalar sonini cheklaydi
@@ -184,6 +198,8 @@ func NewHandler(jobsCtx context.Context, sessions SessionStore, aiClient Content
 		builders: builders,
 		log:      log.Named("bot"),
 		opts:     opts,
+		billing:  opts.Billing,
+		verifier: opts.Verifier,
 		jobsCtx:  jobsCtx,
 		slots:    make(chan struct{}, opts.MaxConcurrentJobs),
 	}
@@ -199,14 +215,23 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle("/start", h.onStart)
 	b.Handle("/cancel", h.onCancel)
 	b.Handle("/help", h.onHelp)
+	b.Handle("/report", h.onReport)
+	b.Handle("/chek", h.onChek)
 	b.Handle(tele.OnText, h.onText)
+	b.Handle(tele.OnPhoto, h.onPhoto)       // to'lov cheki
+	b.Handle(tele.OnDocument, h.onDocument) // fayl ko'rinishidagi chek
 	b.Handle(tele.OnMedia, h.onMedia)
 
 	b.Handle(&tele.Btn{Unique: cbWorkType}, h.onWorkType)
+	b.Handle(&tele.Btn{Unique: cbLanguage}, h.onLanguage)
 	b.Handle(&tele.Btn{Unique: cbDesign}, h.onDesign)
 	b.Handle(&tele.Btn{Unique: cbConfirm}, h.onConfirm)
 	b.Handle(&tele.Btn{Unique: cbRestart}, h.onRestart)
 	b.Handle(&tele.Btn{Unique: cbCancel}, h.onCancelButton)
+	b.Handle(&tele.Btn{Unique: cbPayApprove}, h.onPayApprove)
+	b.Handle(&tele.Btn{Unique: cbPayReject}, h.onPayReject)
+	b.Handle(&tele.Btn{Unique: cbReportPeriod}, h.onReportPeriod)
+	b.Handle(&tele.Btn{Unique: cbReportFormat}, h.onReportFormat)
 
 	if err := b.SetCommands([]tele.Command{
 		{Text: "start", Description: "Yangi ish buyurtma qilish"},
@@ -270,6 +295,7 @@ func (h *Handler) RecoverInterrupted(ctx context.Context) {
 	if recovered > 0 {
 		h.log.Info("recovered interrupted jobs", zap.Int("count", recovered))
 	}
+	h.recoverReviews(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -335,8 +361,13 @@ func (h *Handler) onStart(c tele.Context) error {
 	if err != nil {
 		return err
 	}
-	if State(s.State) == StateGenerating {
+	switch State(s.State) {
+	case StateGenerating:
 		return c.Send(msgBusy)
+	case StateReview:
+		return h.replyInReview(ctx, c, s)
+	case StatePayment:
+		h.cancelPendingOrder(ctx, s)
 	}
 	if err := h.beginFlow(ctx, s); err != nil {
 		return err
@@ -346,7 +377,7 @@ func (h *Handler) onStart(c tele.Context) error {
 	if name == "" {
 		name = "do'stim"
 	}
-	if err := c.Send(fmt.Sprintf(msgWelcome, html.EscapeString(name)), removeKeyboard()); err != nil {
+	if err := c.Send(fmt.Sprintf(msgWelcome, html.EscapeString(name))+h.pricingText(), removeKeyboard()); err != nil {
 		return err
 	}
 	return c.Send(msgChooseWorkType, workTypeKeyboard())
@@ -354,7 +385,7 @@ func (h *Handler) onStart(c tele.Context) error {
 
 // onHelp yordam matnini yuboradi.
 func (h *Handler) onHelp(c tele.Context) error {
-	return c.Send(msgHelp)
+	return c.Send(msgHelp + h.pricingText())
 }
 
 // onCancel /cancel buyrug'i.
@@ -395,6 +426,11 @@ func (h *Handler) cancelFlow(c tele.Context) string {
 		// Vazifa topilmadi (masalan, jarayon to'satdan to'xtagan) — holatni tiklaymiz.
 	case StateIdle, "":
 		return msgNothingCancel
+	case StateReview:
+		// Pul allaqachon o'tkazilgan — chek tekshiruvi tugashini kutamiz.
+		return msgReviewWait
+	case StatePayment:
+		h.cancelPendingOrder(ctx, s)
 	}
 
 	resetDraft(s)
@@ -413,6 +449,13 @@ func (h *Handler) cancelFlow(c tele.Context) string {
 // onText foydalanuvchi holatiga qarab matnni tegishli qadamga yo'naltiradi.
 func (h *Handler) onText(c tele.Context) error {
 	text := c.Text()
+	// Admin paroli istalgan holatda qabul qilinadi.
+	if ok, err := h.tryAdminLogin(c, text); ok {
+		return err
+	}
+	if strings.HasPrefix(text, "/chek_") { // hisobotdagi bosiladigan havola: /chek_12
+		return h.showCheck(c, strings.TrimPrefix(text, "/chek_"))
+	}
 	if strings.HasPrefix(text, "/") {
 		return c.Send(msgUnknownCommand)
 	}
@@ -432,10 +475,16 @@ func (h *Handler) onText(c tele.Context) error {
 		return c.Send(msgIdle, removeKeyboard())
 	case StateWorkType:
 		return c.Send(msgPressButton, workTypeKeyboard())
+	case StateLanguage:
+		return c.Send(msgPressButton, languageKeyboard())
 	case StateDesign:
 		return c.Send(msgDesignHint, designKeyboard())
 	case StateConfirm:
 		return h.sendSummary(c, s)
+	case StatePayment:
+		return h.sendPaymentInfo(ctx, c, s)
+	case StateReview:
+		return h.replyInReview(ctx, c, s)
 	case StateGenerating:
 		return c.Send(msgBusy)
 	}
@@ -510,13 +559,42 @@ func (h *Handler) onWorkType(c tele.Context) error {
 	}
 
 	s.WorkType = string(opt.Type)
-	s.State = string(StateTopic)
+	s.State = string(StateLanguage)
 	if err := h.sessions.Save(ctx, s); err != nil {
 		return err
 	}
 
 	_ = c.Respond(&tele.CallbackResponse{Text: opt.Name})
 	h.edit(c, fmt.Sprintf("✅ Ish turi: <b>%s</b>", html.EscapeString(opt.Name)))
+	return c.Send(msgChooseLang, languageKeyboard())
+}
+
+// onLanguage ish tili tanlanganda chaqiriladi.
+func (h *Handler) onLanguage(c tele.Context) error {
+	defer h.lock(c.Sender().ID)()
+	ctx, cancel := requestContext()
+	defer cancel()
+
+	s, err := h.loadSession(ctx, c)
+	if err != nil {
+		return err
+	}
+	if State(s.State) != StateLanguage {
+		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+	}
+	l, ok := lang.Find(c.Data())
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+	}
+
+	s.Language = string(l.Code)
+	s.State = string(StateTopic)
+	if err := h.sessions.Save(ctx, s); err != nil {
+		return err
+	}
+
+	_ = c.Respond(&tele.CallbackResponse{Text: l.Name})
+	h.edit(c, fmt.Sprintf("🌐 Til: <b>%s</b>", html.EscapeString(l.Name)))
 	return h.ask(c, s, StateTopic)
 }
 
@@ -612,8 +690,13 @@ func (h *Handler) onRestart(c tele.Context) error {
 	if err != nil {
 		return err
 	}
-	if State(s.State) == StateGenerating {
+	switch State(s.State) {
+	case StateGenerating:
 		return c.Respond(&tele.CallbackResponse{Text: "Ishingiz allaqachon tayyorlanmoqda."})
+	case StateReview:
+		return c.Respond(&tele.CallbackResponse{Text: "Chekingiz tekshirilmoqda."})
+	case StatePayment:
+		h.cancelPendingOrder(ctx, s)
 	}
 	if err := h.beginFlow(ctx, s); err != nil {
 		return err
@@ -645,12 +728,26 @@ func (h *Handler) onConfirm(c tele.Context) error {
 		return err
 	}
 
+	// To'lov: bepul urinish, oldin to'langan buyurtma yoki to'lov so'rash.
+	note := ""
+	if h.paymentsOn() {
+		proceed, n, err := h.authorize(ctx, c, s)
+		if err != nil {
+			_, _ = h.sessions.CompareAndSwapState(ctx, userID, string(StateGenerating), string(StateConfirm))
+			return err
+		}
+		if !proceed {
+			return nil // to'lov ko'rsatmasi yuborildi, chek kutilmoqda
+		}
+		note = "\n" + n
+	}
+
 	_ = c.Respond(&tele.CallbackResponse{Text: "Qabul qilindi ✅"})
 	waitMsg := msgGeneratingDeck
 	if ai.WorkType(s.WorkType).IsDocument() {
 		waitMsg = msgGeneratingDoc
 	}
-	h.edit(c, summaryText(s)+"\n\n"+waitMsg)
+	h.edit(c, summaryText(s)+note+"\n\n"+waitMsg)
 
 	h.wg.Add(1)
 	go h.runJob(s)
@@ -780,10 +877,13 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	// maketlardan tanlaydi, uning imzo maketlarini ishlatadi va matn hajmini
 	// dizayndagi joyga moslaydi.
 	design := generator.ThemeStructure(s.Design)
+	li := lang.Get(s.Language)
 	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Slaydlar yozilmoqda..."))
 	pres, err := h.ai.GeneratePresentation(ctx, ai.PresentationRequest{
 		Topic: s.Topic, SlideCount: content, OnProgress: report, Images: photos,
 		Layouts: design.Layouts, Signature: design.Signature, Compact: design.Compact,
+		Language: li.Prompt, Requirements: s.Requirements,
+		OutlineTitle: li.Labels.Plan, ConclusionTitle: li.Labels.Conclusion,
 	})
 	stopProgress()
 	if err != nil {
@@ -793,12 +893,13 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	deck := generator.Deck{
 		Topic:       s.Topic,
 		Subtitle:    pres.Subtitle,
-		WorkType:    opt.Title,
+		WorkType:    opt.Title(li),
 		StudentName: s.StudentName,
 		University:  s.University,
 		TeacherName: s.TeacherName,
 		Year:        strconv.Itoa(time.Now().Year()),
 		Theme:       s.Design,
+		Lang:        string(li.Code),
 		Slides:      make([]generator.Slide, 0, len(pres.Slides)),
 	}
 	for _, sl := range pres.Slides {
@@ -944,12 +1045,15 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Papers
 
+	li := lang.Get(s.Language)
 	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Bo'limlar yozilmoqda..."))
 	doc, err := h.ai.GenerateDocument(ctx, ai.DocumentRequest{
-		WorkType:   opt.Type,
-		Topic:      s.Topic,
-		Words:      b.ContentWords(s.Volume),
-		OnProgress: report,
+		WorkType:     opt.Type,
+		Topic:        s.Topic,
+		Words:        b.ContentWords(s.Volume),
+		OnProgress:   report,
+		Language:     li.Prompt,
+		Requirements: s.Requirements,
 	})
 	stopProgress()
 	if err != nil {
@@ -958,11 +1062,12 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 
 	paper := generator.Paper{
 		Topic:        s.Topic,
-		WorkType:     opt.Title,
+		WorkType:     opt.Title(li),
 		StudentName:  s.StudentName,
 		University:   s.University,
 		TeacherName:  s.TeacherName,
 		Year:         strconv.Itoa(time.Now().Year()),
+		Lang:         string(li.Code),
 		Introduction: toParagraphs(doc.Introduction),
 		Conclusion:   toParagraphs(doc.Conclusion),
 		References:   doc.References,
@@ -1116,6 +1221,12 @@ func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *za
 	ctx, cancel := requestContext()
 	defer cancel()
 
+	if s.OrderID != nil && h.billing != nil {
+		if _, err := h.billing.SetOrderStatus(ctx, *s.OrderID, storage.OrderPaid, storage.OrderDelivered); err != nil {
+			log.Error("failed to mark order delivered", zap.Uint("order_id", *s.OrderID), zap.Error(err))
+		}
+	}
+
 	now := time.Now().UTC()
 	resetDraft(s)
 	s.State = string(StateIdle)
@@ -1137,6 +1248,8 @@ func (h *Handler) finishWithError(s *storage.Session, chat *tele.Chat, log *zap.
 	defer cancel()
 
 	if byUser {
+		// To'langan buyurtma "paid" holatida qoladi va keyingi buyurtmada
+		// qayta to'lovsiz ishlatiladi (FindCredit).
 		log.Info("generation cancelled by user")
 		resetDraft(s)
 		s.State = string(StateIdle)
@@ -1240,7 +1353,11 @@ func (h *Handler) ask(c tele.Context, s *storage.Session, state State) error {
 
 // sendSummary yig'ilgan ma'lumotlarni tasdiqlash tugmalari bilan yuboradi.
 func (h *Handler) sendSummary(c tele.Context, s *storage.Session) error {
-	return c.Send(summaryText(s)+"\n\nHammasi to'g'rimi?", confirmKeyboard())
+	text := summaryText(s)
+	if line := h.priceLine(c, s); line != "" {
+		text += "\n" + line
+	}
+	return c.Send(text+"\n\nHammasi to'g'rimi?", confirmKeyboard())
 }
 
 // edit callback xabarini tahrirlaydi (inline tugmalar ham olib tashlanadi).
@@ -1294,22 +1411,48 @@ func summaryText(s *storage.Session) string {
 			}
 		}
 	}
-	return fmt.Sprintf("📋 <b>Ma'lumotlarni tekshiring</b>\n\n"+
+	text := fmt.Sprintf("📋 <b>Ma'lumotlarni tekshiring</b>\n\n"+
 		"📌 <b>Ish turi:</b> %s\n"+
+		"🌐 <b>Til:</b> %s\n"+
 		"📝 <b>Mavzu:</b> %s\n"+
 		"%s %d\n"+
 		"📎 <b>Fayl:</b> %s\n"+
 		"👤 <b>Talaba:</b> %s\n"+
 		"🏛 <b>Universitet:</b> %s\n"+
 		"👨‍🏫 <b>Tekshiruvchi:</b> %s",
-		e(name), e(s.Topic), volume, s.Volume, format, e(s.StudentName), e(s.University), e(s.TeacherName))
+		e(name), e(lang.Get(s.Language).Name), e(s.Topic), volume, s.Volume, format,
+		e(s.StudentName), e(s.University), e(s.TeacherName))
+	if s.Requirements != "" {
+		text += "\n✍️ <b>Qo'shimcha talablar:</b> " + e(truncateRunes(s.Requirements, maxSummaryRequirements))
+	}
+	return text
 }
+
+// maxSummaryRequirements — xulosada ko'rsatiladigan talablar uzunligi
+// (to'liq matn AI ga baribir yuboriladi).
+const maxSummaryRequirements = 300
 
 func workTypeKeyboard() *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	rows := make([]tele.Row, 0, len(workTypes))
 	for _, o := range workTypes {
 		rows = append(rows, m.Row(m.Data(o.Button, cbWorkType, string(o.Type))))
+	}
+	m.Inline(rows...)
+	return m
+}
+
+// languageKeyboard ish tilini tanlash tugmalari (qatorda 2 tadan).
+func languageKeyboard() *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{}
+	langs := lang.All()
+	rows := make([]tele.Row, 0, (len(langs)+1)/2)
+	for i := 0; i < len(langs); i += 2 {
+		var btns []tele.Btn
+		for _, l := range langs[i:min(i+2, len(langs))] {
+			btns = append(btns, m.Data(l.Button, cbLanguage, string(l.Code)))
+		}
+		rows = append(rows, m.Row(btns...))
 	}
 	m.Inline(rows...)
 	return m

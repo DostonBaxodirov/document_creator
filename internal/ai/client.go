@@ -240,6 +240,59 @@ const finalTextRules = `- Write as the author of the work. The text must read as
 - Never use placeholders such as [Name], [year], XX or ___: always write concrete, final text.
 - No conversational phrases such as "Of course" or "Here is".`
 
+// languageRules — kontent tili qoidasi (ikkala tizim promptida). Til
+// foydalanuvchi tanlovi bo'yicha topshiriqda beriladi (languageRule).
+const languageRules = `- Write ALL content in the content language given in the task; if none is given, use the language of the topic. ` +
+	`For Uzbek in the Latin script use the correct letters (o', g', sh, ch); for Uzbek in the Cyrillic script use ў, қ, ғ, ҳ.`
+
+// languageRule topshiriqdagi kontent tili qatori (language — inglizcha nom,
+// masalan "Russian"; bo'sh bo'lsa — qator qo'shilmaydi).
+func languageRule(language string) string {
+	language = strings.TrimSpace(language)
+	if language == "" {
+		return ""
+	}
+	return fmt.Sprintf("Content language: %s. Write every text field in %s, even if the topic is written in another language.\n", language, language)
+}
+
+// maxRequirementsRunes — promptga qo'shiladigan qo'shimcha talablar uzunligi chegarasi.
+const maxRequirementsRunes = 800
+
+// requirementsBlock foydalanuvchining qo'shimcha talablarini promptga alohida
+// blok sifatida qo'shadi. Talablar format, hajm va til qoidalarini bekor
+// qila olmaydi — bu promptda aniq aytiladi.
+func requirementsBlock(req string) string {
+	// Foydalanuvchi matni blok chegarasini (""") buzmasligi kerak. Bir marta
+	// almashtirish yetmaydi: `"""""` → `"""`.
+	for strings.Contains(req, `"""`) {
+		req = strings.ReplaceAll(req, `"""`, `"`)
+	}
+	req = strings.TrimSpace(req)
+	if req == "" {
+		return ""
+	}
+	return "Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, " +
+		"the requested number of slides or chapters, the content language or the rules above:\n" +
+		"\"\"\"\n" + truncateRunes(req, maxRequirementsRunes) + "\n\"\"\""
+}
+
+// writeRequirements talablar blokini promptning oxiriga bo'sh qator bilan
+// ajratib qo'shadi (talab bo'lmasa — hech narsa qo'shilmaydi).
+func writeRequirements(b *strings.Builder, req string) {
+	block := requirementsBlock(req)
+	if block == "" {
+		return
+	}
+	switch s := b.String(); {
+	case strings.HasSuffix(s, "\n\n"):
+	case strings.HasSuffix(s, "\n"):
+		b.WriteString("\n")
+	default:
+		b.WriteString("\n\n")
+	}
+	b.WriteString(block)
+}
+
 func stringArraySchema() *genai.Schema {
 	return &genai.Schema{Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}}
 }

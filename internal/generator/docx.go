@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"telegram-presentation-bot/internal/lang"
 )
 
 // DOCX generatori mustaqil ish va amaliy topshiriq uchun Word (.docx) hujjatni
@@ -39,17 +41,22 @@ type Section struct {
 
 // Paper — .docx hujjatni yaratish uchun barcha ma'lumotlar.
 type Paper struct {
-	Topic        string
-	WorkType     string // titul varaqda ko'rinadigan nom, masalan "MUSTAQIL ISH"
-	StudentName  string
-	University   string
-	TeacherName  string
-	Year         string
+	Topic       string
+	WorkType    string // titul varaqda ko'rinadigan nom, masalan "MUSTAQIL ISH"
+	StudentName string
+	University  string
+	TeacherName string
+	Year        string
+	// Lang — titul yozuvlari va bo'lim sarlavhalari tili (lang.Code); bo'sh bo'lsa — o'zbek (lotin).
+	Lang         string
 	Introduction []Paragraph
 	Chapters     []Section
 	Conclusion   []Paragraph
 	References   []string
 }
+
+// labels hujjat tiliga mos qotirilgan yozuvlar ("Bajardi", "KIRISH" ...).
+func (p *Paper) labels() lang.Labels { return lang.Get(p.Lang).Labels }
 
 // Sahifa hajmini baholash uchun ko'rsatkichlar (LibreOffice'da o'lchab moslangan).
 const (
@@ -119,7 +126,7 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 		docContentTypes:  []byte(docxContentTypes),
 		docRelsPath:      []byte(docxRootRels),
 		docDocumentRels:  []byte(docxDocumentRels),
-		docStylesPath:    []byte(docxStyles),
+		docStylesPath:    []byte(strings.Replace(docxStyles, docxDefaultLang, lang.Get(p.Lang).OOXML, 1)),
 		docSettingsPath:  []byte(docxSettings),
 		docFooterPath:    []byte(docxPageNumberFooter),
 		docFooterTitle:   []byte(docxEmptyFooter),
@@ -149,14 +156,6 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 // document.xml
 // ---------------------------------------------------------------------------
 
-// Bo'lim sarlavhalari (titul varaqdagi yozuvlar kabi — o'zbek tilida).
-const (
-	headingPlan         = "REJA"
-	headingIntroduction = "KIRISH"
-	headingConclusion   = "XULOSA"
-	headingReferences   = "FOYDALANILGAN ADABIYOTLAR"
-)
-
 // renderDocument hujjat tanasini (titul, reja, matn, adabiyotlar) yig'adi.
 func (g *DOCX) renderDocument(p Paper) string {
 	var w docBuilder
@@ -165,35 +164,37 @@ func (g *DOCX) renderDocument(p Paper) string {
 		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`)
 
 	g.renderTitlePage(&w, p)
+	l := p.labels()
 
 	// Reja.
 	chapterTitles := make([]string, len(p.Chapters))
 	for i, ch := range p.Chapters {
 		chapterTitles[i] = fmt.Sprintf("%d. %s", i+1, strings.TrimSpace(ch.Title))
 	}
-	w.heading(headingPlan, true)
-	w.para("PlanItem", "", textRun("Kirish", ""))
+	// Bo'lim sarlavhalari hujjat tilida: rejada — oddiy, matnda — katta harflar bilan.
+	w.heading(strings.ToUpper(l.Plan), true)
+	w.para("PlanItem", "", textRun(l.Introduction, ""))
 	for _, t := range chapterTitles {
 		w.para("PlanItem", `<w:ind w:left="284" w:firstLine="0"/>`, textRun(t, ""))
 	}
-	w.para("PlanItem", "", textRun("Xulosa", ""))
+	w.para("PlanItem", "", textRun(l.Conclusion, ""))
 	if len(p.References) > 0 {
-		w.para("PlanItem", "", textRun("Foydalanilgan adabiyotlar", ""))
+		w.para("PlanItem", "", textRun(l.References, ""))
 	}
 
 	// Asosiy matn.
-	w.heading(headingIntroduction, true)
+	w.heading(strings.ToUpper(l.Introduction), true)
 	w.body(p.Introduction)
 	for i, ch := range p.Chapters {
 		w.heading(chapterTitles[i], false)
 		w.body(ch.Paragraphs)
 	}
-	w.heading(headingConclusion, false)
+	w.heading(strings.ToUpper(l.Conclusion), false)
 	w.body(p.Conclusion)
 
 	// Adabiyotlar: raqam + tab, osilgan xatboshi (hanging indent) bilan.
 	if len(p.References) > 0 {
-		w.heading(headingReferences, true)
+		w.heading(strings.ToUpper(l.References), true)
 		for i, ref := range p.References {
 			w.para("Reference", "", textRun(strconv.Itoa(i+1)+".", "")+`<w:r><w:tab/></w:r>`+textRun(ref, ""))
 		}
@@ -225,10 +226,11 @@ func (g *DOCX) renderTitlePage(w *docBuilder, p Paper) {
 	}
 	w.para("TitleCenter", spacingBefore(240), textRun(p.University, boldCaps))
 	w.para("TitleCenter", spacingBefore(titleGapAfterUniversity), textRun(p.WorkType, workType))
-	w.para("TitleCenter", spacingBefore(titleGapBeforeTopic), textRun("Mavzu: ", topicBold)+textRun(p.Topic, topicBold))
-	w.para("TitleSign", spacingBefore(titleGapBeforeSign), textRun("Bajardi: ", bold)+textRun(p.StudentName, ""))
-	w.para("TitleSign", spacingBefore(120), textRun("Tekshirdi: ", bold)+textRun(p.TeacherName, ""))
-	w.para("TitleCenter", spacingBefore(titleGapBeforeYear), textRun(p.Year+"-yil", bold))
+	l := p.labels()
+	w.para("TitleCenter", spacingBefore(titleGapBeforeTopic), textRun(l.Topic+": ", topicBold)+textRun(p.Topic, topicBold))
+	w.para("TitleSign", spacingBefore(titleGapBeforeSign), textRun(l.Student+": ", bold)+textRun(p.StudentName, ""))
+	w.para("TitleSign", spacingBefore(120), textRun(l.Teacher+": ", bold)+textRun(p.TeacherName, ""))
+	w.para("TitleCenter", spacingBefore(titleGapBeforeYear), textRun(fmt.Sprintf(l.YearFormat, p.Year), bold))
 }
 
 // docBuilder — document.xml ni bo'lakma-bo'lak yig'uvchi yordamchi.
@@ -352,6 +354,10 @@ const docxSettings = xmlHeader +
 	`<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>` +
 	`</w:settings>`
 
+// docxDefaultLang — docxStyles dagi imlo tekshiruvi tili; Build uni
+// hujjat tiliga (Paper.Lang) almashtiradi.
+const docxDefaultLang = "uz-Latn-UZ"
+
 // docxStyles — hujjat uslublari. Elementlar tartibi OOXML sxemasiga mos
 // (Word tartib buzilgan faylni "shikastlangan" deb ochmasligi mumkin).
 const docxStyles = xmlHeader +
@@ -360,7 +366,7 @@ const docxStyles = xmlHeader +
 	`<w:rPrDefault><w:rPr>` +
 	`<w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>` +
 	`<w:sz w:val="28"/><w:szCs w:val="28"/>` +
-	`<w:lang w:val="uz-Latn-UZ" w:eastAsia="en-US" w:bidi="ar-SA"/>` +
+	`<w:lang w:val="` + docxDefaultLang + `" w:eastAsia="en-US" w:bidi="ar-SA"/>` +
 	`</w:rPr></w:rPrDefault>` +
 	`<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>` +
 	`</w:docDefaults>` +

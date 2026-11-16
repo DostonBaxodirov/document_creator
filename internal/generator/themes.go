@@ -16,6 +16,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // ThemeInfo — mavzuning foydalanuvchiga ko'rsatiladigan ma'lumotlari.
@@ -467,16 +468,10 @@ func (t *theme) people(d *Deck, size float64, labelColor, valueColor string, lab
 			{text: value, size: size, color: valueColor, font: t.bodyFont},
 		}})
 	}
-	add(labelStudent, d.StudentName)
-	add(labelTeacher, d.TeacherName)
+	add(d.labels().Student+":", d.StudentName)
+	add(d.labels().Teacher+":", d.TeacherName)
 	return out
 }
-
-const (
-	labelStudent = "Bajardi:"
-	labelTeacher = "Tekshirdi:"
-	thanksText   = "E'tiboringiz uchun rahmat!"
-)
 
 func pad2(n int) string {
 	if n < 10 {
@@ -551,12 +546,12 @@ func academicClosing(t *theme, c *canvas, d *Deck) {
 	c.add(rect{slideW - 0.22, 0, 0.22, slideH}, shape{fill: solid(p.accent)})
 
 	c.text(rect{1.2, 1.7, 10.9, 1.6}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 46, bold: true, color: "FFFFFF", font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 46, bold: true, color: "FFFFFF", font: t.headFont}}}}})
 	c.add(rect{slideW/2 - 0.45, 3.5, 0.9, 0.06}, shape{fill: solid(p.accent)})
 	c.text(rect{1.6, 3.75, 10.1, 1.2}, textBody{fit: true, paras: []para{{align: "ctr", runs: []run{t.tx(d.Topic, 20, "C9D6E8")}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.6, 5.35, 10.1, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: p.accent, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: p.accent, font: t.bodyFont},
 			t.tx(d.StudentName, 16, "FFFFFF")}}}})
 	}
 }
@@ -650,7 +645,7 @@ func modernClosing(t *theme, c *canvas, d *Deck) {
 	ring(c, 1.8, 6.2, 0.6, "FFFFFF", 1.5, 45, "")
 
 	c.text(rect{1.0, 1.75, 11.33, 1.55}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 46, bold: true, color: "FFFFFF", font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 46, bold: true, color: "FFFFFF", font: t.headFont}}}}})
 	topic := run{text: d.Topic, size: 16, color: "FFFFFF", font: t.bodyFont}
 	pw := min(10.5, textWidth(topic)+0.9)
 	pill := rect{(slideW - pw) / 2, 3.6, pw, 0.85}
@@ -658,7 +653,7 @@ func modernClosing(t *theme, c *canvas, d *Deck) {
 		anchor: "ctr", fit: true, inset: [4]float64{0.35, 0.05, 0.35, 0.05}, paras: []para{{align: "ctr", runs: []run{topic}}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.0, 4.85, 11.33, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, color: "FFFFFF", alpha: 75, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, color: "FFFFFF", alpha: 75, font: t.bodyFont},
 			{text: d.StudentName, size: 16, bold: true, color: "FFFFFF", font: t.bodyFont}}}}})
 	}
 }
@@ -740,8 +735,8 @@ func minimalCover(t *theme, c *canvas, d *Deck) {
 		r            rect
 		label, value string
 	}{
-		{rect{0.9, 5.88, 3.6, 0.95}, "BAJARDI", d.StudentName},
-		{rect{4.6, 5.88, 3.8, 0.95}, "TEKSHIRDI", d.TeacherName},
+		{rect{0.9, 5.88, 3.6, 0.95}, strings.ToUpper(d.labels().Student), d.StudentName},
+		{rect{4.6, 5.88, 3.8, 0.95}, strings.ToUpper(d.labels().Teacher), d.TeacherName},
 	}
 	for _, col := range cols {
 		if col.value == "" {
@@ -762,12 +757,12 @@ func minimalClosing(t *theme, c *canvas, d *Deck) {
 	minimalRings(c, panel.W/2, 3.75)
 
 	c.text(rect{5.4, 1.6, 7.3, 2.2}, textBody{anchor: "b", fit: true, paras: []para{{runs: []run{
-		{text: thanksText, size: 42, color: p.text, font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 42, color: p.text, font: t.headFont}}}}})
 	c.add(rect{5.5, 3.98, 0.6, 0.04}, shape{fill: solid(p.accent)})
 	c.text(rect{5.4, 4.12, 7.3, 1.2}, textBody{fit: true, paras: []para{{runs: []run{t.tx(d.Topic, 18, p.muted)}}}})
 	if d.StudentName != "" {
 		c.text(rect{5.4, 5.5, 7.3, 0.85}, textBody{paras: []para{
-			{runs: []run{{text: "BAJARDI", size: 10, spc: 2, color: p.muted, font: t.bodyFont}}},
+			{runs: []run{{text: strings.ToUpper(d.labels().Student), size: 10, spc: 2, color: p.muted, font: t.bodyFont}}},
 			{before: 3, runs: []run{t.tx(d.StudentName, 15, p.text)}},
 		}})
 	}
@@ -868,12 +863,12 @@ func techClosing(t *theme, c *canvas, d *Deck) {
 	techBackdrop(t, c)
 	c.add(rect{slideW/2 - 2.6, 0.55, 5.2, 5.2}, shape{geom: "ellipse", fill: radialFade(p.primary, 24)})
 	c.text(rect{1.0, 1.75, 11.33, 1.6}, textBody{anchor: "b", fit: true, paras: []para{{align: "ctr", runs: []run{
-		{text: thanksText, size: 42, bold: true, color: "FFFFFF", font: t.headFont}}}}})
+		{text: d.labels().Thanks, size: 42, bold: true, color: "FFFFFF", font: t.headFont}}}}})
 	c.add(rect{slideW/2 - 1.1, 3.55, 2.2, 0.05}, shape{fill: linear(0, p.primary, p.secondary)})
 	c.text(rect{1.6, 3.8, 10.1, 1.1}, textBody{fit: true, paras: []para{{align: "ctr", runs: []run{t.tx(d.Topic, 18, p.muted)}}}})
 	if d.StudentName != "" {
 		c.text(rect{1.6, 5.2, 10.1, 0.55}, textBody{anchor: "ctr", paras: []para{{align: "ctr", runs: []run{
-			{text: labelStudent + " ", size: 16, bold: true, color: p.primary, font: t.bodyFont},
+			{text: d.labels().Student + ": ", size: 16, bold: true, color: p.primary, font: t.bodyFont},
 			t.tx(d.StudentName, 16, "FFFFFF")}}}})
 	}
 }

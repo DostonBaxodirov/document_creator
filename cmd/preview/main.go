@@ -4,6 +4,7 @@
 //
 //	go run ./cmd/preview -out ./previews
 //	go run ./cmd/preview -out ./previews -theme zamonaviy
+//	go run ./cmd/preview -out ./previews -lang ru   # titul/yakuniy slayd yozuvlari ruscha
 //
 // Rasmli dizaynlarda sukut bo'yicha namunaviy (gradientli) rasmlar qo'yiladi.
 // Haqiqiy AI rasmlar bilan sinash uchun (.env dagi OPENAI_API_KEY /
@@ -33,6 +34,7 @@ import (
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
+	"telegram-presentation-bot/internal/lang"
 )
 
 func main() {
@@ -40,16 +42,22 @@ func main() {
 	out := flag.String("out", "previews", "natija papkasi")
 	only := flag.String("theme", "", "faqat shu mavzu (bo'sh — barchasi)")
 	photos := flag.String("photos", "", "haqiqiy AI rasmlar tarifi: standard yoki premium (bo'sh — namunaviy rasmlar)")
+	language := flag.String("lang", "", "yozuvlar tili: uz, uz-cyrl, ru, en (bo'sh — uz)")
 	flag.Parse()
 
-	if err := run(*tpl, *out, *only, *photos); err != nil {
+	if err := run(*tpl, *out, *only, *photos, *language); err != nil {
 		fmt.Fprintln(os.Stderr, "preview:", err)
 		os.Exit(1)
 	}
 }
 
-func run(tpl, out, only, photos string) error {
+func run(tpl, out, only, photos, language string) error {
 	ctx := context.Background()
+	if language != "" {
+		if _, ok := lang.Find(language); !ok {
+			return fmt.Errorf("-lang noto'g'ri: %q (uz, uz-cyrl, ru yoki en)", language)
+		}
+	}
 	if err := os.MkdirAll(out, 0o750); err != nil {
 		return err
 	}
@@ -82,6 +90,11 @@ func run(tpl, out, only, photos string) error {
 		}
 		deck := generator.SampleDeck(t.ID)
 		name := "namuna-" + t.ID
+		if language != "" {
+			deck.Lang = language
+			deck.WorkType = lang.Get(language).Labels.TitlePresentation
+			name += "-" + language
+		}
 		if svc != nil {
 			placed, total := addPhotos(ctx, svc, images.Tier(photos), &deck)
 			fmt.Fprintf(os.Stderr, "%s: %d/%d ta AI rasm (%s, %s)\n", t.ID, placed, total, photos, svc.Provider(images.Tier(photos)))

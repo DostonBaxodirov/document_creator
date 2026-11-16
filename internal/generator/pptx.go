@@ -37,6 +37,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"telegram-presentation-bot/internal/lang"
 )
 
 // OOXML ichki yo'llari va turlari.
@@ -93,11 +95,16 @@ type Deck struct {
 	TeacherName string
 	Year        string
 	Theme       string // ThemeAcademic, ThemeModern ...; bo'sh bo'lsa — DefaultTheme
+	// Lang — titul va yakuniy slayddagi yozuvlar tili (lang.Code); bo'sh bo'lsa — o'zbek (lotin).
+	Lang string
 	// CoverImage — titul va yakuniy slayd rasmi (faqat rasmli dizaynlarda);
 	// nil bo'lsa, rasm o'rnida dizaynning bezakli foni chiziladi.
 	CoverImage *Picture
 	Slides     []Slide
 }
+
+// labels taqdimot tiliga mos qotirilgan yozuvlar ("Bajardi", "Rahmat" ...).
+func (d *Deck) labels() lang.Labels { return lang.Get(d.Lang).Labels }
 
 // PPTX — .pptx fayllarni yaratuvchi generator.
 // Build bir vaqtning o'zida bir nechta goroutine'dan chaqirilishi mumkin:

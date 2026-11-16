@@ -2,12 +2,14 @@ package bot
 
 import (
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
 )
 
@@ -16,33 +18,47 @@ import (
 type State string
 
 const (
-	StateIdle       State = "idle"             // hech narsa kutilmayapti
-	StateWorkType   State = "await_work_type"  // ish turi tanlanishi kutilmoqda (inline tugmalar)
-	StateTopic      State = "await_topic"      // mavzu
-	StateVolume     State = "await_volume"     // hajm: slaydlar (taqdimot) yoki sahifalar (hujjat) soni
-	StateDesign     State = "await_design"     // taqdimot dizayni tanlanishi kutilmoqda (inline tugmalar)
-	StateStudent    State = "await_student"    // talabaning F.I.Sh.
-	StateUniversity State = "await_university" // universitet nomi
-	StateTeacher    State = "await_teacher"    // tekshiruvchi (o'qituvchi) F.I.Sh.
-	StateConfirm    State = "await_confirm"    // yig'ilgan ma'lumotlarni tasdiqlash
-	StateGenerating State = "generating"       // AI + fayl (PPTX/DOCX) generatsiyasi ketmoqda
+	StateIdle         State = "idle"               // hech narsa kutilmayapti
+	StateWorkType     State = "await_work_type"    // ish turi tanlanishi kutilmoqda (inline tugmalar)
+	StateLanguage     State = "await_language"     // ish tili tanlanishi kutilmoqda (inline tugmalar)
+	StateTopic        State = "await_topic"        // mavzu
+	StateVolume       State = "await_volume"       // hajm: slaydlar (taqdimot) yoki sahifalar (hujjat) soni
+	StateDesign       State = "await_design"       // taqdimot dizayni tanlanishi kutilmoqda (inline tugmalar)
+	StateStudent      State = "await_student"      // talabaning F.I.Sh.
+	StateUniversity   State = "await_university"   // universitet nomi
+	StateTeacher      State = "await_teacher"      // tekshiruvchi (o'qituvchi) F.I.Sh.
+	StateRequirements State = "await_requirements" // qo'shimcha talablar (ixtiyoriy)
+	StateConfirm      State = "await_confirm"      // yig'ilgan ma'lumotlarni tasdiqlash
+	StatePayment      State = "await_payment"      // to'lov cheki (rasm) kutilmoqda
+	StateReview       State = "payment_review"     // chek tekshirilmoqda (AI yoki admin)
+	StateGenerating   State = "generating"         // AI + fayl (PPTX/DOCX) generatsiyasi ketmoqda
 )
 
 // FSM ketma-ketligi:
 //
-//	/start → WorkType → Topic → Volume → [Design] → Student → University → Teacher → Confirm → Generating → Idle
+//	/start → WorkType → Language → Topic → Volume → [Design] → Student → University → Teacher → Requirements → Confirm → Generating → Idle
 //
-// Design qadami faqat taqdimot uchun. Matnli qadamlar (Topic..Teacher)
-// quyidagi `steps` jadvalida tavsiflangan; WorkType, Design, Confirm va
-// Generating holatlari inline tugmalar orqali boshqariladi.
+// To'lov yoqilgan va bepul urinishlar tugagan bo'lsa, tasdiqlashdan keyin:
+//
+//	Confirm → Payment (chek kutiladi) → Review (AI/admin tekshiradi) → Generating
+//
+// Design qadami faqat taqdimot uchun. Matnli qadamlar (Topic..Requirements)
+// quyidagi `steps` jadvalida tavsiflangan; WorkType, Language, Design, Confirm
+// va Generating holatlari inline tugmalar orqali boshqariladi.
 
 // Inline tugmalar uchun callback identifikatorlari (telebot "unique" maydoni).
 const (
 	cbWorkType = "worktype"
+	cbLanguage = "lang"
 	cbDesign   = "design"
 	cbConfirm  = "confirm"
 	cbRestart  = "restart"
 	cbCancel   = "cancel"
+
+	cbPayApprove   = "pay_ok"  // admin: shubhali chekni tasdiqlash (data — payment ID)
+	cbPayReject    = "pay_no"  // admin: shubhali chekni rad etish (data — payment ID)
+	cbReportPeriod = "rep_per" // admin: hisobot davri (data — reportPeriod)
+	cbReportFormat = "rep_fmt" // admin: hisobot formati (data — davr|format)
 )
 
 // workTypeOption — ish turining foydalanuvchi interfeysidagi ko'rinishi.
@@ -52,13 +68,25 @@ type workTypeOption struct {
 	Type   ai.WorkType
 	Button string // tugmadagi matn
 	Name   string // xulosada ko'rinadigan nom
-	Title  string // titul slayd/varaqda ko'rinadigan nom
 }
 
 var workTypes = []workTypeOption{
-	{Type: ai.WorkPresentation, Button: "📊 Slayd (taqdimot) — PowerPoint", Name: "Slayd (taqdimot)", Title: "TAQDIMOT"},
-	{Type: ai.WorkIndependent, Button: "📚 Mustaqil ish — Word", Name: "Mustaqil ish", Title: "MUSTAQIL ISH"},
-	{Type: ai.WorkPractical, Button: "🛠 Amaliy topshiriq — Word", Name: "Amaliy topshiriq", Title: "AMALIY TOPSHIRIQ"},
+	{Type: ai.WorkPresentation, Button: "📊 Slayd (taqdimot) — PowerPoint", Name: "Slayd (taqdimot)"},
+	{Type: ai.WorkIndependent, Button: "📚 Mustaqil ish — Word", Name: "Mustaqil ish"},
+	{Type: ai.WorkPractical, Button: "🛠 Amaliy topshiriq — Word", Name: "Amaliy topshiriq"},
+}
+
+// Title ish turining titul slayd/varaqda ko'rinadigan nomi (ish tilida):
+// "TAQDIMOT", "САМОСТОЯТЕЛЬНАЯ РАБОТА" ...
+func (o workTypeOption) Title(l lang.Info) string {
+	switch o.Type {
+	case ai.WorkIndependent:
+		return l.Labels.TitleIndependent
+	case ai.WorkPractical:
+		return l.Labels.TitlePractical
+	default:
+		return l.Labels.TitlePresentation
+	}
 }
 
 func findWorkType(t ai.WorkType) (workTypeOption, bool) {
@@ -118,8 +146,12 @@ type step struct {
 var steps = map[State]step{
 	StateTopic: {
 		next: StateVolume,
-		prompt: func(Limits, *storage.Session) string {
-			return "📝 <b>Mavzuni kiriting.</b>\n\n<i>Masalan: Sun'iy intellektning ta'limdagi o'rni</i>"
+		prompt: func(_ Limits, s *storage.Session) string {
+			text := "📝 <b>Mavzuni kiriting.</b>\n\n<i>Masalan: Sun'iy intellektning ta'limdagi o'rni</i>"
+			if l := lang.Get(s.Language); l.Code != lang.UzLatn {
+				text += fmt.Sprintf("\n\n🌐 Mavzuni <b>%s</b> tilida yozing — u titulda aynan shunday chiqadi.", html.EscapeString(l.Name))
+			}
+			return text
 		},
 		apply: func(_ Limits, s *storage.Session, input string) error {
 			v, err := validateText(input, "Mavzu", 3, maxTopicRunes)
@@ -205,7 +237,7 @@ var steps = map[State]step{
 		},
 	},
 	StateTeacher: {
-		next: StateConfirm,
+		next: StateRequirements,
 		prompt: func(Limits, *storage.Session) string {
 			return "👨‍🏫 <b>Tekshiruvchi (o'qituvchi) F.I.Sh. ni kiriting.</b>\n\n<i>Masalan: Karimova Dilnoza</i>"
 		},
@@ -219,6 +251,57 @@ var steps = map[State]step{
 			return nil
 		},
 	},
+	StateRequirements: {
+		next: StateConfirm,
+		prompt: func(Limits, *storage.Session) string {
+			return "✍️ <b>Qo'shimcha talablaringiz bormi?</b>\n\n" +
+				"Ishga qo'yiladigan maxsus talablarni yozing — sun'iy intellekt ularni hisobga oladi. Masalan:\n" +
+				"• ko'proq amaliy misollar bo'lsin\n" +
+				"• formulalar va hisob-kitoblar bilan\n" +
+				"• O'zbekiston misolida yoritilsin\n" +
+				"• 2-bobda SWOT tahlili bo'lsin\n" +
+				"• atamalar inglizcha tarjimasi bilan berilsin\n\n" +
+				"<i>Talab bo'lmasa — «" + skipRequirements + "» tugmasini bosing.</i>"
+		},
+		suggest: func(Limits, *storage.Session) []string { return []string{skipRequirements} },
+		apply: func(_ Limits, s *storage.Session, input string) error {
+			if isSkipAnswer(input) {
+				s.Requirements = ""
+				return nil
+			}
+			v, err := validateText(input, "Qo'shimcha talablar", 3, maxRequirementsRunes)
+			if err != nil {
+				return err
+			}
+			s.Requirements = v
+			return nil
+		},
+	},
+}
+
+// skipRequirements — qo'shimcha talablar qadamini o'tkazib yuborish tugmasi.
+const skipRequirements = "⏭ O'tkazib yuborish"
+
+// maxRequirementsRunes — qo'shimcha talablar uzunligi chegarasi
+// (bazada Session.Requirements — varchar(1024)).
+const maxRequirementsRunes = 800
+
+// skipAnswers — "talab yo'q" ma'nosidagi javoblar (kichik harflarda).
+// Apostrof variantlari skipAnswers ga solishtirishdan oldin "'" ga keltiriladi.
+var skipAnswers = map[string]bool{
+	"yo'q": true, "yoq": true, "-": true, "—": true,
+	"йўқ": true, "нет": true, "no": true, "none": true, "o'tkazib yuborish": true,
+}
+
+var apostrophes = strings.NewReplacer("`", "'", "’", "'", "‘", "'", "ʻ", "'", "ʼ", "'")
+
+// isSkipAnswer javob qo'shimcha talablar qadamini o'tkazib yuborishni bildiradimi.
+func isSkipAnswer(input string) bool {
+	v := strings.ToLower(normalizeSpaces(input))
+	if v == strings.ToLower(skipRequirements) {
+		return true
+	}
+	return skipAnswers[strings.TrimRight(apostrophes.Replace(v), ".!")]
 }
 
 // nextState javobdan keyingi qadamni qaytaradi.
@@ -233,8 +316,11 @@ func (st step) nextState(s *storage.Session) State {
 // (talaba, universitet, tekshiruvchi) keyingi safar taklif qilish uchun qoladi.
 func resetDraft(s *storage.Session) {
 	s.WorkType = ""
+	s.Language = ""
 	s.Topic = ""
 	s.Volume = 0
+	s.Requirements = ""
+	s.OrderID = nil
 }
 
 // ---------------------------------------------------------------------------

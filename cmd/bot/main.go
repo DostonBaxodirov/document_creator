@@ -24,6 +24,7 @@ import (
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
+	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
 )
 
@@ -66,6 +67,7 @@ func run() error {
 		return err
 	}
 	sessions := storage.NewSessionRepository(db)
+	billing := storage.NewBillingRepository(db)
 
 	// 4. AI klient va fayl generatorlari: taqdimot — .pptx (shablon asosida),
 	// mustaqil ish va amaliy topshiriq — .docx.
@@ -95,6 +97,23 @@ func run() error {
 		log.Warn("rasm provayderlari ulanmagan (OPENAI_API_KEY / GEMINI_API_KEY) — rasmli dizaynlar rasmsiz chiqadi")
 	}
 
+	// To'lov cheklarini OpenAI vision modeli o'qiydi. Kalit bo'lmasa — barcha
+	// cheklar admin tekshiruviga yuboriladi.
+	var verifier bot.ReceiptVerifier
+	if cfg.Payment.Enabled {
+		if cfg.AI.OpenAIAPIKey != "" {
+			verifier = payment.NewVerifier(cfg.AI.OpenAIBaseURL, cfg.AI.OpenAIAPIKey, cfg.Payment.VisionModel, cfg.Payment.CheckTimeout)
+			log.Info("payments enabled",
+				zap.String("vision_model", cfg.Payment.VisionModel),
+				zap.Int("price_photo", cfg.Payment.PricePhoto),
+				zap.Int("price_plain", cfg.Payment.PricePlain))
+		} else {
+			log.Warn("OPENAI_API_KEY yo'q — to'lov cheklari AI siz, faqat admin tomonidan tekshiriladi")
+		}
+	} else {
+		log.Warn("to'lov o'chirilgan (PAYMENT_ENABLED=false) — barcha ishlar bepul")
+	}
+
 	// 5. Handler. Generatsiyalar signal kontekstidan alohida kontekstda ishlaydi:
 	// to'xtash signali kelganda ular darhol uzilmaydi, balki ShutdownTimeout
 	// davomida yakunlanishiga imkon beriladi.
@@ -114,6 +133,18 @@ func run() error {
 		DesignPreview:    filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "designs.png"),
 		Images:           imageService,
 		DefaultImageTier: images.Tier(cfg.Images.DefaultTier),
+		Billing:          billing,
+		Verifier:         verifier,
+		Payment: bot.PaymentOptions{
+			Enabled:       cfg.Payment.Enabled,
+			CardNumber:    cfg.Payment.CardNumber,
+			CardHolder:    cfg.Payment.CardHolder,
+			PricePhoto:    cfg.Payment.PricePhoto,
+			PricePlain:    cfg.Payment.PricePlain,
+			FreePhoto:     cfg.Payment.FreePhoto,
+			FreePlain:     cfg.Payment.FreePlain,
+			AdminPassword: cfg.Payment.AdminPassword,
+		},
 	})
 
 	// 6. Telegram bot.

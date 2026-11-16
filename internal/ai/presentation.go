@@ -94,6 +94,17 @@ type PresentationRequest struct {
 	Layouts   []string
 	Signature []string
 	Compact   bool
+
+	// Language — kontent tili (inglizcha nom, masalan "Russian"); bo'sh bo'lsa,
+	// mavzu tilida yoziladi.
+	Language string
+	// Requirements — foydalanuvchining qo'shimcha talablari (ixtiyoriy).
+	Requirements string
+	// OutlineTitle va ConclusionTitle — reja va xulosa slaydlari sarlavhalari
+	// (tanlangan tilda). Bo'sh bo'lsa — "Reja" / "Xulosa" yoki ularning
+	// mavzu tilidagi muqobili.
+	OutlineTitle    string
+	ConclusionTitle string
 }
 
 // layouts so'rov uchun ruxsat etilgan maketlar (noma'lumlari tashlanadi).
@@ -343,12 +354,11 @@ const presentationSystemPrompt = `You are an expert academic writer and presenta
 
 Strict output rules:
 - Respond with ONE valid JSON object and nothing else: no markdown fences, no comments, no extra text.
-- Write ALL content in the same language as the topic. If the topic is in Uzbek, use the Uzbek Latin alphabet with correct letters (o', g', sh, ch).
 - Content must be accurate, substantive, neutral and academic: concrete facts, definitions, mechanisms, causes and effects, real examples. Avoid vague, generic filler sentences.
 - Never invent statistics, quotations, URLs or bibliographic references. Use only numbers and dates that are well established.
 - Do not put markdown (*, **, #), emojis, bullet symbols or numbering at the start of any text field.
 - Slide titles are short and specific (at most 8 words). Never repeat the same slide title.
-` + finalTextRules
+` + languageRules + "\n" + finalTextRules
 
 // layoutGuides — har bir maket uchun talablar (prompt dizayn maketlaridan yig'iladi).
 var layoutGuides = map[string]string{
@@ -430,17 +440,32 @@ var signatureHints = map[string]string{
 	LayoutStatement: "the central thesis becomes a statement",
 }
 
-// structureRules — taqdimot tuzilishi (n — mazmunli slaydlar soni,
-// signature — dizaynning imzo maketlari).
-func structureRules(n int, signature []string) string {
+// structureTitles reja va xulosa slaydlari sarlavhalari uchun prompt bo'laklari.
+// Sarlavha berilmagan bo'lsa — o'zbekcha nom va mavzu tilidagi muqobili.
+func (r PresentationRequest) structureTitles() (outline, conclusion string) {
+	outline = `titled "Reja" (use the equivalent word if the topic is not in Uzbek, e.g. "План" or "Outline")`
+	if t := strings.TrimSpace(r.OutlineTitle); t != "" {
+		outline = fmt.Sprintf("titled %q", t)
+	}
+	conclusion = `titled "Xulosa" (or its equivalent)`
+	if t := strings.TrimSpace(r.ConclusionTitle); t != "" {
+		conclusion = fmt.Sprintf("titled %q", t)
+	}
+	return outline, conclusion
+}
+
+// structureRules — taqdimot tuzilishi (n — mazmunli slaydlar soni).
+func structureRules(n int, req PresentationRequest) string {
+	signature := req.signature()
+	outlineTitle, conclusionTitle := req.structureTitles()
 	var b strings.Builder
 	b.WriteString("Structure:\n")
 	switch {
 	case n >= 3:
-		b.WriteString("1. Slide 1 is the outline: layout \"agenda\", titled \"Reja\" (use the equivalent word if the topic is not in Uzbek, e.g. \"План\" or \"Outline\"); its items name the main sections that follow.\n")
+		fmt.Fprintf(&b, "1. Slide 1 is the outline: layout \"agenda\", %s; its items name the main sections that follow.\n", outlineTitle)
 		fmt.Fprintf(&b, "2. Slides 2-%d are the main sections, covering the topic logically from fundamentals to details; each slide focuses on one idea and they do not overlap. "+
 			"A \"definition\" slide fits well right after the outline.\n", n-1)
-		fmt.Fprintf(&b, "3. Slide %d is the conclusion: layout \"conclusion\", titled \"Xulosa\" (or its equivalent).\n", n)
+		fmt.Fprintf(&b, "3. Slide %d is the conclusion: layout \"conclusion\", %s.\n", n, conclusionTitle)
 		if n >= 6 {
 			b.WriteString("Choose for each main slide the layout that best fits its content and vary them: use at least 4 different layouts, and never the same layout on more than 2 consecutive slides.\n")
 		} else {
@@ -464,7 +489,7 @@ func structureRules(n int, signature []string) string {
 		}
 	case n == 2:
 		b.WriteString("1. Slide 1 explains the core of the topic (layout \"definition\" or \"bullets\").\n")
-		b.WriteString("2. Slide 2 is the conclusion: layout \"conclusion\", titled \"Xulosa\" (or its equivalent).\n")
+		fmt.Fprintf(&b, "2. Slide 2 is the conclusion: layout \"conclusion\", %s.\n", conclusionTitle)
 	default:
 		b.WriteString("1. A single slide giving a complete overview of the topic (layout \"bullets\" with a \"highlight\").\n")
 	}
@@ -476,8 +501,9 @@ func buildDeckPrompt(req PresentationRequest) string {
 	n := req.SlideCount
 	var b strings.Builder
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
+	b.WriteString(languageRule(req.Language))
 	fmt.Fprintf(&b, "Number of slides in \"slides\": exactly %d\n\n", n)
-	b.WriteString(structureRules(n, req.signature()))
+	b.WriteString(structureRules(n, req))
 	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n")
 	if req.Images {
 		b.WriteString(imageRule + "\n")
@@ -492,6 +518,7 @@ func buildDeckPrompt(req PresentationRequest) string {
 	if req.Images {
 		b.WriteString("\n" + coverImageRule)
 	}
+	writeRequirements(&b, req.Requirements)
 	return b.String()
 }
 
@@ -500,8 +527,9 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 	n := req.SlideCount
 	var b strings.Builder
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
+	b.WriteString(languageRule(req.Language))
 	fmt.Fprintf(&b, "Plan a presentation with exactly %d slides (do not write their content yet).\n\n", n)
-	b.WriteString(structureRules(n, req.signature()))
+	b.WriteString(structureRules(n, req))
 	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n\n")
 	b.WriteString(`For each slide give "title", "layout" and "focus": one sentence (12-25 words) naming exactly what the slide will cover — specific sub-topics, facts or examples — so that slides do not overlap.` + "\n")
 	top := ""
@@ -513,6 +541,7 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 	if req.Images {
 		b.WriteString("\n" + coverImageRule)
 	}
+	writeRequirements(&b, req.Requirements)
 	return b.String()
 }
 
@@ -520,7 +549,9 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to int) string {
 	images := req.Images
 	var b strings.Builder
-	fmt.Fprintf(&b, "Topic: %q\n\nPresentation plan (all slides):\n", strings.TrimSpace(req.Topic))
+	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
+	b.WriteString(languageRule(req.Language))
+	b.WriteString("\nPresentation plan (all slides):\n")
 	for i, s := range plan.Slides {
 		fmt.Fprintf(&b, "%d. [%s] %s — %s\n", i+1, s.Layout, s.Title, s.Focus)
 	}
@@ -532,6 +563,7 @@ func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to
 	}
 	b.WriteString("\n")
 	b.WriteString(`JSON shape: {"slides": [` + slideJSONShape(images) + `, ...]}`)
+	writeRequirements(&b, req.Requirements)
 	return b.String()
 }
 

@@ -107,6 +107,8 @@ var reservedHeadings = map[string]bool{
 	"foydalanilgan adabiyotlar": true, "foydalanilgan adabiyotlar ro" + "'" + "yxati": true, "adabiyotlar": true,
 	"introduction": true, "conclusion": true, "references": true, "bibliography": true,
 	"введение": true, "заключение": true, "список литературы": true, "литература": true,
+	"список использованной литературы": true, "план": true, "outline": true,
+	"кириш": true, "хулоса": true, "режа": true, "фойдаланилган адабиётлар": true,
 }
 
 func isReservedHeading(title string) bool {

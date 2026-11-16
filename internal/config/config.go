@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/joho/godotenv"
 )
@@ -49,6 +50,7 @@ type Config struct {
 	DB        DBConfig
 	Generator GeneratorConfig
 	Limits    LimitsConfig
+	Payment   PaymentConfig
 }
 
 // TelegramConfig — Telegram bot sozlamalari.
@@ -146,6 +148,89 @@ type LimitsConfig struct {
 	MaxPages  int
 }
 
+// PaymentConfig — pullik xizmat sozlamalari: narxlar, bepul urinishlar,
+// to'lov kartasi, chekni AI orqali tekshirish va admin paroli.
+type PaymentConfig struct {
+	Enabled    bool   // false bo'lsa — barcha ishlar bepul (to'lov so'ralmaydi)
+	CardNumber string // to'lov qabul qilinadigan karta raqami (foydalanuvchiga ko'rsatiladi)
+	CardHolder string // karta egasi (ixtiyoriy)
+
+	PricePhoto int // rasmli taqdimot narxi, so'mda
+	PricePlain int // rasmsiz taqdimot va Word ishlar narxi, so'mda
+	FreePhoto  int // har bir foydalanuvchiga beriladigan bepul rasmli urinishlar soni
+	FreePlain  int // bepul rasmsiz urinishlar soni
+
+	// Chekni o'qish uchun OpenAI vision modeli. API kaliti va manzili
+	// AIConfig dan (OPENAI_API_KEY, OPENAI_BASE_URL) olinadi.
+	VisionModel  string
+	CheckTimeout time.Duration
+
+	// AdminPassword — botga shu matnni yuborgan foydalanuvchi admin bo'ladi.
+	AdminPassword string
+}
+
+// CardLast4 karta raqamining oxirgi 4 raqamini qaytaradi.
+func (p PaymentConfig) CardLast4() string {
+	d := digitsOnly(p.CardNumber)
+	if len(d) < 4 {
+		return d
+	}
+	return d[len(d)-4:]
+}
+
+// digitsOnly satrdan faqat raqamlarni qoldiradi.
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// paymentConfig to'lov sozlamalarini o'qiydi. Vision modeli ko'rsatilmasa,
+// matn uchun tanlangan OpenAI modeli ishlatiladi.
+func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
+	return PaymentConfig{
+		Enabled:       p.bool("PAYMENT_ENABLED", true),
+		CardNumber:    p.str("PAYMENT_CARD_NUMBER", ""),
+		CardHolder:    p.str("PAYMENT_CARD_HOLDER", ""),
+		PricePhoto:    p.int("PRICE_PHOTO", 10000),
+		PricePlain:    p.int("PRICE_PLAIN", 7000),
+		FreePhoto:     p.int("FREE_PHOTO", 1),
+		FreePlain:     p.int("FREE_PLAIN", 1),
+		VisionModel:   p.str("PAYMENT_VISION_MODEL", ai.OpenAIModel),
+		CheckTimeout:  p.duration("PAYMENT_CHECK_TIMEOUT", 60*time.Second),
+		AdminPassword: p.str("ADMIN_PASSWORD", ""),
+	}
+}
+
+// validate to'lov sozlamalarini tekshiradi (faqat to'lov yoqilgan bo'lsa).
+func (c PaymentConfig) validate() []error {
+	if !c.Enabled {
+		return nil
+	}
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	if n := len(digitsOnly(c.CardNumber)); n < 16 || n > 19 {
+		add("PAYMENT_ENABLED=true uchun PAYMENT_CARD_NUMBER majburiy (16–19 ta raqam)")
+	}
+	if c.PricePhoto <= 0 || c.PricePlain <= 0 {
+		add("PRICE_PHOTO va PRICE_PLAIN musbat bo'lishi kerak")
+	}
+	if c.FreePhoto < 0 || c.FreePlain < 0 {
+		add("FREE_PHOTO va FREE_PLAIN manfiy bo'lishi mumkin emas")
+	}
+	if utf8.RuneCountInString(c.AdminPassword) < 8 {
+		add("PAYMENT_ENABLED=true uchun ADMIN_PASSWORD majburiy (kamida 8 belgi)")
+	}
+	if c.CheckTimeout <= 0 {
+		add("PAYMENT_CHECK_TIMEOUT musbat bo'lishi kerak")
+	}
+	return errs
+}
+
 // Load .env faylini (agar mavjud bo'lsa) yuklaydi, muhit o'zgaruvchilarini o'qiydi
 // va konfiguratsiyani tekshiradi. Muhitda allaqachon o'rnatilgan qiymatlar
 // .env dagi qiymatlardan ustun turadi.
@@ -155,6 +240,7 @@ func Load() (*Config, error) {
 	}
 
 	p := &parser{}
+	aiCfg := aiConfig(p)
 	cfg := &Config{
 		Env:      p.str("APP_ENV", "production"),
 		LogLevel: p.str("LOG_LEVEL", "info"),
@@ -163,8 +249,9 @@ func Load() (*Config, error) {
 			PollTimeout:     p.duration("TELEGRAM_POLL_TIMEOUT", 10*time.Second),
 			ShutdownTimeout: p.duration("SHUTDOWN_TIMEOUT", 60*time.Second),
 		},
-		AI:     aiConfig(p),
-		Images: imagesConfig(p),
+		AI:      aiCfg,
+		Images:  imagesConfig(p),
+		Payment: paymentConfig(p, aiCfg),
 		DB: DBConfig{
 			Host:            p.str("DB_HOST", "localhost"),
 			Port:            p.int("DB_PORT", 5432),
@@ -337,6 +424,7 @@ func (c *Config) validate() error {
 	}
 
 	errs = append(errs, c.Images.validate()...)
+	errs = append(errs, c.Payment.validate()...)
 
 	if c.DB.Port <= 0 || c.DB.Port > 65535 {
 		add("DB_PORT noto'g'ri: %d", c.DB.Port)

@@ -30,6 +30,13 @@ type Session struct {
 	Volume int `gorm:"not null;default:0"`
 	// Design — taqdimot dizayn mavzusi (generator.Theme* qiymatlari).
 	Design string `gorm:"size:32"`
+	// Language — ish yoziladigan til (lang.Code qiymatlari; bo'sh — o'zbek lotin).
+	Language string `gorm:"size:16"`
+	// Requirements — foydalanuvchining qo'shimcha talablari (ixtiyoriy, AI promptiga qo'shiladi).
+	Requirements string `gorm:"size:1024"`
+	// OrderID — joriy buyurtmaga mos orders yozuvi (to'lov yoki bepul urinish).
+	// Tasdiqlashdan keyin qo'yiladi, buyurtma yakunlanganda tozalanadi.
+	OrderID *uint
 
 	// Profil ma'lumotlari (keyingi buyurtmalar uchun eslab qolinadi).
 	StudentName string `gorm:"size:128"`
