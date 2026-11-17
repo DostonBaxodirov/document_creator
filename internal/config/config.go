@@ -319,8 +319,10 @@ func aiConfig(p *parser) AIConfig {
 func imagesConfig(p *parser) ImagesConfig {
 	return ImagesConfig{
 		StandardProvider: strings.ToLower(p.str("IMAGE_STANDARD_PROVIDER", ImageProviderOpenAI)),
-		PremiumProvider:  strings.ToLower(p.str("IMAGE_PREMIUM_PROVIDER", ImageProviderGemini)),
-		DefaultTier:      strings.ToLower(p.str("IMAGE_DEFAULT_TIER", TierStandard)),
+		// Hozircha premium tarif ham OpenAI'da: Gemini rasm modeli billingsiz
+		// ishlamaydi. Gemini'ga qaytish uchun .env da IMAGE_PREMIUM_PROVIDER=gemini.
+		PremiumProvider: strings.ToLower(p.str("IMAGE_PREMIUM_PROVIDER", ImageProviderOpenAI)),
+		DefaultTier:     strings.ToLower(p.str("IMAGE_DEFAULT_TIER", TierStandard)),
 
 		OpenAIModel:   p.str("OPENAI_IMAGE_MODEL", "gpt-image-2"),
 		OpenAIQuality: strings.ToLower(p.str("OPENAI_IMAGE_QUALITY", "low")),

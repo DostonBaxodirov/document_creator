@@ -392,3 +392,21 @@ func (r *BillingRepository) ListPayments(ctx context.Context, since *time.Time) 
 	}
 	return list, nil
 }
+
+// ListPaymentsByStatus berilgan holatdagi to'lovlarni (eskilari birinchi)
+// qaytaradi. limit > 0 bo'lsa, ko'pi bilan shuncha yozuv; total — jami soni.
+func (r *BillingRepository) ListPaymentsByStatus(ctx context.Context, status string, limit int) (list []Payment, total int, err error) {
+	db := r.db.WithContext(ctx)
+	var n int64
+	if err := db.Model(&Payment{}).Where("status = ?", status).Count(&n).Error; err != nil {
+		return nil, 0, fmt.Errorf("storage: to'lovlarni sanab bo'lmadi: %w", err)
+	}
+	q := db.Where("status = ?", status).Order("created_at, id")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if err := q.Find(&list).Error; err != nil {
+		return nil, 0, fmt.Errorf("storage: to'lovlar ro'yxatini o'qib bo'lmadi: %w", err)
+	}
+	return list, int(n), nil
+}

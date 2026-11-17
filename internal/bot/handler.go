@@ -217,6 +217,7 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle("/help", h.onHelp)
 	b.Handle("/report", h.onReport)
 	b.Handle("/chek", h.onChek)
+	b.Handle("/tekshiruv", h.onPendingChecks)
 	b.Handle(tele.OnText, h.onText)
 	b.Handle(tele.OnPhoto, h.onPhoto)       // to'lov cheki
 	b.Handle(tele.OnDocument, h.onDocument) // fayl ko'rinishidagi chek

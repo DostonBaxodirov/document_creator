@@ -1,8 +1,9 @@
 // Package images AI rasm modellari yordamida taqdimot slaydlari uchun rasm chizadi.
 //
 // Rasm modellari ikki tarifga bo'lingan:
-//   - standard (arzon)  — odatda OpenAI gpt-image-2 (low sifat);
-//   - premium (sifatli) — odatda Google Gemini Nano Banana.
+//   - standard (arzon)  — OpenAI gpt-image-2 (low sifat);
+//   - premium (sifatli) — hozircha ham OpenAI; Gemini Nano Banana'ga
+//     IMAGE_PREMIUM_PROVIDER=gemini bilan qaytarish mumkin.
 //
 // Qaysi tarifga qaysi provayder ulanishi konfiguratsiyada belgilanadi
 // (IMAGE_STANDARD_PROVIDER, IMAGE_PREMIUM_PROVIDER). Service so'rovlarni

@@ -16,7 +16,7 @@ func TestImagesConfigDefaultsAndValidation(t *testing.T) {
 	if len(p.errs) > 0 || len(c.validate()) > 0 {
 		t.Fatalf("standart sozlamalar yaroqli bo'lishi kerak: %v %v", p.errs, c.validate())
 	}
-	if c.StandardProvider != ImageProviderOpenAI || c.PremiumProvider != ImageProviderGemini ||
+	if c.StandardProvider != ImageProviderOpenAI || c.PremiumProvider != ImageProviderOpenAI ||
 		c.DefaultTier != TierStandard || c.OpenAIModel != "gpt-image-2" || c.OpenAIQuality != "low" || !c.Fallback {
 		t.Errorf("standart qiymatlar noto'g'ri: %+v", c)
 	}

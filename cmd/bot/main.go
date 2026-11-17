@@ -164,6 +164,8 @@ func run() error {
 
 	// Oldingi ishga tushirishda yakunlanmay qolgan generatsiyalarni tiklash.
 	handler.RecoverInterrupted(ctx)
+	// Adminlar menyusidagi buyruqlarni joriy ro'yxat bilan yangilash.
+	handler.RefreshAdminCommands(ctx)
 
 	go b.Start()
 	log.Info("bot started",

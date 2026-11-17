@@ -172,6 +172,31 @@ func TestBillingFlow(t *testing.T) {
 		t.Errorf("kelajakdagi davrda to'lov bo'lmasligi kerak: %d", len(list))
 	}
 
+	// Tekshiruvdagi cheklar (/tekshiruv): eskilari birinchi, limit va jami soni.
+	if list, total, err := r.ListPaymentsByStatus(ctx, PaymentReview, 0); err != nil || total != 0 || len(list) != 0 {
+		t.Errorf("tekshiruvda chek bo'lmasligi kerak: %d %d %v", len(list), total, err)
+	}
+	var review []uint
+	for i := 0; i < 3; i++ {
+		ro := &Order{UserID: u.ID, TelegramUserID: 1001, WorkType: "presentation", Kind: KindPlain, Price: 7000, Status: OrderPending}
+		if err := r.CreateOrder(ctx, ro); err != nil {
+			t.Fatal(err)
+		}
+		rp := &Payment{UserID: u.ID, TelegramUserID: 1001, OrderID: ro.ID, Kind: KindPlain, Amount: 7000,
+			Status: PaymentReview, CheckFileID: "file-r"}
+		if err := r.SubmitPayment(ctx, rp); err != nil {
+			t.Fatal(err)
+		}
+		review = append(review, rp.ID)
+	}
+	if list, total, err := r.ListPaymentsByStatus(ctx, PaymentReview, 2); err != nil || total != 3 || len(list) != 2 ||
+		list[0].ID != review[0] || list[1].ID != review[1] {
+		t.Errorf("ListPaymentsByStatus(limit 2): %+v total=%d %v", list, total, err)
+	}
+	if list, total, _ := r.ListPaymentsByStatus(ctx, PaymentReview, 0); total != 3 || len(list) != 3 {
+		t.Errorf("ListPaymentsByStatus(limitsiz): %d total=%d", len(list), total)
+	}
+
 	// Sessiyada OrderID saqlanadi.
 	sr := NewSessionRepository(db)
 	s, err := sr.GetOrCreate(ctx, 1001, 1001, "ali")

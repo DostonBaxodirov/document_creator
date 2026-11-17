@@ -44,6 +44,7 @@ type BillingStore interface {
 	GetPayment(ctx context.Context, id uint) (*storage.Payment, error)
 	ReceiptSeen(ctx context.Context, transactionID, fileUniqueID string) (bool, error)
 	ListPayments(ctx context.Context, since *time.Time) ([]storage.Payment, error)
+	ListPaymentsByStatus(ctx context.Context, status string, limit int) ([]storage.Payment, int, error)
 }
 
 // ReceiptVerifier — chek rasmini o'qiydigan AI (internal/payment).

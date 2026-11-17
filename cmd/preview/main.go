@@ -11,7 +11,7 @@
 // GEMINI_API_KEY ishlatiladi, pullik — har bir rasm uchun bir necha sent):
 //
 //	go run ./cmd/preview -photos standard -theme okean   # arzon tarif (OpenAI)
-//	go run ./cmd/preview -photos premium -theme okean    # sifatli tarif (Gemini)
+//	go run ./cmd/preview -photos premium -theme okean    # sifatli tarif (IMAGE_PREMIUM_PROVIDER)
 //
 // Har bir qatorda fayl yo'li va mavzu nomi (TAB bilan) chiqariladi.
 // Slaydlarni rasmga aylantirish (LibreOffice o'rnatilgan bo'lsa):

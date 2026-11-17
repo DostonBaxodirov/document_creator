@@ -27,14 +27,19 @@ import (
 const (
 	msgAdminCommands = "<b>Admin buyruqlari:</b>\n" +
 		"/report — to'lovlar hisoboti (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
-		"/chek ID — chek rasmini ko'rish (masalan: /chek 12)\n\n" +
+		"/chek ID — chek rasmini ko'rish (masalan: /chek 12)\n" +
+		"/tekshiruv — tekshiruvdagi barcha cheklarni ✅/❌ tugmalari bilan qayta olish\n\n" +
 		"Shubhali cheklar shu chatga ✅/❌ tugmalari bilan keladi."
 	msgAdminWelcome = "👑 <b>Siz admin sifatida saqlandingiz.</b>\n\n" + msgAdminCommands
 	msgAdminAlready = "👑 Siz allaqachon adminsiz.\n\n" + msgAdminCommands
 	msgChekUsage    = "Foydalanish: /chek ID (masalan: /chek 12)"
+	msgNoPending    = "✅ Tekshiruvda chek yo'q."
 
 	// maxReportRunes — matnli hisobot uzunligi (Telegram chegarasi 4096 belgi).
 	maxReportRunes = 3800
+	// maxPendingChecks — /tekshiruv bir martada yuboradigan cheklar soni
+	// (Telegram xabar yuborish chegarasiga tushmaslik uchun).
+	maxPendingChecks = 10
 )
 
 // reportPeriod — hisobot davri.
@@ -121,9 +126,26 @@ func (h *Handler) setAdminCommands(chatID int64) {
 		{Text: "help", Description: "Yordam"},
 		{Text: "report", Description: "To'lovlar hisoboti"},
 		{Text: "chek", Description: "Chekni ko'rish: /chek ID"},
+		{Text: "tekshiruv", Description: "Tekshiruvdagi cheklarni qayta olish"},
 	}
 	if err := h.bot.SetCommands(cmds, tele.CommandScope{Type: tele.CommandScopeChat, ChatID: chatID}); err != nil {
 		h.log.Warn("failed to set admin commands", zap.Error(err))
+	}
+}
+
+// RefreshAdminCommands barcha adminlar chatida buyruqlar menyusini yangilaydi
+// (yangi admin buyruqlari oldin kirgan adminlarga ham ko'rinishi uchun).
+func (h *Handler) RefreshAdminCommands(ctx context.Context) {
+	if h.billing == nil {
+		return
+	}
+	admins, err := h.billing.ListAdmins(ctx)
+	if err != nil {
+		h.log.Warn("failed to list admins for command refresh", zap.Error(err))
+		return
+	}
+	for _, a := range admins {
+		h.setAdminCommands(a.TelegramUserID)
 	}
 }
 
@@ -292,6 +314,9 @@ func textReport(list []storage.Payment, p reportPeriod, now time.Time) string {
 	fmt.Fprintf(&b, "     📷 Rasmli: %d ta · %s\n", st.photo.count, formatSum(st.photo.sum))
 	fmt.Fprintf(&b, "     📄 Rasmsiz: %d ta · %s\n", st.plain.count, formatSum(st.plain.sum))
 	fmt.Fprintf(&b, "⏳ Tekshiruvda: %d ta · %s\n", st.review.count, formatSum(st.review.sum))
+	if st.review.count > 0 {
+		b.WriteString("     👉 Tasdiqlash/rad etish: /tekshiruv\n")
+	}
 	fmt.Fprintf(&b, "❌ Rad etilgan: %d ta\n", st.rejected)
 
 	if len(list) == 0 {
@@ -423,4 +448,42 @@ func (h *Handler) showCheck(c tele.Context, arg string) error {
 		return c.Send(media, reviewKeyboard(p.ID))
 	}
 	return c.Send(media)
+}
+
+// onPendingChecks /tekshiruv — admin qarorini kutayotgan cheklarni (eskilari
+// birinchi) ✅/❌ tugmalari bilan qayta yuboradi. Admin xabarni o'tkazib
+// yuborgan, o'chirib yuborgan yoki chek kelganidan keyin admin bo'lgan
+// holatlar uchun.
+func (h *Handler) onPendingChecks(c tele.Context) error {
+	if ok, err := h.requireAdmin(c); !ok {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	list, total, err := h.billing.ListPaymentsByStatus(ctx, storage.PaymentReview, maxPendingChecks)
+	if err != nil {
+		return err
+	}
+	if total == 0 {
+		return c.Send(msgNoPending)
+	}
+	header := fmt.Sprintf("⏳ <b>Tekshiruvda %d ta chek</b>", total)
+	if total > len(list) {
+		header += fmt.Sprintf("\nEng eskilaridan %d tasi yuborilmoqda. Qolganlari uchun ularni ko'rib chiqib, /tekshiruv ni qayta yuboring.", len(list))
+	}
+	if err := c.Send(header); err != nil {
+		return err
+	}
+	for i := range list {
+		p := &list[i]
+		o, err := h.billing.GetOrder(ctx, p.OrderID)
+		if err != nil {
+			o = nil
+		}
+		if err := c.Send(checkMedia(p, reviewCaption(p, o)), reviewKeyboard(p.ID)); err != nil {
+			h.log.Warn("failed to send pending check", zap.Uint("payment_id", p.ID), zap.Error(err))
+		}
+	}
+	return nil
 }
