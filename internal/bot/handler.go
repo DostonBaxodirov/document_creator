@@ -990,14 +990,14 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 		reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(s.Design, cover), Shape: images.Landscape})
 		targets = append(targets, -1)
 	}
-	// Banner rasmli dizaynda slayd rasmi yotiq, boshqalarida — tik (yon panel).
-	slideShape := images.Portrait
-	if generator.SlidePhotoWide(s.Design) {
-		slideShape = images.Landscape
-	}
 	for i, sl := range pres.Slides {
 		if sl.Image == "" || i >= len(deck.Slides) || !generator.SlideTakesPhoto(s.Design, deck.Slides[i]) {
 			continue
+		}
+		// Tepadagi banner uchun — yotiq rasm, yon panel uchun — tik rasm.
+		slideShape := images.Portrait
+		if generator.SlidePhotoWide(s.Design, deck.Slides[i]) {
+			slideShape = images.Landscape
 		}
 		reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(s.Design, sl.Image), Shape: slideShape})
 		targets = append(targets, i)

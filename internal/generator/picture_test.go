@@ -1,7 +1,9 @@
 package generator
 
 import (
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -191,32 +193,41 @@ func TestSlideTakesPhoto(t *testing.T) {
 		}
 		return out
 	}
+	facts := []Item{{Value: "1", Heading: "a"}, {Value: "2", Heading: "b"}}
+	// Rasmli dizaynda har bir slaydga rasm qo'yiladi; wide — rasm yon panelda
+	// emas, tepadagi bannerda (yotiq rasm so'raladi).
 	cases := []struct {
-		name  string
-		theme string
-		s     Slide
-		want  bool
+		name       string
+		theme      string
+		s          Slide
+		take, wide bool
 	}{
-		{"bullets", ThemeOcean, Slide{Layout: LayoutBullets, Items: items(4)}, true},
-		{"bullets+highlight 3", ThemeOcean, Slide{Layout: LayoutBullets, Items: items(3), Highlight: "h"}, true},
-		{"bullets+highlight 4", ThemeOcean, Slide{Layout: LayoutBullets, Items: items(4), Highlight: "h"}, false},
-		{"agenda 6", ThemeJournal, Slide{Layout: LayoutAgenda, Items: items(6)}, true},
-		{"agenda 7", ThemeJournal, Slide{Layout: LayoutAgenda, Items: items(7)}, false},
-		{"cards 4", ThemeNature, Slide{Layout: LayoutCards, Items: items(4)}, true},
-		{"cards 5", ThemeNature, Slide{Layout: LayoutCards, Items: items(5)}, false},
-		{"definition", ThemeSunset, Slide{Layout: LayoutDefinition, Highlight: "d", Items: items(3)}, true},
-		{"process", ThemeSunset, Slide{Layout: LayoutProcess, Items: items(3)}, false},
-		{"facts", ThemeSunset, Slide{Layout: LayoutFacts, Items: []Item{{Value: "1", Heading: "a"}, {Value: "2", Heading: "b"}}}, false},
-		{"comparison", ThemeSunset, Slide{Layout: LayoutComparison, Items: items(2)}, false},
-		{"conclusion", ThemeSunset, Slide{Layout: LayoutConclusion, Items: items(3)}, false},
-		{"old theme", ThemeAcademic, Slide{Layout: LayoutBullets, Items: items(3)}, false},
-		{"unknown theme", "mavjud-emas", Slide{Layout: LayoutBullets, Items: items(3)}, false},
-		// normalizeSlide: ta'rifsiz "definition" -> bullets
-		{"normalized", ThemeOcean, Slide{Layout: LayoutDefinition, Items: items(2)}, true},
+		{"bullets", ThemeOcean, Slide{Layout: LayoutBullets, Items: items(4)}, true, false},
+		{"bullets+highlight 3", ThemeOcean, Slide{Layout: LayoutBullets, Items: items(3), Highlight: "h"}, true, false},
+		{"bullets+highlight 4", ThemeOcean, Slide{Layout: LayoutBullets, Items: items(4), Highlight: "h"}, true, true},
+		{"agenda 6", ThemeJournal, Slide{Layout: LayoutAgenda, Items: items(6)}, true, false},
+		{"agenda 7", ThemeJournal, Slide{Layout: LayoutAgenda, Items: items(7)}, true, true},
+		{"cards 4", ThemeNature, Slide{Layout: LayoutCards, Items: items(4)}, true, false},
+		{"cards 5", ThemeNature, Slide{Layout: LayoutCards, Items: items(5)}, true, true},
+		{"definition", ThemeSunset, Slide{Layout: LayoutDefinition, Highlight: "d", Items: items(3)}, true, false},
+		{"process", ThemeSunset, Slide{Layout: LayoutProcess, Items: items(3)}, true, true},
+		{"facts", ThemeSunset, Slide{Layout: LayoutFacts, Items: facts}, true, true},
+		{"comparison", ThemeSunset, Slide{Layout: LayoutComparison, Items: items(2)}, true, true},
+		{"conclusion", ThemeSunset, Slide{Layout: LayoutConclusion, Items: items(3)}, true, true},
+		{"timeline", ThemeJournal, Slide{Layout: LayoutTimeline, Items: items(4)}, true, true},
+		{"panorama bullets", ThemePanorama, Slide{Layout: LayoutBullets, Items: items(3)}, true, true},
+		{"panorama agenda", ThemePanorama, Slide{Layout: LayoutAgenda, Items: items(5)}, true, true},
+		{"old theme", ThemeAcademic, Slide{Layout: LayoutBullets, Items: items(3)}, false, false},
+		{"unknown theme", "mavjud-emas", Slide{Layout: LayoutBullets, Items: items(3)}, false, false},
+		// normalizeSlide: ta'rifsiz "definition" -> bullets (yon panelga sig'adi)
+		{"normalized", ThemeOcean, Slide{Layout: LayoutDefinition, Items: items(2)}, true, false},
 	}
 	for _, tc := range cases {
-		if got := SlideTakesPhoto(tc.theme, tc.s); got != tc.want {
-			t.Errorf("%s: %v, kutilgan %v", tc.name, got, tc.want)
+		if got := SlideTakesPhoto(tc.theme, tc.s); got != tc.take {
+			t.Errorf("%s: SlideTakesPhoto %v, kutilgan %v", tc.name, got, tc.take)
+		}
+		if got := SlidePhotoWide(tc.theme, tc.s); got != tc.wide {
+			t.Errorf("%s: SlidePhotoWide %v, kutilgan %v", tc.name, got, tc.wide)
 		}
 	}
 }
@@ -231,31 +242,70 @@ func TestPhotoPrompt(t *testing.T) {
 	}
 }
 
-// TestPanoramaBannerPhotos — banner rasmli dizaynda rasm yotiq va deyarli
-// barcha slaydlarga (reja va xulosadan tashqari) qo'yiladi.
-func TestPanoramaBannerPhotos(t *testing.T) {
-	if !SlidePhotoWide(ThemePanorama) || SlidePhotoWide(ThemeOcean) || SlidePhotoWide("mavjud-emas") {
-		t.Errorf("SlidePhotoWide noto'g'ri")
-	}
-	items := []Item{{Heading: "a"}, {Heading: "b"}, {Heading: "c"}, {Heading: "d"}}
-	for _, l := range []string{LayoutTimeline, LayoutMatrix, LayoutProcess, LayoutFacts} {
-		s := Slide{Layout: l, Items: items}
-		if l == LayoutFacts {
-			s.Items = []Item{{Value: "1", Heading: "a"}, {Value: "2", Heading: "b"}}
+// TestBannerPhotoSlides — keng maketli slaydda rasm tepadagi bannerda
+// chiziladi: slaydda bitta rasm bor va u slayd kengligida (yon panel emas).
+func TestBannerPhotoSlides(t *testing.T) {
+	g := newTestPPTX(t)
+	for _, id := range []string{ThemeJournal, ThemeNature, ThemeOcean, ThemeSunset, ThemePanorama} {
+		d := SampleDeck(id)
+		files := buildAndRead(t, g, d)
+		banners := 0
+		for i, s := range d.Slides {
+			if !SlidePhotoWide(id, s) {
+				continue
+			}
+			banners++
+			slide := string(files["ppt/slides/slide"+itoa(i+2)+".xml"])
+			if !strings.Contains(slide, `<p:pic>`) || !strings.Contains(slide, `<a:off x="0" y="0"/><a:ext cx="`+strconv.FormatInt(emu(slideW), 10)+`"`) {
+				t.Errorf("%s: slayd %d (%s) da slayd kengligidagi banner rasm yo'q", id, i+2, s.Layout)
+			}
 		}
-		if !SlideTakesPhoto(ThemePanorama, s) {
-			t.Errorf("panorama: %s slaydga rasm qo'yilishi kerak", l)
-		}
-		if l != LayoutFacts && SlideTakesPhoto(ThemeOcean, s) && l != LayoutCards {
-			t.Errorf("okean: keng %s maketiga yon rasm qo'yilmasligi kerak", l)
-		}
-	}
-	for _, l := range []string{LayoutAgenda, LayoutConclusion} {
-		if SlideTakesPhoto(ThemePanorama, Slide{Layout: l, Items: items}) {
-			t.Errorf("panorama: %s slaydga rasm qo'yilmasligi kerak", l)
+		if banners == 0 {
+			t.Errorf("%s: namunada banner rasmli slayd yo'q", id)
 		}
 	}
-	if SlideTakesPhoto(ThemeStrategy, Slide{Layout: LayoutBullets, Items: items}) {
-		t.Errorf("rasmsiz dizaynda rasm so'ralmasligi kerak")
+}
+
+// TestFadeOverlayDirection — qoplama ikkala yo'nalishda ham to'g'ri: from > to
+// bo'lganda ham boshlang'ich chet to'q, oxirgi chet och bo'ladi (oldin bu
+// holatda butun maydon bir tekis from% qoplama bilan yopilib, rasm ko'rinmasdi).
+func TestFadeOverlayDirection(t *testing.T) {
+	shapeRe := regexp.MustCompile(`<a:off x="(\d+)" y="(\d+)"/><a:ext cx="(\d+)" cy="(\d+)"/>.*?<a:alpha val="(\d+)"/>`)
+	// opacity — (px, py) nuqtadagi ustma-ust qatlamlarning umumiy to'qligi, %.
+	opacity := func(xml string, px, py float64) float64 {
+		clear := 1.0
+		for _, m := range shapeRe.FindAllStringSubmatch(xml, -1) {
+			v := make([]float64, 5)
+			for i := range v {
+				n, _ := strconv.ParseFloat(m[i+1], 64)
+				v[i] = n
+			}
+			x, y, w, h := v[0]/emuPerInch, v[1]/emuPerInch, v[2]/emuPerInch, v[3]/emuPerInch
+			if px >= x && px <= x+w && py >= y && py <= y+h {
+				clear *= 1 - v[4]/100000
+			}
+		}
+		return (1 - clear) * 100
+	}
+	r := rect{1, 1, 10, 4}
+	cases := []struct {
+		name       string
+		from, to   int
+		vertical   bool
+		start, end [2]float64 // boshlang'ich va oxirgi chet yaqinidagi nuqtalar
+	}{
+		{"chapdan o'ngga ochiladi", 85, 20, false, [2]float64{1.05, 3}, [2]float64{10.95, 3}},
+		{"chapdan o'ngga quyuqlashadi", 20, 85, false, [2]float64{1.05, 3}, [2]float64{10.95, 3}},
+		{"yuqoridan pastga ochiladi", 80, 10, true, [2]float64{6, 1.02}, [2]float64{6, 4.98}},
+		{"yuqoridan pastga quyuqlashadi", 10, 80, true, [2]float64{6, 1.02}, [2]float64{6, 4.98}},
+	}
+	for _, tc := range cases {
+		c := newCanvas(paint{})
+		fadeOverlay(c, r, "000000", tc.from, tc.to, tc.vertical)
+		xml := c.b.String()
+		s, e := opacity(xml, tc.start[0], tc.start[1]), opacity(xml, tc.end[0], tc.end[1])
+		if math.Abs(s-float64(tc.from)) > 4 || math.Abs(e-float64(tc.to)) > 4 {
+			t.Errorf("%s: boshida %.0f%% (kutilgan %d), oxirida %.0f%% (kutilgan %d)", tc.name, s, tc.from, e, tc.to)
+		}
 	}
 }

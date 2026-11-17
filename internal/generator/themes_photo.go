@@ -1,9 +1,11 @@
 package generator
 
 // themes_photo.go — rasmli dizaynlar: titul va yakuniy slaydda katta
-// fotosurat (Deck.CoverImage), mos mazmunli slaydlarda yon tomonda rasm
-// (Slide.Image). Rasm bo'lmasa (provayder ulanmagan yoki xato bergan),
-// uning o'rnida dizaynning bezakli foni chiziladi — taqdimot baribir chiroyli.
+// fotosurat (Deck.CoverImage), har bir mazmunli slaydda rasm (Slide.Image):
+// mos maketda — yon panelda, keng maketda (jarayon, vaqt chizig'i, taqqoslash
+// va h.k.) — slayd tepasida sarlavha orqasidagi bannerda. Rasm bo'lmasa
+// (provayder ulanmagan yoki xato bergan), uning o'rnida dizaynning bezakli
+// foni chiziladi — taqdimot baribir chiroyli.
 
 import "math"
 
@@ -21,17 +23,25 @@ func coverPhoto(c *canvas, r rect, p *Picture) bool {
 // fullSlide — butun slayd maydoni.
 var fullSlide = rect{0, 0, slideW, slideH}
 
-// fadeOverlay rasm ustiga bir tomonga quyuqlashuvchi qoplama chizadi:
-// shaffof emaslik from% dan to% gacha (vertical — yuqoridan pastga, aks holda
-// chapdan o'ngga) o'zgaradi.
+// fadeOverlay rasm ustiga bir tomonga quyuqlashuvchi (yoki ochilib boruvchi)
+// qoplama chizadi: shaffof emaslik from% dan to% gacha (vertical — yuqoridan
+// pastga, aks holda chapdan o'ngga) o'zgaradi; from > to ham bo'lishi mumkin.
 //
 // Gradient ichidagi shaffoflikni ba'zi ko'ruvchilar (iPhone va macOS Quick
 // Look) qo'llab-quvvatlamaydi — qoplama to'liq yopiq chiqib, rasmni berkitadi.
 // Shuning uchun qoplama bir xil shaffoflikdagi qatlamlardan yig'iladi: har bir
 // keyingi qatlam oldingisining ustiga tushib, umumiy to'qlikni bosqichma-bosqich
 // oshiradi (qatlamlar chegarasida bo'shliq yoki chiziq paydo bo'lmaydi).
+// Qatlamlar to'qlik eng yuqori bo'lgan chetda ustma-ust tushadi: from < to
+// bo'lsa — oxirgi chetda, from > to bo'lsa — boshlang'ich chetda.
 func fadeOverlay(c *canvas, r rect, color string, from, to int, vertical bool) {
 	const steps = 28
+	// Qatlamlar och chetdan to'q chetga qarab qisqaradi; from > to bo'lsa
+	// yo'nalish teskari: to'q chet — boshlang'ich (chap yoki yuqori).
+	reverse := from > to
+	if reverse {
+		from, to = to, from
+	}
 	prev := 0.0 // shu nuqtagacha yig'ilgan shaffof emaslik (0..1)
 	for i := range steps {
 		want := (float64(from) + float64(to-from)*float64(i)/float64(steps-1)) / 100
@@ -45,10 +55,16 @@ func fadeOverlay(c *canvas, r rect, color string, from, to int, vertical bool) {
 		}
 		prev = 1 - (1-prev)*(1-float64(a)/100)
 		layer := r
-		if f := float64(i) / steps; vertical {
+		f := float64(i) / steps
+		switch {
+		case vertical && reverse:
+			layer.H -= r.H * f
+		case vertical:
 			layer.Y += r.H * f
 			layer.H -= r.H * f
-		} else {
+		case reverse:
+			layer.W -= r.W * f
+		default:
 			layer.X += r.W * f
 			layer.W -= r.W * f
 		}
@@ -82,6 +98,52 @@ func (t *theme) photoPanel(c *canvas, body rect, p *Picture) rect {
 	}
 	c.pic(photo, p, t.photoFrame)
 	return text
+}
+
+// bannerH — keng maketli slayddagi tepadagi rasm-banner balandligi.
+const bannerH = 2.15
+
+// Tepadagi banner geometriyasi: chapda — sarlavha uchun rangli maydon, o'ngda —
+// ochiq rasm; rasmning chap cheti bannerPhotoFade kengligida maydon rangiga
+// singib ketadi. Sarlavha bannerTextRight gacha — qoplama hali to'q joyda.
+const (
+	bannerPhotoX    = 6.6
+	bannerPhotoFade = 2.0
+	bannerTextRight = 7.45
+)
+
+// photoHeader keng maketli slaydda rasmni slayd tepasidagi bannerga qo'yadi
+// (yon panel matnni siqib qo'ymasligi uchun): chapda shade rangidagi maydonda
+// oq sarlavha va lead, o'ngda qoplamasiz ochiq rasm, ostida rangli chiziq
+// (bar) va rasm ustida sahifa raqami. Mazmun maydoni boshlanadigan y ni
+// qaytaradi.
+func (t *theme) photoHeader(c *canvas, s slideInfo, shade string, bar paint) float64 {
+	banner := rect{0, 0, slideW, bannerH}
+	c.add(banner, shape{fill: solid(shade)})
+	photo := rect{bannerPhotoX, 0, slideW - bannerPhotoX, bannerH}
+	c.pic(photo, s.photo, picFrame{})
+	fadeOverlay(c, rect{photo.X, 0, bannerPhotoFade, bannerH}, shade, 100, 0, false)
+	c.add(rect{0, banner.bottom(), slideW, 0.07}, shape{fill: bar})
+	c.add(rect{slideW - 1.4, 0.2, 1.05, 0.4}, shape{geom: "roundRect", adj: []int{50000}, fill: solidA(shade, 80), text: &textBody{
+		anchor: "ctr", inset: [4]float64{0.02, 0.01, 0.02, 0.01},
+		paras: []para{{align: "ctr", runs: []run{{text: pageLabel(s), size: 10.5, bold: true, color: "FFFFFF", font: t.bodyFont}}}}}})
+	w := bannerTextRight - 0.75
+	if s.lead != "" {
+		c.text(rect{0.75, 0.2, w, 1.07}, textBody{anchor: "b", fit: true, minFit: 0.55, paras: []para{{runs: []run{t.hd(s.title, 26, "FFFFFF")}}}})
+		c.text(rect{0.75, 1.3, w, 0.72}, textBody{fit: true, minFit: 0.65, paras: []para{{runs: []run{
+			{text: s.lead, size: 13, italic: t.quoteItalic, color: "FFFFFF", alpha: 90, font: t.bodyFont}}}}})
+	} else {
+		c.text(rect{0.75, 0.25, w, 1.65}, textBody{anchor: "ctr", fit: true, minFit: 0.55, paras: []para{{runs: []run{t.hd(s.title, 28, "FFFFFF")}}}})
+	}
+	return banner.bottom() + 0.38
+}
+
+// bannerBody photoHeader li slayd uchun kolontitulni chizadi va mazmun
+// maydonini qaytaradi.
+func (t *theme) bannerBody(c *canvas, s slideInfo, y float64) rect {
+	c.add(rect{0.75, 6.98, 11.83, 0.012}, shape{fill: solid(t.pal.line)})
+	t.footer(c, s, 0.75, 12.58, t.pal.muted)
+	return rect{0.75, y, 11.83, 6.8 - y}
 }
 
 // chip — yumaloq "yorliq" (masalan, ish turi).
@@ -199,6 +261,9 @@ func journalClosing(t *theme, c *canvas, d *Deck) {
 func journalChrome(t *theme, c *canvas, s slideInfo) rect {
 	p := t.pal
 	c.bg = solid(p.bg)
+	if s.banner && s.photo != nil {
+		return t.bannerBody(c, s, t.photoHeader(c, s, "141414", solid(p.accent)))
+	}
 	c.text(rect{0.75, 0.08, 9.0, 0.32}, line1(s.university, 9.5, p.muted, t.bodyFont, "l"))
 	c.text(rect{10.0, 0.06, 2.58, 0.34}, textBody{anchor: "ctr", paras: []para{{align: "r", runs: []run{
 		{text: pageLabel(s), size: 10.5, bold: true, spc: 1, color: p.accent, font: t.bodyFont}}}}})
@@ -259,6 +324,7 @@ func natureCover(t *theme, c *canvas, d *Deck) {
 	c.bg = linear(90, "2F5D50", "1E3B33")
 	if coverPhoto(c, fullSlide, d.CoverImage) {
 		fadeOverlay(c, fullSlide, "1E3B33", 20, 92, true)
+		fadeOverlay(c, rect{0, 0, slideW, 1.6}, "1E3B33", 50, 0, true) // tepadagi yozuvlar uchun
 	} else {
 		natureDecor(t, c)
 	}
@@ -286,6 +352,9 @@ func natureClosing(t *theme, c *canvas, d *Deck) {
 func natureChrome(t *theme, c *canvas, s slideInfo) rect {
 	p := t.pal
 	c.bg = solid(p.bg)
+	if s.banner && s.photo != nil {
+		return t.bannerBody(c, s, t.photoHeader(c, s, "1E3B33", solid(p.accent)))
+	}
 	c.add(rect{-0.9, -0.9, 2.0, 2.0}, shape{geom: "ellipse", fill: solidA(p.primary, 8)})
 	c.add(rect{12.3, 6.5, 1.6, 1.6}, shape{geom: "ellipse", fill: solidA(p.accent, 12)})
 
@@ -349,7 +418,10 @@ func oceanCover(t *theme, c *canvas, d *Deck) {
 	if coverPhoto(c, fullSlide, d.CoverImage) {
 		c.add(fullSlide, shape{fill: solidA("0B3C5D", 15)})
 		fadeOverlay(c, rect{0, 0, 9.5, slideH}, "0B3C5D", 85, 0, false)
-		c.add(rect{0, 0, 4.0, slideH}, shape{fill: solidA("0B3C5D", 35)})
+		// Matn ostini qo'shimcha to'qlashtirish — keskin chegarasiz; tepada
+		// universitet nomi va yil yorug' rasm ustida ham o'qilsin.
+		fadeOverlay(c, rect{0, 0, 6.0, slideH}, "0B3C5D", 40, 0, false)
+		fadeOverlay(c, rect{0, 0, slideW, 1.6}, "0B3C5D", 55, 0, true)
 	} else {
 		oceanDecor(t, c)
 	}
@@ -380,6 +452,9 @@ func oceanClosing(t *theme, c *canvas, d *Deck) {
 func oceanChrome(t *theme, c *canvas, s slideInfo) rect {
 	p := t.pal
 	c.bg = solid(p.bg)
+	if s.banner && s.photo != nil {
+		return t.bannerBody(c, s, t.photoHeader(c, s, "0B3C5D", linear(0, p.secondary, "2F80ED")))
+	}
 	right := slideW - 0.75
 	if s.photo != nil {
 		// Rasm slaydning o'ng chetigacha yoyiladi.
@@ -498,6 +573,9 @@ func sunsetChrome(t *theme, c *canvas, s slideInfo) rect {
 	p := t.pal
 	c.darkMap = true
 	c.bg = solid(p.bg)
+	if s.banner && s.photo != nil {
+		return t.bannerBody(c, s, t.photoHeader(c, s, "0E0D11", linear(0, p.primary, p.secondary)))
+	}
 	glowDot(c, 12.4, 0.1, 2.8, p.primary, 12)
 
 	c.text(rect{0.75, 0.36, 10.3, 0.95}, textBody{anchor: "ctr", fit: true, minFit: 0.6, paras: []para{{runs: []run{t.hd(s.title, 28, p.text)}}}})
@@ -600,7 +678,10 @@ func panoramaChrome(t *theme, c *canvas, s slideInfo) rect {
 	banner := rect{0, 0, slideW, 2.1}
 	if s.photo != nil {
 		c.pic(banner, s.photo, picFrame{})
-		fadeOverlay(c, banner, "11151B", 85, 20, false)
+		// Bir tekis yengil qoplama + chapdan o'ngga ochiluvchi qoplama: rasm
+		// o'ngda yaxshi ko'rinadi, oq matn esa yorug' rasm ustida ham o'qiladi.
+		c.add(banner, shape{fill: solidA("11151B", 25)})
+		fadeOverlay(c, banner, "11151B", 80, 15, false)
 	} else {
 		c.add(banner, shape{fill: solid(p.primary)})
 		panoramaSkyline(t, c, banner)

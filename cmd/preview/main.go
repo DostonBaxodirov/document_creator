@@ -114,20 +114,20 @@ func run(tpl, out, only, photos, language string) error {
 }
 
 // addPhotos namunaviy rasmlarni haqiqiy AI rasmlar bilan almashtiradi
-// (bot bilan bir xil: titul uchun yotiq, mos slaydlar uchun tik rasm yoki —
-// banner rasmli dizaynda — yotiq rasm).
+// (bot bilan bir xil: titul uchun yotiq, yon panel uchun tik, tepadagi
+// banner uchun yotiq rasm).
 func addPhotos(ctx context.Context, svc *images.Service, tier images.Tier, d *generator.Deck) (placed, total int) {
 	cover, descs := generator.SamplePhotoPrompts(d.Theme)
-	slideShape := images.Portrait
-	if generator.SlidePhotoWide(d.Theme) {
-		slideShape = images.Landscape
-	}
 	reqs := []images.Request{{Prompt: generator.PhotoPrompt(d.Theme, cover), Shape: images.Landscape}}
 	targets := []int{-1}
 	d.CoverImage = nil
 	for i := range d.Slides {
 		d.Slides[i].Image = nil
 		if i < len(descs) && generator.SlideTakesPhoto(d.Theme, d.Slides[i]) {
+			slideShape := images.Portrait
+			if generator.SlidePhotoWide(d.Theme, d.Slides[i]) {
+				slideShape = images.Landscape
+			}
 			reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(d.Theme, descs[i]), Shape: slideShape})
 			targets = append(targets, i)
 		}

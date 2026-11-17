@@ -116,9 +116,12 @@ type slideInfo struct {
 	num, total  int
 	topic       string // qisqartirilgan mavzu
 	university  string // qisqartirilgan universitet nomi
-	// photo — slayd yonidagi rasm (rasmli dizaynlarda, mos maketda); chrome
-	// uni chizadi va matn uchun qolgan maydonni qaytaradi.
+	// photo — slayd rasmi (rasmli dizaynlarda); chrome uni chizadi va matn
+	// uchun qolgan maydonni qaytaradi.
 	photo *Picture
+	// banner — rasm yon panelda emas, slayd tepasida sarlavha orqasida keng
+	// banner bo'lib chiziladi (keng maketlar uchun, photoHeader).
+	banner bool
 }
 
 // Mavzu identifikatorlari.

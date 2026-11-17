@@ -109,27 +109,27 @@ func photoFits(s Slide) bool {
 	return false
 }
 
-// photoFits mavzu uchun: banner rasmli dizaynda rasm mazmun kengligini
-// kamaytirmaydi — reja va xulosadan tashqari barcha slaydlarga rasm qo'yiladi.
-func (t *theme) photoFits(s Slide) bool {
-	if t.photoBanner {
-		return s.Layout != LayoutAgenda && s.Layout != LayoutConclusion
-	}
-	return photoFits(s)
+// photoAsBanner slayd rasmi tepada keng banner bo'lib (sarlavha orqasida)
+// chizilishini bildiradi: banner rasmli dizaynda — doim, yon panelli
+// dizaynda — yon panel matnni siqib qo'yadigan keng maketlarda
+// (normalizeSlide dan keyin chaqiriladi).
+func (t *theme) photoAsBanner(s Slide) bool {
+	return t.photoBanner || !photoFits(s)
 }
 
 // SlideTakesPhoto slayd berilgan dizaynda rasm bilan chizilishini bildiradi.
-// Bot rasmni faqat shunday slaydlar uchun so'raydi (ortiqcha xarajat bo'lmasligi uchun).
-func SlideTakesPhoto(themeID string, s Slide) bool {
+// Rasmli dizaynda har bir mazmunli slaydga rasm qo'yiladi: mos maketda — yon
+// panelda, keng maketda — tepadagi bannerda (SlidePhotoWide).
+func SlideTakesPhoto(themeID string, _ Slide) bool {
 	t := themeByID(themeID)
-	return t.ID == themeID && t.photos && t.photoFits(normalizeSlide(s))
+	return t.ID == themeID && t.photos
 }
 
-// SlidePhotoWide mazmunli slayd rasmi yotiq (banner) bo'lishini bildiradi;
+// SlidePhotoWide slayd rasmi yotiq (tepadagi banner) bo'lishini bildiradi;
 // aks holda tik rasm (slayd yonidagi panel) so'raladi.
-func SlidePhotoWide(themeID string) bool {
+func SlidePhotoWide(themeID string, s Slide) bool {
 	t := themeByID(themeID)
-	return t.ID == themeID && t.photoBanner
+	return t.ID == themeID && t.photos && t.photoAsBanner(normalizeSlide(s))
 }
 
 // ThemeHasPhotos dizayn rasmli ekanini bildiradi.

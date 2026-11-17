@@ -26,7 +26,11 @@ func SampleDeck(themeID string) Deck {
 	for i := range d.Slides {
 		if SlideTakesPhoto(themeID, d.Slides[i]) {
 			c1, c2 := t.seriesColor(k), t.seriesColor(k+1)
-			d.Slides[i].Image = SamplePicture(1024, 1536, c1, c2)
+			w, h := 1024, 1536
+			if SlidePhotoWide(themeID, d.Slides[i]) {
+				w, h = 1536, 1024
+			}
+			d.Slides[i].Image = SamplePicture(w, h, c1, c2)
 			k++
 		}
 	}

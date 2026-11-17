@@ -204,7 +204,7 @@ func renderDeck(t *theme, d *Deck) []slidePart {
 	for i, s := range d.Slides {
 		s = normalizeSlide(s)
 		var photo *Picture
-		if t.photos && s.Image != nil && t.photoFits(s) {
+		if t.photos && s.Image != nil {
 			photo = s.Image
 		}
 		c := newCanvas(paint{})
@@ -212,7 +212,8 @@ func renderDeck(t *theme, d *Deck) []slidePart {
 			title: s.Title, lead: s.Lead,
 			num: i + 2, total: total,
 			topic: topic, university: uni,
-			photo: photo,
+			photo:  photo,
+			banner: photo != nil && t.photoAsBanner(s),
 		})
 		renderContent(t, c, body, &s)
 		out = append(out, done(c))
