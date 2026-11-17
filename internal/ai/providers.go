@@ -112,7 +112,7 @@ func isPermanentStatus(code int) bool {
 // ---------------------------------------------------------------------------
 
 // deepSeekDefaultMaxTokens — DeepSeek fikrlashsiz rejimda standart chegara 8K;
-// katta taqdimotlar (25 slayd) unga sig'masligi mumkin, shuning uchun oshiramiz.
+// katta taqdimotlarning bitta so'rovi unga sig'masligi mumkin, shuning uchun oshiramiz.
 const deepSeekDefaultMaxTokens = 16384
 
 type compatProvider struct {

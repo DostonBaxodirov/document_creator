@@ -186,7 +186,7 @@ var steps = map[State]step{
 		suggest: func(l Limits, s *storage.Session) []string {
 			v := volumeFor(l, s)
 			var out []string
-			for _, n := range []int{5, 8, 10, 12, 15, 20} {
+			for _, n := range []int{5, 8, 10, 12, 15, 20, 25, 30, 40, 50} {
 				if n >= v.min && n <= v.max {
 					out = append(out, strconv.Itoa(n))
 				}

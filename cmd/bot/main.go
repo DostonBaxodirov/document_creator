@@ -105,8 +105,9 @@ func run() error {
 			verifier = payment.NewVerifier(cfg.AI.OpenAIBaseURL, cfg.AI.OpenAIAPIKey, cfg.Payment.VisionModel, cfg.Payment.CheckTimeout)
 			log.Info("payments enabled",
 				zap.String("vision_model", cfg.Payment.VisionModel),
-				zap.Int("price_photo", cfg.Payment.PricePhoto),
-				zap.Int("price_plain", cfg.Payment.PricePlain))
+				zap.Int("price_slide_photo", cfg.Payment.PriceSlidePhoto),
+				zap.Int("price_slide_plain", cfg.Payment.PriceSlidePlain),
+				zap.Int("price_document", cfg.Payment.PriceDocument))
 		} else {
 			log.Warn("OPENAI_API_KEY yo'q — to'lov cheklari AI siz, faqat admin tomonidan tekshiriladi")
 		}
@@ -136,14 +137,15 @@ func run() error {
 		Billing:          billing,
 		Verifier:         verifier,
 		Payment: bot.PaymentOptions{
-			Enabled:       cfg.Payment.Enabled,
-			CardNumber:    cfg.Payment.CardNumber,
-			CardHolder:    cfg.Payment.CardHolder,
-			PricePhoto:    cfg.Payment.PricePhoto,
-			PricePlain:    cfg.Payment.PricePlain,
-			FreePhoto:     cfg.Payment.FreePhoto,
-			FreePlain:     cfg.Payment.FreePlain,
-			AdminPassword: cfg.Payment.AdminPassword,
+			Enabled:         cfg.Payment.Enabled,
+			CardNumber:      cfg.Payment.CardNumber,
+			CardHolder:      cfg.Payment.CardHolder,
+			PriceSlidePhoto: cfg.Payment.PriceSlidePhoto,
+			PriceSlidePlain: cfg.Payment.PriceSlidePlain,
+			PriceDocument:   cfg.Payment.PriceDocument,
+			FreePhoto:       cfg.Payment.FreePhoto,
+			FreePlain:       cfg.Payment.FreePlain,
+			AdminPassword:   cfg.Payment.AdminPassword,
 		},
 	})
 

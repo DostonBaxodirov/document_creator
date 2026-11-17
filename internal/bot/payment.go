@@ -57,10 +57,12 @@ type PaymentOptions struct {
 	Enabled    bool
 	CardNumber string
 	CardHolder string
-	PricePhoto int // rasmli taqdimot, so'm
-	PricePlain int // rasmsiz taqdimot va Word ishlar, so'm
-	FreePhoto  int
-	FreePlain  int
+	// Taqdimot narxi = slaydlar soni × bitta slayd narxi (rasmli yoki rasmsiz dizayn).
+	PriceSlidePhoto int // rasmli dizayndagi bitta slayd, so'm
+	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd, so'm
+	PriceDocument   int // mustaqil ish / amaliy topshiriq (Word), so'm
+	FreePhoto       int
+	FreePlain       int
 	// AdminPassword — shu matnni yuborgan foydalanuvchi admin bo'ladi (bo'sh — o'chirilgan).
 	AdminPassword string
 }
@@ -116,11 +118,21 @@ func (h *Handler) kindOf(s *storage.Session) string {
 	return k
 }
 
-func (h *Handler) price(kind string) int {
+// slideRate bitta slayd narxi: rasmli dizaynda — PriceSlidePhoto, aks holda — PriceSlidePlain.
+func (h *Handler) slideRate(kind string) int {
 	if kind == storage.KindPhoto {
-		return h.opts.Payment.PricePhoto
+		return h.opts.Payment.PriceSlidePhoto
 	}
-	return h.opts.Payment.PricePlain
+	return h.opts.Payment.PriceSlidePlain
+}
+
+// price buyurtma narxini hisoblaydi: taqdimot — slaydlar soni × bitta slayd
+// narxi, Word ishlar — qat'iy narx.
+func (h *Handler) price(s *storage.Session, kind string) int {
+	if ai.WorkType(s.WorkType).IsDocument() {
+		return h.opts.Payment.PriceDocument
+	}
+	return max(s.Volume, 1) * h.slideRate(kind)
 }
 
 func (h *Handler) freeLimit(kind string) int {
@@ -136,8 +148,8 @@ func (h *Handler) pricingText() string {
 		return ""
 	}
 	p := h.opts.Payment
-	s := fmt.Sprintf("\n\n💳 <b>Narxlar:</b> rasmli taqdimot — %s, rasmsiz taqdimot va Word ishlar — %s.",
-		formatSum(p.PricePhoto), formatSum(p.PricePlain))
+	s := fmt.Sprintf("\n\n💳 <b>Narxlar:</b> taqdimot — har bir slayd %s (📷 rasmli dizaynda — %s), Word ishlar — %s.",
+		formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto), formatSum(p.PriceDocument))
 	if p.FreePhoto > 0 || p.FreePlain > 0 {
 		s += fmt.Sprintf("\n🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>!", p.FreePhoto, p.FreePlain)
 	}
@@ -161,6 +173,7 @@ type quote struct {
 	mode   quoteMode
 	kind   string
 	price  int
+	detail string // narx tarkibi: "10 slayd × 300 so'm" (Word ishlarda — bo'sh)
 	credit *storage.Order
 }
 
@@ -172,13 +185,20 @@ func (q *quote) line() string {
 	case quoteCredit:
 		return "💰 <b>Narx:</b> ✅ Oldin to'langan"
 	}
-	return "💰 <b>Narx:</b> " + formatSum(q.price)
+	line := "💰 <b>Narx:</b> " + formatSum(q.price)
+	if q.detail != "" {
+		line += " <i>(" + q.detail + ")</i>"
+	}
+	return line
 }
 
 // quote foydalanuvchi uchun joriy buyurtma narxini aniqlaydi.
 func (h *Handler) quote(ctx context.Context, s *storage.Session, u *storage.User) (*quote, error) {
 	kind := h.kindOf(s)
-	q := &quote{kind: kind, price: h.price(kind)}
+	q := &quote{kind: kind, price: h.price(s, kind)}
+	if !ai.WorkType(s.WorkType).IsDocument() {
+		q.detail = fmt.Sprintf("%d slayd × %s", max(s.Volume, 1), formatSum(h.slideRate(kind)))
+	}
 	credit, err := h.billing.FindCredit(ctx, u.ID, kind, q.price)
 	if err != nil {
 		return nil, err
@@ -329,7 +349,11 @@ func (h *Handler) paymentText(o *storage.Order, intro bool) string {
 			p.FreePhoto, p.FreePlain)
 	}
 	fmt.Fprintf(&b, "🧾 <b>Buyurtma #%d:</b> %s\n", o.ID, html.EscapeString(orderLabel(o.WorkType, o.Kind)))
-	fmt.Fprintf(&b, "💰 <b>Summa:</b> %s\n\n", formatSum(o.Price))
+	fmt.Fprintf(&b, "💰 <b>Summa:</b> %s", formatSum(o.Price))
+	if !ai.WorkType(o.WorkType).IsDocument() && o.Volume > 0 {
+		fmt.Fprintf(&b, " <i>(%d slayd)</i>", o.Volume)
+	}
+	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "💳 <b>Karta:</b> <code>%s</code>\n", formatCard(p.CardNumber))
 	if p.CardHolder != "" {
 		fmt.Fprintf(&b, "👤 <b>Karta egasi:</b> %s\n", html.EscapeString(p.CardHolder))

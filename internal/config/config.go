@@ -155,10 +155,12 @@ type PaymentConfig struct {
 	CardNumber string // to'lov qabul qilinadigan karta raqami (foydalanuvchiga ko'rsatiladi)
 	CardHolder string // karta egasi (ixtiyoriy)
 
-	PricePhoto int // rasmli taqdimot narxi, so'mda
-	PricePlain int // rasmsiz taqdimot va Word ishlar narxi, so'mda
-	FreePhoto  int // har bir foydalanuvchiga beriladigan bepul rasmli urinishlar soni
-	FreePlain  int // bepul rasmsiz urinishlar soni
+	// Taqdimot narxi slaydlar soniga qarab hisoblanadi: slaydlar × bitta slayd narxi.
+	PriceSlidePhoto int // rasmli dizayndagi bitta slayd narxi, so'mda
+	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd narxi, so'mda
+	PriceDocument   int // mustaqil ish / amaliy topshiriq (Word) narxi, so'mda
+	FreePhoto       int // har bir foydalanuvchiga beriladigan bepul rasmli urinishlar soni
+	FreePlain       int // bepul rasmsiz urinishlar soni
 
 	// Chekni o'qish uchun OpenAI vision modeli. API kaliti va manzili
 	// AIConfig dan (OPENAI_API_KEY, OPENAI_BASE_URL) olinadi.
@@ -193,11 +195,13 @@ func digitsOnly(s string) string {
 // matn uchun tanlangan OpenAI modeli ishlatiladi.
 func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
 	return PaymentConfig{
-		Enabled:       p.bool("PAYMENT_ENABLED", true),
-		CardNumber:    p.str("PAYMENT_CARD_NUMBER", ""),
-		CardHolder:    p.str("PAYMENT_CARD_HOLDER", ""),
-		PricePhoto:    p.int("PRICE_PHOTO", 10000),
-		PricePlain:    p.int("PRICE_PLAIN", 7000),
+		Enabled:         p.bool("PAYMENT_ENABLED", true),
+		CardNumber:      p.str("PAYMENT_CARD_NUMBER", ""),
+		CardHolder:      p.str("PAYMENT_CARD_HOLDER", ""),
+		PriceSlidePhoto: p.int("PRICE_SLIDE_PHOTO", 300),
+		PriceSlidePlain: p.int("PRICE_SLIDE_PLAIN", 250),
+		// Eski .env lar uchun: PRICE_DOCUMENT berilmasa, PRICE_PLAIN olinadi.
+		PriceDocument: p.int("PRICE_DOCUMENT", p.int("PRICE_PLAIN", 7000)),
 		FreePhoto:     p.int("FREE_PHOTO", 1),
 		FreePlain:     p.int("FREE_PLAIN", 1),
 		VisionModel:   p.str("PAYMENT_VISION_MODEL", ai.OpenAIModel),
@@ -216,8 +220,8 @@ func (c PaymentConfig) validate() []error {
 	if n := len(digitsOnly(c.CardNumber)); n < 16 || n > 19 {
 		add("PAYMENT_ENABLED=true uchun PAYMENT_CARD_NUMBER majburiy (16–19 ta raqam)")
 	}
-	if c.PricePhoto <= 0 || c.PricePlain <= 0 {
-		add("PRICE_PHOTO va PRICE_PLAIN musbat bo'lishi kerak")
+	if c.PriceSlidePhoto <= 0 || c.PriceSlidePlain <= 0 || c.PriceDocument <= 0 {
+		add("PRICE_SLIDE_PHOTO, PRICE_SLIDE_PLAIN va PRICE_DOCUMENT musbat bo'lishi kerak")
 	}
 	if c.FreePhoto < 0 || c.FreePlain < 0 {
 		add("FREE_PHOTO va FREE_PLAIN manfiy bo'lishi mumkin emas")
@@ -270,11 +274,11 @@ func Load() (*Config, error) {
 			OutputDir:         p.str("OUTPUT_DIR", ""),
 			DocumentHeader:    p.optionalStr("DOCUMENT_HEADER", "O'ZBEKISTON RESPUBLIKASI OLIY TA'LIM, FAN VA INNOVATSIYALAR VAZIRLIGI"),
 			MaxConcurrentJobs: p.int("MAX_CONCURRENT_JOBS", 4),
-			JobTimeout:        p.duration("JOB_TIMEOUT", 10*time.Minute),
+			JobTimeout:        p.duration("JOB_TIMEOUT", 15*time.Minute),
 		},
 		Limits: LimitsConfig{
 			MinSlides: p.int("MIN_SLIDES", 5),
-			MaxSlides: p.int("MAX_SLIDES", 25),
+			MaxSlides: p.int("MAX_SLIDES", 50),
 			MinPages:  p.int("MIN_PAGES", 5),
 			MaxPages:  p.int("MAX_PAGES", 30),
 		},

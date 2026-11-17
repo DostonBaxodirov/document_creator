@@ -88,31 +88,43 @@ func TestQuote(t *testing.T) {
 	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PricePhoto: 10000, PricePlain: 7000, FreePhoto: 1, FreePlain: 1},
+		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, FreePhoto: 1, FreePlain: 1},
 	})
 	u := &storage.User{ID: 1, TelegramUserID: 42}
-	photo := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeOcean}
-	doc := &storage.Session{WorkType: string(ai.WorkIndependent)}
+	photo := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeOcean, Volume: 10}
+	plain := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeBento, Volume: 12}
+	doc := &storage.Session{WorkType: string(ai.WorkIndependent), Volume: 15}
 
 	q, _ := h.quote(context.Background(), photo, u)
-	if q.mode != quoteFree || q.kind != storage.KindPhoto || q.price != 10000 {
+	if q.mode != quoteFree || q.kind != storage.KindPhoto || q.price != 3000 {
 		t.Errorf("birinchi rasmli ish bepul bo'lishi kerak: %+v", q)
 	}
 
 	fb.used[storage.KindPhoto] = 1
 	q, _ = h.quote(context.Background(), photo, u)
-	if q.mode != quotePaid || q.price != 10000 || !strings.Contains(q.line(), "10 000 so'm") {
-		t.Errorf("ikkinchi rasmli ish pullik bo'lishi kerak: %+v %q", q, q.line())
+	if q.mode != quotePaid || q.price != 3000 || !strings.Contains(q.line(), "3 000 so'm") ||
+		!strings.Contains(q.line(), "10 slayd × 300 so'm") {
+		t.Errorf("10 ta rasmli slayd 3 000 so'm bo'lishi kerak: %+v %q", q, q.line())
 	}
+	photo.Volume = 50
+	q, _ = h.quote(context.Background(), photo, u)
+	if q.price != 15000 {
+		t.Errorf("50 ta rasmli slayd 15 000 so'm bo'lishi kerak: %+v", q)
+	}
+
 	q, _ = h.quote(context.Background(), doc, u)
 	if q.mode != quoteFree || q.kind != storage.KindPlain {
 		t.Errorf("rasmsiz bepul urinish hali ishlatilmagan: %+v", q)
 	}
 
 	fb.used[storage.KindPlain] = 1
+	q, _ = h.quote(context.Background(), plain, u)
+	if q.mode != quotePaid || q.kind != storage.KindPlain || q.price != 3000 || !strings.Contains(q.line(), "12 slayd × 250 so'm") {
+		t.Errorf("12 ta rasmsiz slayd 3 000 so'm bo'lishi kerak: %+v %q", q, q.line())
+	}
 	q, _ = h.quote(context.Background(), doc, u)
-	if q.mode != quotePaid || q.price != 7000 {
-		t.Errorf("Word ish 7 000 so'm bo'lishi kerak: %+v", q)
+	if q.mode != quotePaid || q.price != 7000 || q.detail != "" {
+		t.Errorf("Word ish sahifalar sonidan qat'i nazar 7 000 so'm bo'lishi kerak: %+v", q)
 	}
 
 	fb.credit = &storage.Order{ID: 5, Status: storage.OrderPaid, Price: 10000}
