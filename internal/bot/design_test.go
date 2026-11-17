@@ -51,6 +51,16 @@ func TestDesignKeyboard(t *testing.T) {
 			t.Errorf("tugma %d: %q, kutilgan %q", i, id, themes[i].ID)
 		}
 	}
+	// Rasmli dizayn tugmalarida 📷 bor, rasmsizlarida — yo'q.
+	k := 0
+	for _, row := range kb.InlineKeyboard {
+		for _, b := range row {
+			if has := strings.Contains(b.Text, "📷"); has != themes[k].Photos {
+				t.Errorf("tugma %q: 📷 = %v, kutilgan %v", b.Text, has, themes[k].Photos)
+			}
+			k++
+		}
+	}
 }
 
 func TestDesignPromptAndSummary(t *testing.T) {

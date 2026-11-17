@@ -1468,6 +1468,9 @@ func designKeyboard() *tele.ReplyMarkup {
 		var btns []tele.Btn
 		for j, t := range themes[i:min(i+2, len(themes))] {
 			label := fmt.Sprintf("%d. %s %s", i+j+1, t.Emoji, t.Name)
+			if t.Photos {
+				label += " 📷" // rasmli dizayn tugmada ham ko'rinsin
+			}
 			btns = append(btns, m.Data(label, cbDesign, t.ID))
 		}
 		rows = append(rows, m.Row(btns...))
