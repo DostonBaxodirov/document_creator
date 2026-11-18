@@ -26,7 +26,7 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Migrator().DropTable(&Payment{}, &Order{}, &User{}, &Session{}); err != nil {
+	if err := db.Migrator().DropTable(&Visit{}, &Payment{}, &Order{}, &User{}, &Session{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(db); err != nil {

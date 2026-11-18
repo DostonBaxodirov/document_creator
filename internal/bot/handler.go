@@ -105,6 +105,10 @@ type Options struct {
 	// Custom — AI maxsus dizayn tariflari (config.Tariff* → sozlamalar).
 	// Bo'sh bo'lsa, "✨ Maxsus dizayn" tugmasi ko'rsatilmaydi.
 	Custom map[string]CustomTariff
+
+	// Stats — tashrif buyuruvchilar statistikasi (ixtiyoriy). nil bo'lsa,
+	// tashriflar yozilmaydi va /statistika ishlamaydi.
+	Stats StatsStore
 }
 
 const (
@@ -162,6 +166,8 @@ type Handler struct {
 	opts     Options
 	billing  BillingStore
 	verifier ReceiptVerifier
+	stats    StatsStore
+	visits   visitTracker // bugun tashrifi yozilgan foydalanuvchilar
 
 	jobsCtx context.Context // barcha generatsiyalar uchun ota kontekst (to'xtashda bekor qilinadi)
 	slots   chan struct{}   // semafor: bir vaqtdagi generatsiyalar sonini cheklaydi
@@ -194,6 +200,7 @@ func NewHandler(jobsCtx context.Context, sessions SessionStore, aiClient Content
 		opts:     opts,
 		billing:  opts.Billing,
 		verifier: opts.Verifier,
+		stats:    opts.Stats,
 		jobsCtx:  jobsCtx,
 		slots:    make(chan struct{}, opts.MaxConcurrentJobs),
 	}
@@ -204,7 +211,7 @@ func NewHandler(jobsCtx context.Context, sessions SessionStore, aiClient Content
 func (h *Handler) Register(b *tele.Bot) {
 	h.bot = b
 
-	b.Use(h.recoverMiddleware, h.privateOnly, h.logUpdates)
+	b.Use(h.recoverMiddleware, h.privateOnly, h.trackVisits, h.logUpdates)
 
 	b.Handle("/start", h.onStart)
 	b.Handle("/cancel", h.onCancel)
@@ -212,6 +219,7 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle("/report", h.onReport)
 	b.Handle("/chek", h.onChek)
 	b.Handle("/tekshiruv", h.onPendingChecks)
+	b.Handle("/statistika", h.onStats)
 	b.Handle(tele.OnText, h.onText)
 	b.Handle(tele.OnPhoto, h.onPhoto)       // to'lov cheki
 	b.Handle(tele.OnDocument, h.onDocument) // fayl ko'rinishidagi chek
