@@ -109,6 +109,8 @@ type Options struct {
 	// Stats — tashrif buyuruvchilar statistikasi (ixtiyoriy). nil bo'lsa,
 	// tashriflar yozilmaydi va /statistika ishlamaydi.
 	Stats StatsStore
+	// Backup — bazaning kunlik zaxira nusxasi adminlarga (ixtiyoriy).
+	Backup BackupOptions
 }
 
 const (
@@ -168,6 +170,7 @@ type Handler struct {
 	verifier ReceiptVerifier
 	stats    StatsStore
 	visits   visitTracker // bugun tashrifi yozilgan foydalanuvchilar
+	backupMu sync.Mutex   // bir vaqtda faqat bitta nusxa olinadi
 
 	jobsCtx context.Context // barcha generatsiyalar uchun ota kontekst (to'xtashda bekor qilinadi)
 	slots   chan struct{}   // semafor: bir vaqtdagi generatsiyalar sonini cheklaydi
@@ -220,6 +223,7 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle("/chek", h.onChek)
 	b.Handle("/tekshiruv", h.onPendingChecks)
 	b.Handle("/statistika", h.onStats)
+	b.Handle("/backup", h.onBackup)
 	b.Handle(tele.OnText, h.onText)
 	b.Handle(tele.OnPhoto, h.onPhoto)       // to'lov cheki
 	b.Handle(tele.OnDocument, h.onDocument) // fayl ko'rinishidagi chek

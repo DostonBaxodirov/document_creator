@@ -104,6 +104,33 @@ docker tag <IMAGE_ID> telegram-presentation-bot:latest
 docker compose up -d --no-build --force-recreate bot
 ```
 
+## Backup va tiklash
+
+Bot har kuni `BACKUP_TIME` da (standart 03:00, Toshkent vaqti) bazaning to'liq nusxasini barcha
+adminlarga Telegram orqali yuboradi: `backup_presentation_bot_YYYY-MM-DD_HHMM.sql.gz`.
+Istalgan payt olish uchun adminlar botga `/backup` yozadi. O'chirish uchun `BACKUP_ENABLED=false`.
+
+Nusxa `--clean --if-exists` bilan olingan: tiklashda mavjud jadvallar o'chirilib, nusxadagi holat
+to'liq yoziladi (nusxadan keyingi o'zgarishlar yo'qoladi).
+
+```bash
+cd /opt/document_creator
+# Faylni VPS ga ko'chiring (masalan: scp backup_....sql.gz root@VPS:/opt/document_creator/)
+docker compose stop bot
+gunzip -c backup_presentation_bot_2026-11-19_0300.sql.gz \
+  | docker compose exec -T postgres psql -U postgres -d presentation_bot -v ON_ERROR_STOP=1
+docker compose start bot
+```
+
+`-U` va `-d` qiymatlari `.env` dagi `DB_USER` va `DB_NAME` bilan bir xil bo'lishi kerak.
+Nusxa 50 MB dan oshsa, Telegram uni yubora olmaydi — bot adminlarga ogohlantirish yuboradi; u holda
+nusxani serverda oling:
+
+```bash
+docker compose exec -T postgres pg_dump -U postgres -d presentation_bot --no-owner --clean --if-exists \
+  | gzip > backup_$(date +%F).sql.gz
+```
+
 Eslatmalar:
 
 - VPS da `docker compose up --build` **ishlatmang** — u yerda manba kod yo'q, image GHCR dan keladi.

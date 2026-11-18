@@ -20,6 +20,7 @@ import (
 	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/backup"
 	"telegram-presentation-bot/internal/bot"
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
@@ -125,6 +126,18 @@ func run() error {
 		log.Warn("to'lov o'chirilgan (PAYMENT_ENABLED=false) — barcha ishlar bepul")
 	}
 
+	// Kunlik backup: pg_dump bilan olingan baza nusxasi har kuni adminlarga yuboriladi.
+	var backupOpts bot.BackupOptions
+	if cfg.Backup.Enabled {
+		dumper := backup.New(cfg.DB, cfg.Backup.PgDump, "", cfg.Backup.Timeout)
+		if err := dumper.Check(); err != nil {
+			log.Warn("kunlik backup o'chirildi", zap.Error(err))
+		} else {
+			backupOpts = bot.BackupOptions{Dumper: dumper, Hour: cfg.Backup.Hour, Minute: cfg.Backup.Minute}
+			log.Info("daily backup enabled", zap.String("time", fmt.Sprintf("%02d:%02d", cfg.Backup.Hour, cfg.Backup.Minute)))
+		}
+	}
+
 	// 5. Handler. Generatsiyalar signal kontekstidan alohida kontekstda ishlaydi:
 	// to'xtash signali kelganda ular darhol uzilmaydi, balki ShutdownTimeout
 	// davomida yakunlanishiga imkon beriladi.
@@ -159,6 +172,7 @@ func run() error {
 		},
 		Custom: customTariffs,
 		Stats:  stats,
+		Backup: backupOpts,
 	})
 
 	// 6. Telegram bot.
@@ -182,6 +196,7 @@ func run() error {
 	handler.RefreshAdminCommands(ctx)
 
 	go b.Start()
+	go handler.RunBackups(ctx)
 	log.Info("bot started",
 		zap.String("username", b.Me.Username),
 		zap.String("ai_provider", cfg.AI.Provider),

@@ -163,3 +163,29 @@ func TestCustomConfig(t *testing.T) {
 		t.Errorf("o'chirilgan maxsus dizayn tekshirilmasligi kerak: %v", errs)
 	}
 }
+
+func TestBackupConfig(t *testing.T) {
+	for _, k := range []string{"BACKUP_ENABLED", "BACKUP_TIME", "BACKUP_PG_DUMP", "BACKUP_TIMEOUT"} {
+		t.Setenv(k, "")
+	}
+	p := &parser{}
+	c := backupConfig(p)
+	if !c.Enabled || c.Hour != 3 || c.Minute != 0 || c.PgDump != "pg_dump" || c.Timeout <= 0 || len(p.errs) > 0 {
+		t.Fatalf("standart qiymatlar: %+v %v", c, p.errs)
+	}
+
+	t.Setenv("BACKUP_TIME", "21:45")
+	t.Setenv("BACKUP_ENABLED", "false")
+	p = &parser{}
+	if c = backupConfig(p); c.Enabled || c.Hour != 21 || c.Minute != 45 || len(p.errs) > 0 {
+		t.Errorf("BACKUP_TIME=21:45: %+v %v", c, p.errs)
+	}
+
+	for _, bad := range []string{"25:00", "3", "03:60", "kechasi"} {
+		t.Setenv("BACKUP_TIME", bad)
+		p = &parser{}
+		if backupConfig(p); len(p.errs) != 1 || !strings.Contains(p.errs[0].Error(), "BACKUP_TIME") {
+			t.Errorf("BACKUP_TIME=%q xato berishi kerak: %v", bad, p.errs)
+		}
+	}
+}

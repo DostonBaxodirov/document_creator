@@ -52,6 +52,7 @@ type Config struct {
 	Limits    LimitsConfig
 	Payment   PaymentConfig
 	Custom    CustomConfig
+	Backup    BackupConfig
 }
 
 // TelegramConfig — Telegram bot sozlamalari.
@@ -223,6 +224,35 @@ func (d DBConfig) DSN() string {
 	return u.String()
 }
 
+// BackupConfig — bazaning kunlik zaxira nusxasi: har kuni belgilangan vaqtda
+// (Toshkent) pg_dump bilan olinadi va barcha adminlarga Telegram orqali yuboriladi.
+type BackupConfig struct {
+	Enabled bool
+	Hour    int           // yuborish vaqti (Toshkent): soat
+	Minute  int           // va daqiqa
+	PgDump  string        // pg_dump buyrug'i (PATH dagi nomi yoki to'liq yo'li)
+	Timeout time.Duration // bitta nusxa olish uchun maksimal vaqt
+}
+
+// backupConfig BACKUP_* sozlamalarini o'qiydi. BACKUP_TIME — "HH:MM".
+func backupConfig(p *parser) BackupConfig {
+	c := BackupConfig{
+		Enabled: p.bool("BACKUP_ENABLED", true),
+		Hour:    3,
+		PgDump:  p.str("BACKUP_PG_DUMP", "pg_dump"),
+		Timeout: p.duration("BACKUP_TIMEOUT", 10*time.Minute),
+	}
+	if raw := p.str("BACKUP_TIME", ""); raw != "" {
+		t, err := time.Parse("15:04", raw)
+		if err != nil {
+			p.errs = append(p.errs, fmt.Errorf("BACKUP_TIME HH:MM ko'rinishida bo'lishi kerak (masalan 03:00), berilgan: %q", raw))
+		} else {
+			c.Hour, c.Minute = t.Hour(), t.Minute()
+		}
+	}
+	return c
+}
+
 // GeneratorConfig — fayl generatsiyasi (PPTX/DOCX) va vazifalar navbati sozlamalari.
 type GeneratorConfig struct {
 	TemplatePath      string        // .pptx asosiy paketi (slayd master va mavzu); dizaynlar koddan chiziladi
@@ -349,6 +379,7 @@ func Load() (*Config, error) {
 		Images:  imagesConfig(p),
 		Payment: paymentConfig(p, aiCfg),
 		Custom:  customConfig(p),
+		Backup:  backupConfig(p),
 		DB: DBConfig{
 			Host:            p.str("DB_HOST", "localhost"),
 			Port:            p.int("DB_PORT", 5432),
@@ -534,6 +565,10 @@ func (c *Config) validate() error {
 	}
 	if c.DB.ConnectRetries < 1 {
 		add("DB_CONNECT_RETRIES kamida 1 bo'lishi kerak")
+	}
+
+	if c.Backup.Enabled && c.Backup.Timeout <= 0 {
+		add("BACKUP_TIMEOUT musbat bo'lishi kerak")
 	}
 
 	if c.Generator.TemplatePath == "" {

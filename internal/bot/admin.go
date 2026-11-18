@@ -1,8 +1,8 @@
 package bot
 
 // Admin imkoniyatlari: parol orqali admin bo'lish, to'lovlar hisoboti
-// (davr filtri bilan, matn yoki CSV ko'rinishida), chek rasmini ko'rish va
-// tashrif buyuruvchilar statistikasi (stats.go).
+// (davr filtri bilan, matn yoki CSV ko'rinishida), chek rasmini ko'rish,
+// tashrif buyuruvchilar statistikasi (stats.go) va baza nusxasi (backup.go).
 
 import (
 	"bytes"
@@ -30,7 +30,8 @@ const (
 		"/report — to'lovlar hisoboti (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
 		"/chek ID — chek rasmini ko'rish (masalan: /chek 12)\n" +
 		"/tekshiruv — tekshiruvdagi barcha cheklarni ✅/❌ tugmalari bilan qayta olish\n" +
-		"/statistika — tashrif buyuruvchilar soni (bugun, 7 va 30 kun, kunlar bo'yicha)\n\n" +
+		"/statistika — tashrif buyuruvchilar soni (bugun, 7 va 30 kun, kunlar bo'yicha)\n" +
+		"/backup — bazaning zaxira nusxasini hozir olish (har kuni avtomatik ham keladi)\n\n" +
 		"Har bir chek va har bir xarid haqida to'liq ma'lumot shu chatga keladi; " +
 		"shubhali cheklar — ✅/❌ tugmalari bilan."
 	msgAdminWelcome = "👑 <b>Siz admin sifatida saqlandingiz.</b>\n\n" + msgAdminCommands
@@ -131,6 +132,7 @@ func (h *Handler) setAdminCommands(chatID int64) {
 		{Text: "chek", Description: "Chekni ko'rish: /chek ID"},
 		{Text: "tekshiruv", Description: "Tekshiruvdagi cheklarni qayta olish"},
 		{Text: "statistika", Description: "Tashrif buyuruvchilar statistikasi"},
+		{Text: "backup", Description: "Bazaning zaxira nusxasi"},
 	}
 	if err := h.bot.SetCommands(cmds, tele.CommandScope{Type: tele.CommandScopeChat, ChatID: chatID}); err != nil {
 		h.log.Warn("failed to set admin commands", zap.Error(err))

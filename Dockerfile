@@ -26,8 +26,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:3.22
 
 # ca-certificates — Telegram/Gemini/OpenAI bilan HTTPS uchun,
-# tzdata — to'g'ri vaqt mintaqasi uchun.
-RUN apk add --no-cache ca-certificates tzdata \
+# tzdata — to'g'ri vaqt mintaqasi uchun,
+# postgresql17-client — kunlik backup uchun pg_dump (versiyasi docker-compose.yml
+# dagi postgres versiyasidan past bo'lmasligi kerak).
+RUN apk add --no-cache ca-certificates tzdata postgresql17-client \
     && addgroup -S app \
     && adduser -S -G app -H -h /app app
 
