@@ -37,7 +37,7 @@ func TestPurchaseText(t *testing.T) {
 	}{
 		{"AI tasdiqlagan chek", purchase{session: s, order: paid,
 			payment: &storage.Payment{ID: 5, Amount: 6000, DetectedAmount: 6000, Status: storage.PaymentApproved}},
-			[]string{"buyurtma #12", "<b>6 000 so'm</b> · chek #5 · AI tasdiqlagan · /chek_5"}},
+			[]string{"buyurtma #12", "<b>6 000 so'm</b> · chek #5 · avtomatik tasdiqlangan · /chek_5"}},
 		{"admin tasdiqlagan, summa farqli", purchase{session: s, order: paid,
 			payment: &storage.Payment{ID: 6, Amount: 6000, DetectedAmount: 7000, ReviewedBy: &admin}},
 			[]string{"chek #6 · admin 777 tasdiqlagan · chekda 7 000 so'm"}},

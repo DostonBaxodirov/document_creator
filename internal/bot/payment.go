@@ -172,7 +172,7 @@ func (h *Handler) pricingText() string {
 			t, _ := h.customTariff(name)
 			parts = append(parts, fmt.Sprintf("%s — %s", tariffViews[name].name, formatSum(t.PriceSlide)))
 		}
-		s += "\n✨ AI maxsus dizayn (har bir slayd): " + strings.Join(parts, ", ") + "."
+		s += "\n✨ Maxsus dizayn (har bir slayd): " + strings.Join(parts, ", ") + "."
 	}
 	if p.FreePhoto > 0 || p.FreePlain > 0 {
 		s += fmt.Sprintf("\n🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>!", p.FreePhoto, p.FreePlain)
@@ -359,7 +359,7 @@ func orderLabel(workType, kind string) string {
 		return name
 	}
 	if tariff, ok := storage.KindTariff(kind); ok {
-		return name + ", ✨ AI maxsus dizayn — " + tariffName(tariff)
+		return name + ", ✨ Maxsus dizayn — " + tariffName(tariff)
 	}
 	if kind == storage.KindPhoto {
 		return name + ", rasmli dizayn"
@@ -653,7 +653,7 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 		p.DetectedLast4 = lastDigits(receipt.CardLast4.String(), 4)
 		p.AIRaw = receipt.Raw
 		if n := strings.TrimSpace(receipt.Notes); n != "" && d.Verdict != payment.Approved {
-			reasons = append(reasons, "AI izohi: "+n)
+			reasons = append(reasons, "Tekshiruv izohi: "+n)
 		}
 	}
 	p.Reason = truncateRunes(strings.Join(reasons, "\n"), 1000)
@@ -895,9 +895,9 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 		tail = fmt.Sprintf("\n%s — admin %d, %s", paymentStatusLabel(p.Status), *p.ReviewedBy,
 			p.ReviewedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
 	case p.Status == storage.PaymentApproved:
-		tail = "\n🤖 AI avtomatik tasdiqladi — ish tayyorlanmoqda."
+		tail = "\n🤖 Avtomatik tasdiqlandi — ish tayyorlanmoqda."
 	case p.Status == storage.PaymentRejected:
-		tail = "\n🤖 AI rad etdi — foydalanuvchidan boshqa chek so'raldi."
+		tail = "\n🤖 Avtomatik rad etildi — foydalanuvchidan boshqa chek so'raldi."
 	case p.Status == storage.PaymentReview:
 		tail = "\n👇 Tasdiqlang yoki rad eting."
 	}

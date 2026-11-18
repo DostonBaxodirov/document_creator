@@ -191,7 +191,7 @@ func approvedBy(p *storage.Payment) string {
 	if p.ReviewedBy != nil {
 		return fmt.Sprintf("admin %d tasdiqlagan", *p.ReviewedBy)
 	}
-	return "AI tasdiqlagan"
+	return "avtomatik tasdiqlangan"
 }
 
 // formatDuration: "45 s" yoki "1 daq 57 s".

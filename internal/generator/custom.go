@@ -133,7 +133,7 @@ func (sp *CustomSpec) normalized() CustomSpec {
 	}
 	out.Name = strings.TrimSpace(out.Name)
 	if out.Name == "" {
-		out.Name = "AI Design"
+		out.Name = "Custom Design"
 	}
 	out.HeadingFont = font(out.HeadingFont, CustomHeadingFonts, "Segoe UI")
 	out.BodyFont = font(out.BodyFont, CustomBodyFonts, "Calibri")
@@ -354,7 +354,7 @@ func customTheme(spec *CustomSpec) *theme {
 	return &theme{
 		ThemeInfo: ThemeInfo{
 			ID: ThemeCustom, Name: sp.Name, Emoji: "✨", Photos: true,
-			Description: "AI maxsus dizayn",
+			Description: "Maxsus dizayn",
 		},
 		pal:          pal,
 		headFont:     sp.HeadingFont,

@@ -1,7 +1,7 @@
 package bot
 
 // custom.go — AI maxsus dizayn: foydalanuvchi tayyor dizaynlar o'rniga
-// "✨ AI maxsus dizayn" ni tanlaydi va tarifni (Standart, Optimal, Premium)
+// "✨ Maxsus dizayn" ni tanlaydi va tarifni (Standart, Optimal, Premium)
 // belgilaydi. Generatsiyada AI avval mavzuga mos dizayn konsepsiyasini
 // (ranglar, shriftlar, kompozitsiya, rasmlar uslubi) yaratadi, so'ng tarif
 // modeli slaydlarni yozadi va tarif sifatida AI rasmlar chiziladi.
@@ -48,7 +48,7 @@ type tariffView struct {
 var tariffViews = map[string]tariffView{
 	config.TariffStandard: {"🥉", "Standart", "tez va tejamkor — aniq tuzilma, toza dizayn, mavzuga mos rasmlar"},
 	config.TariffOptimal:  {"🥈", "Optimal", "narx va sifat muvozanati — boyroq va chuqurroq matn, yuqori sifatli rasmlar"},
-	config.TariffPremium:  {"🥇", "Premium", "maksimal sifat — eng kuchli AI model, eng puxta matn, HD rasmlar"},
+	config.TariffPremium:  {"🥇", "Premium", "maksimal sifat — eng chuqur va puxta matn, HD rasmlar"},
 }
 
 // tariffName — "🥇 Premium" (noma'lum tarif — o'zi).
@@ -62,9 +62,9 @@ func tariffName(t string) string {
 const (
 	cbTariff       = "tariff"
 	tariffBack     = "back" // tarif tugmasi: tayyor dizaynlar ro'yxatiga qaytish
-	customLabel    = "✨ AI maxsus dizayn"
+	customLabel    = "✨ Maxsus dizayn"
 	msgTariffHint  = "👇 Iltimos, quyidagi tugmalardan biri bilan tarifni tanlang."
-	msgNoCustomCfg = "AI maxsus dizayn hozircha mavjud emas. Tayyor dizaynlardan birini tanlang."
+	msgNoCustomCfg = "Maxsus dizayn hozircha mavjud emas. Tayyor dizaynlardan birini tanlang."
 )
 
 // customOn AI maxsus dizayn yoqilganini bildiradi.
@@ -106,9 +106,9 @@ func customImageCount(slides, percent int) int {
 // bo'yicha), tavsifi va rasmlar soni.
 func (h *Handler) tariffPrompt(s *storage.Session) string {
 	var b strings.Builder
-	b.WriteString("✨ <b>AI maxsus dizayn</b>\n\n")
-	fmt.Fprintf(&b, "Sun'iy intellekt «%s» mavzusiga mos <b>noyob dizaynni noldan yaratadi</b>: "+
-		"ranglar palitrasi, shriftlar, titul kompozitsiyasi, bezaklar va mavzuga mos AI rasmlar. "+
+	b.WriteString("✨ <b>Maxsus dizayn</b>\n\n")
+	fmt.Fprintf(&b, "«%s» mavzusiga mos <b>noyob dizayn noldan yaratiladi</b>: "+
+		"ranglar palitrasi, shriftlar, titul kompozitsiyasi, bezaklar va mavzuga mos rasmlar. "+
 		"Slaydlar tuzilishi ham mazmunga qarab tanlanadi (vaqt chizig'i, sikl, sxema, SWOT ...).\n\n",
 		html.EscapeString(truncateRunes(s.Topic, 120)))
 	fmt.Fprintf(&b, "<b>Tarifni tanlang</b> (%d ta slayd):\n", s.Volume)
@@ -119,10 +119,10 @@ func (h *Handler) tariffPrompt(s *storage.Session) string {
 		if h.paymentsOn() {
 			fmt.Fprintf(&b, " — %s/slayd → <b>%s</b>", formatSum(t.PriceSlide), formatSum(t.PriceSlide*max(s.Volume, 1)))
 		}
-		fmt.Fprintf(&b, "\n     %s; %d ta AI rasm\n", v.about, customImageCount(s.Volume, t.ImagePercent))
+		fmt.Fprintf(&b, "\n     %s; %d ta rasm\n", v.about, customImageCount(s.Volume, t.ImagePercent))
 	}
 	if h.paymentsOn() {
-		b.WriteString("\n<i>AI maxsus dizayn bepul urinishlarga kirmaydi.</i>")
+		b.WriteString("\n<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>")
 	}
 	return b.String()
 }
@@ -277,12 +277,12 @@ func customPhotoTargets(design generator.Design, pres *ai.Presentation, deck *ge
 	return out
 }
 
-// customCaption fayl izohidagi dizayn nomi: "✨ Chuqur okean (AI dizayn, 🥇 Premium)".
+// customCaption fayl izohidagi dizayn nomi: "✨ Chuqur okean (maxsus dizayn, 🥇 Premium)".
 func customCaption(d *ai.Design, tariff string) string {
 	if d != nil && d.Name != "" {
-		return fmt.Sprintf("✨ %s (AI dizayn, %s)", d.Name, tariffName(tariff))
+		return fmt.Sprintf("✨ %s (maxsus dizayn, %s)", d.Name, tariffName(tariff))
 	}
-	return fmt.Sprintf("✨ AI maxsus dizayn (%s)", tariffName(tariff))
+	return fmt.Sprintf("✨ Maxsus dizayn (%s)", tariffName(tariff))
 }
 
 // ---------------------------------------------------------------------------
@@ -333,8 +333,8 @@ func (h *Handler) guideText() string {
 	}
 
 	if h.customOn() {
-		section("✨ AI maxsus dizayn — tariflar")
-		b.WriteString("Sun'iy intellekt mavzungizga mos noyob dizaynni noldan yaratadi: ranglar, shriftlar, kompozitsiya va mavzuga mos AI rasmlar.\n")
+		section("✨ Maxsus dizayn — tariflar")
+		b.WriteString("Mavzungizga mos noyob dizayn noldan yaratiladi: ranglar, shriftlar, kompozitsiya va mavzuga mos rasmlar.\n")
 		const sample = 20
 		var examples []string
 		for _, name := range h.customTariffs() {
@@ -345,11 +345,11 @@ func (h *Handler) guideText() string {
 				fmt.Fprintf(&b, " — %s/slayd", formatSum(t.PriceSlide))
 				examples = append(examples, fmt.Sprintf("%s — %s", v.name, formatSum(t.PriceSlide*sample)))
 			}
-			fmt.Fprintf(&b, "\n     %s; slaydlarning ~%d%% ida AI rasm\n", v.about, t.ImagePercent)
+			fmt.Fprintf(&b, "\n     %s; slaydlarning ~%d%% ida rasm\n", v.about, t.ImagePercent)
 		}
 		if len(examples) > 0 {
 			fmt.Fprintf(&b, "<i>Masalan, %d slayd: %s.</i>\n", sample, strings.Join(examples, ", "))
-			b.WriteString("<i>AI maxsus dizayn bepul urinishlarga kirmaydi.</i>\n")
+			b.WriteString("<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>\n")
 		}
 		b.WriteString("\n")
 	}

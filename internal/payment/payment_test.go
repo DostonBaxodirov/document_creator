@@ -47,7 +47,7 @@ func TestDecide(t *testing.T) {
 		{"boshqa valyuta", func() Input { r := goodReceipt("2026-11-16 14:10"); r.Currency = "USD"; return base(r) }(), Suspicious, "Valyuta"},
 		{"takroriy chek", func() Input { in := base(goodReceipt("2026-11-16 14:10")); in.Seen = true; return in }(), Suspicious, "oldin yuborilgan"},
 		{"chek emas", func() Input { return base(&Receipt{IsReceipt: false, Confidence: 0.9}) }(), Invalid, "cheki emas"},
-		{"chek emas, ishonch past", func() Input { return base(&Receipt{IsReceipt: false, Confidence: 0.3}) }(), Suspicious, "tanimadi"},
+		{"chek emas, ishonch past", func() Input { return base(&Receipt{IsReceipt: false, Confidence: 0.3}) }(), Suspicious, "tanilmadi"},
 		{"AI xatosi", Input{Err: errors.New("timeout"), ExpectedAmount: 10000}, Suspicious, "timeout"},
 	}
 	for _, tc := range cases {

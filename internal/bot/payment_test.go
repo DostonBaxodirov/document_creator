@@ -292,8 +292,8 @@ func TestReviewCaptionAllStatuses(t *testing.T) {
 		admin  *int64
 		want   string
 	}{
-		{"AI tasdiqlagan", storage.PaymentApproved, nil, "AI avtomatik tasdiqladi"},
-		{"AI rad etgan", storage.PaymentRejected, nil, "AI rad etdi"},
+		{"AI tasdiqlagan", storage.PaymentApproved, nil, "Avtomatik tasdiqlandi"},
+		{"AI rad etgan", storage.PaymentRejected, nil, "Avtomatik rad etildi"},
 		{"shubhali", storage.PaymentReview, nil, "Tasdiqlang yoki rad eting"},
 		{"admin tasdiqlagan", storage.PaymentApproved, &admin, "admin 777"},
 		{"admin rad etgan", storage.PaymentRejected, &admin, "admin 777"},

@@ -317,7 +317,7 @@ func textReport(list []storage.Payment, p reportPeriod, now time.Time) string {
 	fmt.Fprintf(&b, "     📷 Rasmli: %d ta · %s\n", st.photo.count, formatSum(st.photo.sum))
 	fmt.Fprintf(&b, "     📄 Rasmsiz: %d ta · %s\n", st.plain.count, formatSum(st.plain.sum))
 	if st.custom.count > 0 {
-		fmt.Fprintf(&b, "     ✨ AI maxsus dizayn: %d ta · %s\n", st.custom.count, formatSum(st.custom.sum))
+		fmt.Fprintf(&b, "     ✨ Maxsus dizayn: %d ta · %s\n", st.custom.count, formatSum(st.custom.sum))
 	}
 	fmt.Fprintf(&b, "⏳ Tekshiruvda: %d ta · %s\n", st.review.count, formatSum(st.review.sum))
 	if st.review.count > 0 {

@@ -39,7 +39,7 @@ const (
 //
 //	/start → WorkType → Language → Topic → Volume → [Design → [Tariff]] → Student → University → Teacher → Requirements → Confirm → Generating → Idle
 //
-// Tariff qadami faqat "✨ AI maxsus dizayn" tanlanganda (custom.go).
+// Tariff qadami faqat "✨ Maxsus dizayn" tanlanganda (custom.go).
 //
 // To'lov yoqilgan va bepul urinishlar tugagan bo'lsa, tasdiqlashdan keyin:
 //
@@ -150,7 +150,7 @@ var steps = map[State]step{
 	StateTopic: {
 		next: StateVolume,
 		prompt: func(_ Limits, s *storage.Session) string {
-			text := "📝 <b>Mavzuni kiriting.</b>\n\n<i>Masalan: Sun'iy intellektning ta'limdagi o'rni</i>"
+			text := "📝 <b>Mavzuni kiriting.</b>\n\n<i>Masalan: Raqamli iqtisodiyotning rivojlanish istiqbollari</i>"
 			if l := lang.Get(s.Language); l.Code != lang.UzLatn {
 				text += fmt.Sprintf("\n\n🌐 Mavzuni <b>%s</b> tilida yozing — u titulda aynan shunday chiqadi.", html.EscapeString(l.Name))
 			}
@@ -258,7 +258,7 @@ var steps = map[State]step{
 		next: StateConfirm,
 		prompt: func(Limits, *storage.Session) string {
 			return "✍️ <b>Qo'shimcha talablaringiz bormi?</b>\n\n" +
-				"Ishga qo'yiladigan maxsus talablarni yozing — sun'iy intellekt ularni hisobga oladi. Masalan:\n" +
+				"Ishga qo'yiladigan maxsus talablarni yozing — ular albatta hisobga olinadi. Masalan:\n" +
 				"• ko'proq amaliy misollar bo'lsin\n" +
 				"• formulalar va hisob-kitoblar bilan\n" +
 				"• O'zbekiston misolida yoritilsin\n" +

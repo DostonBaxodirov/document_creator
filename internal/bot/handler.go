@@ -103,7 +103,7 @@ type Options struct {
 	Payment PaymentOptions
 
 	// Custom — AI maxsus dizayn tariflari (config.Tariff* → sozlamalar).
-	// Bo'sh bo'lsa, "✨ AI maxsus dizayn" tugmasi ko'rsatilmaydi.
+	// Bo'sh bo'lsa, "✨ Maxsus dizayn" tugmasi ko'rsatilmaydi.
 	Custom map[string]CustomTariff
 }
 
@@ -117,8 +117,8 @@ const (
 // Foydalanuvchiga yuboriladigan matnlar.
 const (
 	msgWelcome = "👋 Assalomu alaykum, <b>%s</b>!\n\n" +
-		"Men sun'iy intellekt yordamida tayyorlab beraman:\n" +
-		"📊 <b>taqdimot</b> — PowerPoint (.pptx): tayyor dizaynlarda yoki ✨ AI mavzungizga mos yaratgan maxsus dizaynda\n" +
+		"Men siz uchun tez va sifatli tayyorlab beraman:\n" +
+		"📊 <b>taqdimot</b> — PowerPoint (.pptx): tayyor dizaynlarda yoki mavzungizga mos ✨ maxsus dizaynda\n" +
 		"📚 <b>mustaqil ish</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx)\n\n" +
 		"Bir nechta savolga javob bering — qolganini o'zim qilaman ✨"
 	msgChooseWorkType = "📌 <b>Ish turini tanlang:</b>"
@@ -698,9 +698,9 @@ func designPrompt(custom bool) string {
 		}
 		fmt.Fprintf(&b, "%d. %s <b>%s</b>%s — %s\n", i+1, t.Emoji, html.EscapeString(t.Name), photo, html.EscapeString(t.Description))
 	}
-	b.WriteString("\n📷 — mavzuga mos AI rasmlar bilan.\n")
+	b.WriteString("\n📷 — mavzuga mos rasmlar bilan.\n")
 	if custom {
-		b.WriteString("✨ <b>AI maxsus dizayn</b> — AI mavzungizga mos noyob dizaynni noldan yaratadi (3 ta tarif).")
+		b.WriteString("✨ <b>Maxsus dizayn</b> — mavzungizga mos noyob dizayn noldan yaratiladi (3 ta tarif).")
 	} else {
 		b.WriteString("<i>Har bir dizaynning o'z tuzilishi bor: vaqt chizig'i, piramida, SWOT, sikl, sxema va boshqa maketlar.</i>")
 	}
@@ -1361,7 +1361,7 @@ func (h *Handler) finishWithError(s *storage.Session, chat *tele.Chat, log *zap.
 	case errors.Is(err, context.DeadlineExceeded):
 		msg = "⌛ Tayyorlash juda uzoq davom etdi. Iltimos, qayta urinib ko'ring yoki hajmni (slaydlar/sahifalar sonini) kamaytiring."
 	case errors.Is(err, errAI):
-		msg = "😔 Sun'iy intellekt xizmatida vaqtinchalik muammo yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring."
+		msg = "😔 Xizmatda vaqtinchalik muammo yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring."
 	default:
 		msg = "😔 Faylni tayyorlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
 	}
@@ -1512,7 +1512,7 @@ func orderDetails(s *storage.Session, maxRequirements int) string {
 		if t, ok := generator.FindTheme(s.Design); ok {
 			format += "\n🎨 <b>Dizayn:</b> " + t.Emoji + " " + e(t.Name)
 			if t.Photos {
-				format += " 📷 (AI rasmlar bilan)"
+				format += " 📷 (rasmlar bilan)"
 			}
 		}
 	}
@@ -1563,7 +1563,7 @@ func languageKeyboard() *tele.ReplyMarkup {
 }
 
 // designKeyboard dizayn tanlash tugmalari (qatorda 2 tadan); custom bo'lsa —
-// birinchi qatorda "✨ AI maxsus dizayn" tugmasi.
+// birinchi qatorda "✨ Maxsus dizayn" tugmasi.
 func designKeyboard(custom bool) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	themes := generator.Themes()

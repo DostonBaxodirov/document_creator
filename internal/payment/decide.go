@@ -51,7 +51,7 @@ type Decision struct {
 func Decide(in Input) Decision {
 	r := in.Receipt
 	if r == nil {
-		reason := "AI chekni tekshira olmadi"
+		reason := "Chekni avtomatik tekshirib bo'lmadi"
 		if in.Err != nil {
 			reason += ": " + in.Err.Error()
 		}
@@ -63,7 +63,7 @@ func Decide(in Input) Decision {
 		if conf >= invalidConfidence && !in.Seen {
 			return Decision{Verdict: Invalid, Reasons: []string{"Rasm to'lov cheki emas"}}
 		}
-		return Decision{Verdict: Suspicious, Reasons: []string{"AI rasmni chek deb tanimadi (ishonch past)"}}
+		return Decision{Verdict: Suspicious, Reasons: []string{"Rasm chek deb tanilmadi (ishonch past)"}}
 	}
 
 	var reasons []string
@@ -92,7 +92,7 @@ func Decide(in Input) Decision {
 	}
 
 	if conf < minConfidence {
-		add("AI ishonchi past (%.2f)", conf)
+		add("Tekshiruv ishonchi past (%.2f)", conf)
 	}
 
 	paidAt, dateOnly, ok := parsePaidAt(r.PaidAt)

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
 	"go.uber.org/zap"
 
@@ -77,13 +78,13 @@ func TestCustomPricing(t *testing.T) {
 		}
 	}
 	if h.freeLimit(storage.AIKind(config.TariffPremium)) != 0 {
-		t.Error("AI maxsus dizaynda bepul urinish bo'lmasligi kerak")
+		t.Error("Maxsus dizaynda bepul urinish bo'lmasligi kerak")
 	}
 	o := &storage.Order{ID: 7, WorkType: string(ai.WorkPresentation), Kind: storage.AIKind(config.TariffOptimal), Price: 10000, Volume: 20}
-	if txt := h.paymentText(o, true); strings.Contains(txt, "Bepul sinov") || !strings.Contains(txt, "AI maxsus dizayn — 🥈 Optimal") {
+	if txt := h.paymentText(o, true); strings.Contains(txt, "Bepul sinov") || !strings.Contains(txt, "Maxsus dizayn — 🥈 Optimal") {
 		t.Errorf("to'lov matni:\n%s", txt)
 	}
-	if l := orderLabel(o.WorkType, o.Kind); l != "Slayd (taqdimot), ✨ AI maxsus dizayn — 🥈 Optimal" {
+	if l := orderLabel(o.WorkType, o.Kind); l != "Slayd (taqdimot), ✨ Maxsus dizayn — 🥈 Optimal" {
 		t.Errorf("orderLabel = %q", l)
 	}
 }
@@ -93,7 +94,7 @@ func TestTariffPromptAndKeyboard(t *testing.T) {
 	s := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeCustom, Topic: "Okean ekologiyasi", Volume: 20}
 	p := h.tariffPrompt(s)
 	for _, want := range []string{"Okean ekologiyasi", "Standart", "6 000 so'm", "Optimal", "10 000 so'm", "Premium", "34 000 so'm",
-		"8 ta AI rasm", "10 ta AI rasm", "bepul urinishlarga kirmaydi"} {
+		"8 ta rasm", "10 ta rasm", "bepul urinishlarga kirmaydi"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("tarif matnida %q yo'q:\n%s", want, p)
 		}
@@ -126,7 +127,7 @@ func TestTariffPromptAndKeyboard(t *testing.T) {
 			}
 		}
 	}
-	if p := designPrompt(true); !strings.Contains(p, "AI maxsus dizayn") || len([]rune(p)) > 1024 {
+	if p := designPrompt(true); !strings.Contains(p, "Maxsus dizayn") || len([]rune(p)) > 1024 {
 		t.Errorf("dizayn matni (%d belgi):\n%s", len([]rune(p)), p)
 	}
 }
@@ -136,7 +137,7 @@ func TestCustomSummaryAndKind(t *testing.T) {
 	if !isCustom(s) || orderKind(s) != "ai_premium" {
 		t.Errorf("isCustom=%v kind=%s", isCustom(s), orderKind(s))
 	}
-	if txt := summaryText(s); !strings.Contains(txt, "AI maxsus dizayn · 🥇 Premium") {
+	if txt := summaryText(s); !strings.Contains(txt, "Maxsus dizayn · 🥇 Premium") {
 		t.Errorf("xulosada tarif yo'q:\n%s", txt)
 	}
 	s.WorkType = string(ai.WorkIndependent)
@@ -186,10 +187,10 @@ func TestCustomSpecFromAI(t *testing.T) {
 		sp.PhotoStyle != "cool tones" || !slices.Equal(sp.Signature, []string{"hub"}) {
 		t.Errorf("spetsifikatsiya: %+v", sp)
 	}
-	if c := customCaption(d, config.TariffOptimal); c != "✨ Okean (AI dizayn, 🥈 Optimal)" {
+	if c := customCaption(d, config.TariffOptimal); c != "✨ Okean (maxsus dizayn, 🥈 Optimal)" {
 		t.Errorf("customCaption = %q", c)
 	}
-	if c := customCaption(&ai.Design{}, config.TariffStandard); c != "✨ AI maxsus dizayn (🥉 Standart)" {
+	if c := customCaption(&ai.Design{}, config.TariffStandard); c != "✨ Maxsus dizayn (🥉 Standart)" {
 		t.Errorf("customCaption (nomsiz) = %q", c)
 	}
 }
@@ -198,7 +199,7 @@ func TestGuideText(t *testing.T) {
 	h := customHandler(&fakeBilling{})
 	g := h.guideText()
 	for _, want := range []string{"qo'llanma", "/start", "/cancel", "5–50 slayd", "5–30 sahifa", "250 so'm", "7 000 so'm",
-		"Birinchi 1 ta rasmli va 1 ta rasmsiz ish — <b>bepul</b>", "AI maxsus dizayn bepul urinishlarga kirmaydi", "AI maxsus dizayn — tariflar", "Standart</b> — 300 so'm/slayd", "Premium</b> — 1 700 so'm/slayd",
+		"Birinchi 1 ta rasmli va 1 ta rasmsiz ish — <b>bepul</b>", "Maxsus dizayn bepul urinishlarga kirmaydi", "Maxsus dizayn — tariflar", "Standart</b> — 300 so'm/slayd", "Premium</b> — 1 700 so'm/slayd",
 		"20 slayd: Standart — 6 000 so'm, Optimal — 10 000 so'm, Premium — 34 000 so'm", "To'lov", "<b>3. Narxlar</b>", "<b>4. ✨"} {
 		if !strings.Contains(g, want) {
 			t.Errorf("qo'llanmada %q yo'q", want)
@@ -211,12 +212,12 @@ func TestGuideText(t *testing.T) {
 	// To'lov va AI dizayn o'chirilgan: narxlar va tariflar bo'limi yo'q.
 	h = NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Limits: Limits{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30}})
 	g = h.guideText()
-	for _, unwanted := range []string{"Narxlar", "so'm", "AI maxsus dizayn", "To'lov"} {
+	for _, unwanted := range []string{"Narxlar", "so'm", "Maxsus dizayn", "To'lov"} {
 		if strings.Contains(g, unwanted) {
 			t.Errorf("o'chirilgan holatda qo'llanmada %q bo'lmasligi kerak", unwanted)
 		}
 	}
-	if !strings.Contains(customHandler(&fakeBilling{}).pricingText(), "AI maxsus dizayn (har bir slayd): Standart — 300 so'm") {
+	if !strings.Contains(customHandler(&fakeBilling{}).pricingText(), "Maxsus dizayn (har bir slayd): Standart — 300 so'm") {
 		t.Errorf("qisqa narxlar matnida tariflar yo'q:\n%s", customHandler(&fakeBilling{}).pricingText())
 	}
 }
@@ -229,5 +230,43 @@ func TestReportCountsCustom(t *testing.T) {
 	})
 	if st.custom.count != 1 || st.custom.sum != 34000 || st.photo.count != 1 || st.plain.count != 1 || st.approved.sum != 44000 {
 		t.Errorf("hisobot: %+v", st)
+	}
+}
+
+// TestNoAIMention — foydalanuvchiga ko'rinadigan matnlarda "AI" va
+// "sun'iy intellekt" so'zlari bo'lmasligi kerak.
+func TestNoAIMention(t *testing.T) {
+	h := customHandler(&fakeBilling{})
+	s := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeCustom, Topic: "Okean", Volume: 20, Tariff: config.TariffPremium}
+	texts := map[string]string{
+		"welcome":   msgWelcome,
+		"noCustom":  msgNoCustomCfg,
+		"label":     customLabel,
+		"guide":     h.guideText(),
+		"pricing":   h.pricingText(),
+		"design":    designPrompt(true),
+		"tariff":    h.tariffPrompt(s),
+		"summary":   summaryText(s),
+		"caption":   customCaption(nil, config.TariffOptimal),
+		"orderName": orderLabel(s.WorkType, storage.AIKind(config.TariffOptimal)),
+	}
+	for st, step := range steps {
+		if step.prompt != nil {
+			texts["step "+string(st)] = step.prompt(h.opts.Limits, s)
+		}
+	}
+	for _, v := range tariffViews {
+		texts["tariff "+v.name] = v.about
+	}
+	for name, txt := range texts {
+		low := strings.ToLower(txt)
+		for _, w := range strings.FieldsFunc(txt, func(r rune) bool { return !unicode.IsLetter(r) }) {
+			if w == "AI" || w == "Ai" {
+				t.Errorf("%s matnida \"AI\" bor:\n%s", name, txt)
+			}
+		}
+		if strings.Contains(low, "intellekt") {
+			t.Errorf("%s matnida \"sun'iy intellekt\" bor:\n%s", name, txt)
+		}
 	}
 }
