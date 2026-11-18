@@ -48,7 +48,7 @@ func TestPaymentConfig(t *testing.T) {
 	if len(p.errs) > 0 {
 		t.Fatal(p.errs)
 	}
-	if !c.Enabled || c.PriceSlidePhoto != 300 || c.PriceSlidePlain != 250 || c.PriceDocument != 7000 || c.FreePhoto != 1 || c.FreePlain != 1 || c.VisionModel != "gpt-x" {
+	if !c.Enabled || c.PriceSlidePhoto != 300 || c.PriceSlidePlain != 250 || c.PriceDocument != 7000 || c.FreePhoto != 2 || c.FreePlain != 2 || c.VisionModel != "gpt-x" {
 		t.Errorf("standart qiymatlar noto'g'ri: %+v", c)
 	}
 	// Yoqilgan, lekin karta va parol yo'q — xato.

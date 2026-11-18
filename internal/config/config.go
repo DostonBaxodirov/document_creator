@@ -202,8 +202,8 @@ func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
 		PriceSlidePlain: p.int("PRICE_SLIDE_PLAIN", 250),
 		// Eski .env lar uchun: PRICE_DOCUMENT berilmasa, PRICE_PLAIN olinadi.
 		PriceDocument: p.int("PRICE_DOCUMENT", p.int("PRICE_PLAIN", 7000)),
-		FreePhoto:     p.int("FREE_PHOTO", 1),
-		FreePlain:     p.int("FREE_PLAIN", 1),
+		FreePhoto:     p.int("FREE_PHOTO", 2),
+		FreePlain:     p.int("FREE_PLAIN", 2),
 		VisionModel:   p.str("PAYMENT_VISION_MODEL", ai.OpenAIModel),
 		CheckTimeout:  p.duration("PAYMENT_CHECK_TIMEOUT", 60*time.Second),
 		AdminPassword: p.str("ADMIN_PASSWORD", ""),
