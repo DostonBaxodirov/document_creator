@@ -5,9 +5,10 @@
 1. **Testlar** — `go vet` va `go test`. Xato bo'lsa, deploy qilinmaydi.
 2. **Docker image** — GitHub serverida yig'iladi va `ghcr.io/<owner>/<repo>:<commit>` ga yuklanadi
    (VPS da kod kompilyatsiya qilinmaydi, shuning uchun kichik VPS ham yetadi).
-3. **Deploy** — SSH orqali VPS ga ulanadi, yangi image'ni yuklaydi va botni qayta ishga tushiradi
-   ([deploy/remote-deploy.sh](../deploy/remote-deploy.sh)). Bot 25 soniya ichida qulasa —
-   **avtomatik oldingi versiyaga qaytariladi** va Actions'da xato ko'rsatiladi.
+3. **Deploy** — GitHub environment'dagi sozlamalardan `.env` yig'adi
+   ([deploy/make-env.sh](../deploy/make-env.sh)), SSH orqali VPS ga yuboradi, yangi image'ni yuklaydi
+   va botni qayta ishga tushiradi ([deploy/remote-deploy.sh](../deploy/remote-deploy.sh)).
+   Bot 25 soniya ichida qulasa — **avtomatik oldingi versiyaga qaytariladi** va Actions'da xato ko'rsatiladi.
 
 Pull request'larda faqat testlar ishlaydi.
 
@@ -30,16 +31,7 @@ mkdir -p /opt/document_creator
 > `adduser deploy && usermod -aG docker deploy && chown deploy:deploy /opt/document_creator`
 > va quyida `root` o'rniga `deploy` yozing.
 
-### `.env` faylini joylashtirish
-
-`.env` gitda yo'q (maxfiy), uni VPS ga qo'lda nusxalang — lokal kompyuterdan:
-
-```bash
-scp .env root@VPS_IP:/opt/document_creator/.env
-```
-
-Production uchun tekshiring: `APP_ENV=production`, kuchli `DB_PASSWORD`.
-`DB_HOST`/`DB_PORT` ni o'zgartirish shart emas — compose ularni o'zi `postgres:5432` ga o'rnatadi.
+`.env` ni VPS ga qo'lda ko'chirish shart emas — u har deployda GitHub'dan yoziladi (3-bo'lim).
 
 ## 2. Deploy uchun SSH kalit (bir marta)
 
@@ -56,19 +48,36 @@ ssh -i ~/.ssh/document_creator_deploy root@VPS_IP "docker ps"
 ssh-keyscan VPS_IP
 ```
 
-## 3. GitHub secretlari (bir marta)
+## 3. GitHub sozlamalari
 
-Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+Hammasi **Settings → Environments → `document creator bot env`** da turadi
+(workflow aynan shu nomdagi environmentdan o'qiydi).
 
-| Secret | Qiymat |
-|---|---|
-| `VPS_HOST` | VPS IP manzili |
-| `VPS_USER` | `root` (yoki `deploy`) |
-| `VPS_SSH_KEY` | `~/.ssh/document_creator_deploy` faylining **to'liq** matni (`-----BEGIN ... END-----` bilan) |
-| `VPS_KNOWN_HOSTS` | `ssh-keyscan VPS_IP` natijasi (ixtiyoriy, lekin tavsiya etiladi) |
-| `VPS_PORT` | SSH porti, faqat 22 bo'lmasa |
+### Deploy uchun
 
-Papka `/opt/document_creator` dan boshqa bo'lsa — **Variables** bo'limida `DEPLOY_PATH` yarating.
+| Nom | Turi | Qiymat |
+|---|---|---|
+| `VPS_HOST` | secret | VPS IP manzili |
+| `VPS_SSH_KEY` | secret | `~/.ssh/document_creator_deploy` faylining **to'liq** matni (`-----BEGIN ... END-----` bilan) |
+| `VPS_USER` | secret yoki variable | ixtiyoriy, standart `root` |
+| `VPS_KNOWN_HOSTS` | secret yoki variable | `ssh-keyscan VPS_IP` natijasi (ixtiyoriy, lekin tavsiya etiladi) |
+| `VPS_PORT` | secret yoki variable | SSH porti, faqat 22 bo'lmasa |
+| `DEPLOY_PATH` | variable | VPS dagi papka, faqat `/opt/document_creator` bo'lmasa |
+
+### Bot sozlamalari (`.env`)
+
+Environment'dagi **qolgan barcha** secret va variable'lar har deployda VPS dagi `.env` ga yoziladi
+(oldingi fayl `.env.bak` ga saqlanadi). Maxfiylarini (`TELEGRAM_BOT_TOKEN`, `DB_PASSWORD`, API kalitlar,
+`ADMIN_PASSWORD`, `PAYMENT_CARD_NUMBER`) — **secret**, qolganlarini — **variable** qilib kiriting.
+
+- Sozlamani GitHub'da o'zgartirgandan keyin u **keyingi deployda** kuchga kiradi
+  (yangi push yoki Actions → CI/CD → **Run workflow**).
+- `DB_HOST`/`DB_PORT` ahamiyatsiz — compose ularni o'zi `postgres:5432` ga o'rnatadi.
+- `DB_PASSWORD` postgres bazasi **birinchi marta** yaratilganda o'rnatiladi. Keyin o'zgartirsangiz,
+  bot ulana olmaydi — avval bazada ham almashtiring:
+  `docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD 'yangi'"`.
+- Environment'da `TELEGRAM_BOT_TOKEN` bo'lmasa, `.env` yozilmaydi — VPS dagi mavjud `.env` ishlatiladi
+  (uni qo'lda joylashtirish mumkin: `scp .env root@VPS_IP:/opt/document_creator/.env`).
 
 ## 4. Ishga tushirish
 

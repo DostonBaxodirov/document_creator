@@ -4,14 +4,16 @@
 #   3) SSH orqali VPS da yangi image bilan bot qayta ishga tushiriladi.
 # Pull request'larda faqat testlar ishlaydi.
 #
-# Kerakli GitHub secretlari (Settings → Secrets and variables → Actions):
-#   VPS_HOST         — VPS IP manzili yoki domeni (majburiy)
-#   VPS_USER         — SSH foydalanuvchisi, docker'ni sudo'siz ishlata olishi kerak (majburiy)
-#   VPS_SSH_KEY      — deploy uchun maxsus SSH kalitning PRIVATE qismi (majburiy)
+# Barcha sozlamalar "document creator bot env" GitHub environmentida
+# (Settings → Environments). Deploy uchun:
+#   VPS_HOST         — VPS IP manzili yoki domeni (majburiy, secret yoki variable)
+#   VPS_SSH_KEY      — deploy uchun maxsus SSH kalitning PRIVATE qismi (majburiy, secret)
+#   VPS_USER         — SSH foydalanuvchisi (ixtiyoriy, standart root)
 #   VPS_PORT         — SSH porti (ixtiyoriy, standart 22)
 #   VPS_KNOWN_HOSTS  — `ssh-keyscan <host>` natijasi (ixtiyoriy, lekin tavsiya etiladi)
-# Ixtiyoriy variable (Variables bo'limida):
-#   DEPLOY_PATH      — VPS dagi loyiha papkasi (standart /opt/document_creator)
+#   DEPLOY_PATH      — VPS dagi loyiha papkasi (ixtiyoriy variable, standart /opt/document_creator)
+# Qolgan barcha secret va variable'lar (TELEGRAM_BOT_TOKEN, DB_PASSWORD, ...) har
+# deployda VPS dagi .env fayliga yoziladi.
 #
 # Batafsil: docs/DEPLOY.md
 
@@ -93,26 +95,26 @@ jobs:
     name: VPS ga deploy
     needs: build
     runs-on: ubuntu-latest
-    environment: production
+    environment: "document creator bot env"
     permissions:
       contents: read
       packages: read
     env:
       DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/document_creator' }}
-      SSH_PORT: ${{ secrets.VPS_PORT || '22' }}
+      SSH_PORT: ${{ secrets.VPS_PORT || vars.VPS_PORT || '22' }}
     steps:
       - uses: actions/checkout@v5
 
       - name: SSH sozlash
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST: ${{ secrets.VPS_HOST || vars.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER || vars.VPS_USER || 'root' }}
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS || vars.VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ] || [ -z "$SSH_KEY" ]; then
-            echo "::error::VPS_HOST, VPS_USER va VPS_SSH_KEY secretlari kiritilmagan (docs/DEPLOY.md ga qarang)"
+          if [ -z "$VPS_HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "::error::VPS_HOST yoki VPS_SSH_KEY \"document creator bot env\" environmentida topilmadi (docs/DEPLOY.md)"
             exit 1
           fi
 
@@ -139,11 +141,35 @@ jobs:
             ConnectTimeout 20
           EOF
 
+      # Environmentdagi variable va secretlardan VPS uchun .env yig'iladi (deploy/make-env.sh).
+      - name: .env yaratish
+        id: dotenv
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          rc=0
+          keys="$(bash deploy/make-env.sh "$RUNNER_TEMP/app.env")" || rc=$?
+          case "$rc" in
+            0) echo ".env ga yoziladigan sozlamalar: $keys"
+               echo "upload=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::notice::Environmentda TELEGRAM_BOT_TOKEN yo'q — VPS dagi mavjud .env ishlatiladi"
+               echo "upload=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$rc" ;;
+          esac
+
       - name: Fayllarni VPS ga nusxalash
+        env:
+          UPLOAD_ENV: ${{ steps.dotenv.outputs.upload }}
         run: |
           set -euo pipefail
           ssh vps "mkdir -p '$DEPLOY_PATH'"
           scp docker-compose.yml deploy/remote-deploy.sh "vps:$DEPLOY_PATH/"
+          if [ "$UPLOAD_ENV" = "true" ]; then
+            ssh vps "cd '$DEPLOY_PATH' && umask 077 && cat > .env.new \
+              && { [ ! -f .env ] || cp -p .env .env.bak; } && mv .env.new .env" < "$RUNNER_TEMP/app.env"
+            echo ".env yangilandi (oldingisi .env.bak da)"
+          fi
 
       - name: Botni yangilash
         env:
@@ -156,6 +182,6 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | ssh vps \
             "cd '$DEPLOY_PATH' && IMAGE='$IMAGE' GHCR_USER='$GHCR_USER' bash remote-deploy.sh"
 
-      - name: SSH kalitni o'chirish
+      - name: Maxfiy fayllarni o'chirish
         if: always()
-        run: rm -f ~/.ssh/deploy_key
+        run: rm -f ~/.ssh/deploy_key "$RUNNER_TEMP/app.env"

@@ -22,7 +22,7 @@ HEALTH_WAIT="${HEALTH_WAIT:-25}" # bot shu vaqt davomida qulamasligi kerak (soni
 cd "$(dirname "$0")"
 
 if [ ! -f .env ]; then
-  echo "XATO: $(pwd)/.env topilmadi. Uni VPS ga qo'lda joylashtiring (docs/DEPLOY.md)." >&2
+  echo "XATO: $(pwd)/.env topilmadi. Sozlamalarni GitHub environmentiga kiriting yoki .env ni qo'lda joylashtiring (docs/DEPLOY.md)." >&2
   exit 1
 fi
 if ! docker compose version >/dev/null 2>&1; then
