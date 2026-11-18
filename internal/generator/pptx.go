@@ -5,7 +5,7 @@
 //   - layouts_extra.go — qo'shimcha maketlar (vaqt chizig'i, piramida, matritsa, sikl ...);
 //   - themes_extra.go, themes_photo.go — tuzilishi boshqacha va rasmli dizaynlar;
 //   - drawing.go — slaydlarni chizish uchun DrawingML primitivlari;
-//   - docx.go    — mustaqil ish / amaliy topshiriq (.docx) noldan;
+//   - docx.go    — Word ishlar (.docx) noldan, docdesign.go — ularning dizaynlari;
 //   - ooxml.go   — ikkalasi uchun umumiy yordamchilar (ZIP yozish, XML ekranlash).
 //
 // PPTX — bu XML fayllardan iborat ZIP arxiv (Office Open XML). Generator

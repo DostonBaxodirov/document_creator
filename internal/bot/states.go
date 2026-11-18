@@ -23,7 +23,7 @@ const (
 	StateLanguage     State = "await_language"     // ish tili tanlanishi kutilmoqda (inline tugmalar)
 	StateTopic        State = "await_topic"        // mavzu
 	StateVolume       State = "await_volume"       // hajm: slaydlar (taqdimot) yoki sahifalar (hujjat) soni
-	StateDesign       State = "await_design"       // taqdimot dizayni tanlanishi kutilmoqda (inline tugmalar)
+	StateDesign       State = "await_design"       // taqdimot yoki Word ish dizayni tanlanishi kutilmoqda (inline tugmalar)
 	StateTariff       State = "await_tariff"       // AI maxsus dizayn tarifi tanlanishi kutilmoqda (inline tugmalar)
 	StateStudent      State = "await_student"      // talabaning F.I.Sh.
 	StateUniversity   State = "await_university"   // universitet nomi
@@ -65,8 +65,8 @@ const (
 )
 
 // workTypeOption — ish turining foydalanuvchi interfeysidagi ko'rinishi.
-// Taqdimot .pptx, mustaqil ish va amaliy topshiriq esa .docx bo'lib chiqadi
-// (ai.WorkType.IsDocument).
+// Taqdimot .pptx, mustaqil ish, referat va amaliy topshiriq esa .docx bo'lib
+// chiqadi (ai.WorkType.IsDocument).
 type workTypeOption struct {
 	Type   ai.WorkType
 	Button string // tugmadagi matn
@@ -76,6 +76,7 @@ type workTypeOption struct {
 var workTypes = []workTypeOption{
 	{Type: ai.WorkPresentation, Button: "📊 Slayd (taqdimot) — PowerPoint", Name: "Slayd (taqdimot)"},
 	{Type: ai.WorkIndependent, Button: "📚 Mustaqil ish — Word", Name: "Mustaqil ish"},
+	{Type: ai.WorkReferat, Button: "📝 Referat — Word", Name: "Referat"},
 	{Type: ai.WorkPractical, Button: "🛠 Amaliy topshiriq — Word", Name: "Amaliy topshiriq"},
 }
 
@@ -87,6 +88,8 @@ func (o workTypeOption) Title(l lang.Info) string {
 		return l.Labels.TitleIndependent
 	case ai.WorkPractical:
 		return l.Labels.TitlePractical
+	case ai.WorkReferat:
+		return l.Labels.TitleReferat
 	default:
 		return l.Labels.TitlePresentation
 	}
@@ -105,7 +108,7 @@ func findWorkType(t ai.WorkType) (workTypeOption, bool) {
 type Limits struct {
 	MinSlides int // taqdimot: umumiy slaydlar soni
 	MaxSlides int
-	MinPages  int // mustaqil ish / amaliy topshiriq: umumiy sahifalar soni
+	MinPages  int // Word ishlar: umumiy sahifalar soni
 	MaxPages  int
 }
 
@@ -167,9 +170,10 @@ var steps = map[State]step{
 	},
 	StateVolume: {
 		next: StateStudent,
-		// Taqdimotda hajmdan keyin dizayn tanlanadi.
+		// Taqdimot, mustaqil ish va referatda hajmdan keyin dizayn tanlanadi
+		// (amaliy topshiriq — doim Klassik uslubda).
 		route: func(s *storage.Session) State {
-			if ai.WorkType(s.WorkType).IsDocument() {
+			if w := ai.WorkType(s.WorkType); w.IsDocument() && !w.HasDesigns() {
 				return StateStudent
 			}
 			return StateDesign

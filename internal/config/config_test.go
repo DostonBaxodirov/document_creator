@@ -122,7 +122,7 @@ func TestPaymentConfig(t *testing.T) {
 func TestCustomConfig(t *testing.T) {
 	keys := []string{"CUSTOM_DESIGN_ENABLED", "CUSTOM_IMAGE_MODEL"}
 	for _, tier := range []string{"STANDARD", "OPTIMAL", "PREMIUM"} {
-		for _, f := range []string{"PRICE", "TEXT_MODEL", "IMAGE_QUALITY", "IMAGE_PERCENT"} {
+		for _, f := range []string{"PRICE", "PAGE_PRICE", "TEXT_MODEL", "IMAGE_QUALITY", "IMAGE_PERCENT"} {
 			keys = append(keys, "CUSTOM_"+tier+"_"+f)
 		}
 	}
@@ -138,9 +138,9 @@ func TestCustomConfig(t *testing.T) {
 		t.Errorf("standart qiymatlar: %+v", c)
 	}
 	want := map[string]CustomTier{
-		TariffStandard: {PriceSlide: 300, TextModel: "gpt-4o-mini", ImageQuality: "low", ImagePercent: 40},
-		TariffOptimal:  {PriceSlide: 500, TextModel: "gpt-4.1-mini", ImageQuality: "medium", ImagePercent: 40},
-		TariffPremium:  {PriceSlide: 1700, TextModel: "gpt-4o", ImageQuality: "high", ImagePercent: 50},
+		TariffStandard: {PriceSlide: 300, PricePage: 400, TextModel: "gpt-4o-mini", ImageQuality: "low", ImagePercent: 40},
+		TariffOptimal:  {PriceSlide: 500, PricePage: 700, TextModel: "gpt-4.1-mini", ImageQuality: "medium", ImagePercent: 40},
+		TariffPremium:  {PriceSlide: 1700, PricePage: 1500, TextModel: "gpt-4o", ImageQuality: "high", ImagePercent: 50},
 	}
 	for _, name := range Tariffs {
 		if got, ok := c.Tier(name); !ok || got != want[name] {

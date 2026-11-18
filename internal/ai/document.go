@@ -13,9 +13,9 @@ import (
 	"google.golang.org/genai"
 )
 
-// DocumentRequest — mustaqil ish yoki amaliy topshiriq generatsiyasi uchun ma'lumotlar.
+// DocumentRequest — mustaqil ish, referat yoki amaliy topshiriq generatsiyasi uchun ma'lumotlar.
 type DocumentRequest struct {
-	WorkType WorkType // WorkIndependent yoki WorkPractical
+	WorkType WorkType // WorkIndependent, WorkReferat yoki WorkPractical
 	Topic    string
 	// Words — asosiy matnning (kirish + boblar + xulosa) taxminiy hajmi, so'zlarda.
 	// Sahifalar sonidan generator hisoblab beradi.
@@ -30,6 +30,15 @@ type DocumentRequest struct {
 	Language string
 	// Requirements — foydalanuvchining qo'shimcha talablari (ixtiyoriy).
 	Requirements string
+	// Figures — har bir bob uchun rasm g'oyasi (izoh va rasm tavsifi) ham
+	// yozilsin (maxsus dizayn: rasmlar shulardan chiziladi).
+	Figures bool
+}
+
+// FigureIdea — bob uchun rasm g'oyasi.
+type FigureIdea struct {
+	Caption string // hujjat tilidagi izoh: "Raqamli iqtisodiyotning asosiy unsurlari"
+	Prompt  string // rasm modeli uchun inglizcha tavsif
 }
 
 // Paragraph — hujjatdagi bitta paragraf. Code=true bo'lsa — dastur kodi
@@ -43,6 +52,8 @@ type Paragraph struct {
 type Chapter struct {
 	Title      string
 	Paragraphs []Paragraph
+	// Figure — rasm g'oyasi (faqat DocumentRequest.Figures bo'lsa; bo'lmasligi ham mumkin).
+	Figure *FigureIdea
 }
 
 // Document — AI yozgan to'liq hujjat matni.
@@ -67,6 +78,8 @@ const (
 	maxReferences      = 10
 	maxReferenceRunes  = 400
 	maxChapterTitleLen = 150
+	maxFigureCaption   = 150
+	maxFigurePrompt    = 400
 )
 
 // GenerateDocument hujjatni ikki bosqichda yaratadi:
@@ -95,7 +108,7 @@ func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Do
 	ol, err := generateJSON(ctx, c, "document_outline", task{
 		system: documentSystemPrompt,
 		user:   buildOutlinePrompt(req, b.chapters),
-		schema: outlineSchema(),
+		schema: outlineSchema(req.Figures),
 	}, b.chapters, func(raw string) (*outline, int, error) {
 		o, err := parseOutline(raw, b.chapters)
 		if err != nil {
@@ -130,7 +143,11 @@ func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Do
 		Chapters:     make([]Chapter, 0, len(ol.Chapters)),
 	}
 	for i, ch := range ol.Chapters {
-		doc.Chapters = append(doc.Chapters, Chapter{Title: ch.Title, Paragraphs: texts[i+1]})
+		chapter := Chapter{Title: ch.Title, Paragraphs: texts[i+1]}
+		if req.Figures && ch.Figure != nil && ch.Figure.Prompt != "" {
+			chapter.Figure = &FigureIdea{Caption: ch.Figure.Caption, Prompt: ch.Figure.Prompt}
+		}
+		doc.Chapters = append(doc.Chapters, chapter)
 	}
 
 	c.log.Info("AI document generated",
@@ -264,8 +281,14 @@ func (p *progressReporter) setTotal(total int) {
 // ---------------------------------------------------------------------------
 
 type outlineChapter struct {
-	Title  string   `json:"title"`
-	Points []string `json:"points"`
+	Title  string         `json:"title"`
+	Points []string       `json:"points"`
+	Figure *outlineFigure `json:"figure,omitempty"`
+}
+
+type outlineFigure struct {
+	Caption string `json:"caption"`
+	Prompt  string `json:"prompt"`
 }
 
 type outline struct {
@@ -273,21 +296,36 @@ type outline struct {
 	References []string         `json:"references"`
 }
 
-func outlineSchema() *genai.Schema {
+// outlineSchema reja sxemasi; figures — har bir bobga rasm g'oyasi ham.
+func outlineSchema(figures bool) *genai.Schema {
+	chapter := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"title":  {Type: genai.TypeString},
+			"points": stringArraySchema(),
+		},
+		Required:         []string{"title", "points"},
+		PropertyOrdering: []string{"title", "points"},
+	}
+	if figures {
+		chapter.Properties["figure"] = &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"caption": {Type: genai.TypeString},
+				"prompt":  {Type: genai.TypeString},
+			},
+			Required:         []string{"caption", "prompt"},
+			PropertyOrdering: []string{"caption", "prompt"},
+		}
+		chapter.Required = append(chapter.Required, "figure")
+		chapter.PropertyOrdering = append(chapter.PropertyOrdering, "figure")
+	}
 	return &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
 			"chapters": {
-				Type: genai.TypeArray,
-				Items: &genai.Schema{
-					Type: genai.TypeObject,
-					Properties: map[string]*genai.Schema{
-						"title":  {Type: genai.TypeString},
-						"points": stringArraySchema(),
-					},
-					Required:         []string{"title", "points"},
-					PropertyOrdering: []string{"title", "points"},
-				},
+				Type:  genai.TypeArray,
+				Items: chapter,
 			},
 			"references": stringArraySchema(),
 		},
@@ -327,6 +365,13 @@ func parseOutline(raw string, want int) (*outline, error) {
 			}
 		}
 		ch.Points = points
+		if f := ch.Figure; f != nil {
+			f.Caption = truncateRunes(strings.TrimRight(stripMeta(cleanText(f.Caption)), "."), maxFigureCaption)
+			f.Prompt = truncateRunes(cleanText(f.Prompt), maxFigurePrompt)
+			if f.Prompt == "" {
+				ch.Figure = nil
+			}
+		}
 		chapters = append(chapters, ch)
 	}
 	if len(chapters) == 0 {
@@ -501,7 +546,7 @@ func (d *Document) wordCount() int {
 // Promptlar
 // ---------------------------------------------------------------------------
 
-const documentSystemPrompt = `You are an expert academic writer who prepares independent study works and practical assignments for university students in Uzbekistan.
+const documentSystemPrompt = `You are an expert academic writer who prepares independent study works, referats (academic review essays) and practical assignments for university students in Uzbekistan.
 
 Strict output rules:
 - Respond with ONE valid JSON object and nothing else: no markdown fences around the JSON, no comments, no extra text.
@@ -510,8 +555,11 @@ Strict output rules:
 ` + languageRules + "\n" + finalTextRules
 
 func documentTypeName(w WorkType) string {
-	if w == WorkPractical {
+	switch w {
+	case WorkPractical:
 		return "practical assignment (amaliy topshiriq)"
+	case WorkReferat:
+		return "referat (an academic review essay that summarises and analyses the scholarly literature on the topic)"
 	}
 	return "independent study work (mustaqil ish)"
 }
@@ -521,6 +569,11 @@ func documentStyle(w WorkType) string {
 		return "applied and hands-on: methods, step-by-step procedures, worked examples, formulas and calculations " +
 			"with clear explanations of every step and of the results. If the topic involves programming, you may add " +
 			"short code listings as separate paragraphs that start with ``` and end with ``` (keep the line breaks)."
+	}
+	if w == WorkReferat {
+		return "analytical review: key concepts and their definitions, the history of the question, the main scientific approaches " +
+			"and viewpoints of scholars, their comparison and critical analysis, generalisations and well-grounded conclusions " +
+			"(relevant to Uzbekistan where appropriate). Neutral, scholarly tone; no first-person narrative."
 	}
 	return "formal academic: definitions and key concepts, classifications, historical background, causes and consequences, " +
 		"comparisons, current state and examples (relevant to Uzbekistan where appropriate)."
@@ -533,14 +586,21 @@ func buildOutlinePrompt(req DocumentRequest, chapters int) string {
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
 	b.WriteString(languageRule(req.Language))
 	b.WriteString("\n")
-	b.WriteString(`Return JSON: {"chapters": [{"title": string, "points": [string, ...]}, ...], "references": [string, ...]}` + "\n\n")
+	if req.Figures {
+		b.WriteString(`Return JSON: {"chapters": [{"title": string, "points": [string, ...], "figure": {"caption": string, "prompt": string}}, ...], "references": [string, ...]}` + "\n\n")
+	} else {
+		b.WriteString(`Return JSON: {"chapters": [{"title": string, "points": [string, ...]}, ...], "references": [string, ...]}` + "\n\n")
+	}
 	b.WriteString("Requirements:\n")
 	fmt.Fprintf(&b, "- \"chapters\": exactly %d main chapters. The introduction and the conclusion are written separately — do NOT include them.\n", chapters)
 	b.WriteString("- Chapter titles are specific, 3-10 words, without numbering.\n")
 	b.WriteString("- \"points\": 3-5 short phrases per chapter describing what the chapter must cover. Chapters must not overlap.\n")
-	if req.WorkType == WorkPractical {
+	switch req.WorkType {
+	case WorkPractical:
 		b.WriteString("- The chapters follow the logic of a practical assignment: theoretical basis → methods and tools → step-by-step execution with worked examples → analysis of the results.\n")
-	} else {
+	case WorkReferat:
+		b.WriteString("- The chapters follow the logic of a referat: theoretical foundations and history of the question → main scientific approaches and viewpoints → current state and practice → problems and prospects.\n")
+	default:
 		b.WriteString("- Order the chapters logically: from fundamentals and key concepts to details, current state, problems and applications.\n")
 	}
 	b.WriteString("- \"references\": 5-8 entries in a standard bibliographic format (Author. Title. — City: Publisher, Year.). " +
@@ -548,6 +608,12 @@ func buildOutlinePrompt(req DocumentRequest, chapters int) string {
 		"well-known textbooks and monographs, official websites (for example lex.uz). " +
 		"Never invent authors, titles, years or URLs — if unsure, give fewer entries. " +
 		"Each entry is a plain bibliographic record with no comments or notes.\n")
+	if req.Figures {
+		b.WriteString("- \"figure\": an illustration for the chapter. \"caption\" — a short figure caption (4-10 words) in the language of the work, " +
+			"without the word \"figure\" and without numbering. \"prompt\" — an English description (20-40 words) for an image generator: " +
+			"a realistic photograph or a clean, modern illustration that visualises the main idea of the chapter. " +
+			"The image must contain no text, letters, numbers, charts with labels, logos or named real people.\n")
+	}
 	writeRequirements(&b, req.Requirements)
 	return b.String()
 }
@@ -598,4 +664,10 @@ func buildSectionPrompt(req DocumentRequest, ol *outline, s section) string {
 	b.WriteString(documentStyle(req.WorkType))
 	writeRequirements(&b, req.Requirements)
 	return b.String()
+}
+
+// PlanChapters words so'zli hujjatdagi boblar soni (rasmlar sonini oldindan
+// hisoblash uchun; GenerateDocument ham shuncha bob so'raydi).
+func PlanChapters(words int) int {
+	return planBudget(max(words, minDocumentWords)).chapters
 }

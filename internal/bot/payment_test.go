@@ -88,7 +88,7 @@ func TestQuote(t *testing.T) {
 	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, FreePhoto: 1, FreePlain: 1},
+		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200, FreePhoto: 1, FreePlain: 1},
 	})
 	u := &storage.User{ID: 1, TelegramUserID: 42}
 	photo := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeOcean, Volume: 10}
@@ -123,8 +123,16 @@ func TestQuote(t *testing.T) {
 		t.Errorf("12 ta rasmsiz slayd 3 000 so'm bo'lishi kerak: %+v %q", q, q.line())
 	}
 	q, _ = h.quote(context.Background(), doc, u)
-	if q.mode != quotePaid || q.price != 7000 || q.detail != "" {
-		t.Errorf("Word ish sahifalar sonidan qat'i nazar 7 000 so'm bo'lishi kerak: %+v", q)
+	if q.mode != quotePaid || q.price != 3000 || !strings.Contains(q.line(), "15 sahifa × 200 so'm") {
+		t.Errorf("15 sahifali mustaqil ish 3 000 so'm (sahifasiga 200) bo'lishi kerak: %+v %q", q, q.line())
+	}
+	referat := &storage.Session{WorkType: string(ai.WorkReferat), Design: generator.DocThemeModern, Volume: 12}
+	if q, _ = h.quote(context.Background(), referat, u); q.price != 2400 || q.kind != storage.KindPlain {
+		t.Errorf("12 sahifali referat 2 400 so'm bo'lishi kerak: %+v", q)
+	}
+	practical := &storage.Session{WorkType: string(ai.WorkPractical), Volume: 15}
+	if q, _ = h.quote(context.Background(), practical, u); q.price != 7000 || q.detail != "" {
+		t.Errorf("amaliy topshiriq sahifalar sonidan qat'i nazar 7 000 so'm bo'lishi kerak: %+v", q)
 	}
 
 	fb.credit = &storage.Order{ID: 5, Status: storage.OrderPaid, Price: 10000}

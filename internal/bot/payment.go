@@ -62,7 +62,8 @@ type PaymentOptions struct {
 	// Taqdimot narxi = slaydlar soni × bitta slayd narxi (rasmli yoki rasmsiz dizayn).
 	PriceSlidePhoto int // rasmli dizayndagi bitta slayd, so'm
 	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd, so'm
-	PriceDocument   int // mustaqil ish / amaliy topshiriq (Word), so'm
+	PriceDocument   int // amaliy topshiriq (Word), so'm — qat'iy narx
+	PricePage       int // mustaqil ish va referat: bitta sahifa narxi, so'm
 	FreePhoto       int
 	FreePlain       int
 	// AdminPassword — shu matnni yuborgan foydalanuvchi admin bo'ladi (bo'sh — o'chirilgan).
@@ -100,9 +101,9 @@ func (h *Handler) paymentsOn() bool {
 	return h.opts.Payment.Enabled && h.billing != nil
 }
 
-// orderKind buyurtmaning narx toifasini aniqlaydi: AI maxsus dizayn —
-// "ai_<tarif>", rasmli dizayndagi taqdimot — "photo", rasmsiz taqdimot va
-// Word ishlar — "plain".
+// orderKind buyurtmaning narx toifasini aniqlaydi: maxsus dizayn (taqdimot
+// yoki Word ish) — "ai_<tarif>", rasmli dizayndagi taqdimot — "photo",
+// rasmsiz taqdimot va tayyor dizayndagi Word ishlar — "plain".
 func orderKind(s *storage.Session) string {
 	if isCustom(s) {
 		return storage.AIKind(s.Tariff)
@@ -138,10 +139,32 @@ func (h *Handler) slideRate(kind string) int {
 	return h.opts.Payment.PriceSlidePlain
 }
 
+// pageRate mustaqil ish va referatning bitta sahifa narxi: maxsus dizaynda —
+// tarif narxi, aks holda — PricePage.
+func (h *Handler) pageRate(kind string) int {
+	if tariff, ok := storage.KindTariff(kind); ok {
+		if t, ok := h.customTariff(tariff); ok {
+			return t.PricePage
+		}
+	}
+	return h.opts.Payment.PricePage
+}
+
+// perPage Word ish narxi sahifalar soniga bog'liqligini bildiradi (mustaqil
+// ish va referat; amaliy topshiriq — qat'iy narx).
+func perPage(workType string) bool {
+	w := ai.WorkType(workType)
+	return w.IsDocument() && w != ai.WorkPractical
+}
+
 // price buyurtma narxini hisoblaydi: taqdimot — slaydlar soni × bitta slayd
-// narxi, Word ishlar — qat'iy narx.
+// narxi, mustaqil ish va referat — sahifalar soni × bitta sahifa narxi,
+// amaliy topshiriq — qat'iy narx.
 func (h *Handler) price(s *storage.Session, kind string) int {
-	if ai.WorkType(s.WorkType).IsDocument() {
+	switch {
+	case perPage(s.WorkType):
+		return max(s.Volume, 1) * h.pageRate(kind)
+	case ai.WorkType(s.WorkType).IsDocument():
 		return h.opts.Payment.PriceDocument
 	}
 	return max(s.Volume, 1) * h.slideRate(kind)
@@ -164,15 +187,17 @@ func (h *Handler) pricingText() string {
 		return ""
 	}
 	p := h.opts.Payment
-	s := fmt.Sprintf("\n\n💳 <b>Narxlar:</b> taqdimot — har bir slayd %s (📷 rasmli dizaynda — %s), Word ishlar — %s.",
-		formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto), formatSum(p.PriceDocument))
+	s := fmt.Sprintf("\n\n💳 <b>Narxlar:</b> taqdimot — har bir slayd %s (📷 rasmli dizaynda — %s), "+
+		"mustaqil ish va referat — har bir sahifa %s, amaliy topshiriq — %s.",
+		formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto), formatSum(p.PricePage), formatSum(p.PriceDocument))
 	if h.customOn() {
 		var parts []string
 		for _, name := range h.customTariffs() {
 			t, _ := h.customTariff(name)
-			parts = append(parts, fmt.Sprintf("%s — %s", tariffViews[name].name, formatSum(t.PriceSlide)))
+			parts = append(parts, fmt.Sprintf("%s — %s/slayd, %s/sahifa", tariffViews[name].name,
+				formatSum(t.PriceSlide), formatSum(t.PricePage)))
 		}
-		s += "\n✨ Maxsus dizayn (har bir slayd): " + strings.Join(parts, ", ") + "."
+		s += "\n✨ Maxsus dizayn: " + strings.Join(parts, "; ") + "."
 	}
 	if p.FreePhoto > 0 || p.FreePlain > 0 {
 		s += fmt.Sprintf("\n🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>!", p.FreePhoto, p.FreePlain)
@@ -198,7 +223,7 @@ type quote struct {
 	mode   quoteMode
 	kind   string
 	price  int
-	detail string // narx tarkibi: "10 slayd × 300 so'm" (Word ishlarda — bo'sh)
+	detail string // narx tarkibi: "10 slayd × 300 so'm", "15 sahifa × 200 so'm" (amaliy topshiriqda — bo'sh)
 	credit *storage.Order
 }
 
@@ -221,7 +246,10 @@ func (q *quote) line() string {
 func (h *Handler) quote(ctx context.Context, s *storage.Session, u *storage.User) (*quote, error) {
 	kind := h.kindOf(s)
 	q := &quote{kind: kind, price: h.price(s, kind)}
-	if !ai.WorkType(s.WorkType).IsDocument() {
+	switch {
+	case perPage(s.WorkType):
+		q.detail = fmt.Sprintf("%d sahifa × %s", max(s.Volume, 1), formatSum(h.pageRate(kind)))
+	case !ai.WorkType(s.WorkType).IsDocument():
 		q.detail = fmt.Sprintf("%d slayd × %s", max(s.Volume, 1), formatSum(h.slideRate(kind)))
 	}
 	credit, err := h.billing.FindCredit(ctx, u.ID, kind, q.price)
@@ -355,11 +383,11 @@ func orderLabel(workType, kind string) string {
 	if opt, ok := findWorkType(ai.WorkType(workType)); ok {
 		name = opt.Name
 	}
-	if ai.WorkType(workType).IsDocument() {
-		return name
-	}
 	if tariff, ok := storage.KindTariff(kind); ok {
 		return name + ", ✨ Maxsus dizayn — " + tariffName(tariff)
+	}
+	if ai.WorkType(workType).IsDocument() {
+		return name
 	}
 	if kind == storage.KindPhoto {
 		return name + ", rasmli dizayn"
@@ -378,7 +406,11 @@ func (h *Handler) paymentText(o *storage.Order, intro bool) string {
 	}
 	fmt.Fprintf(&b, "🧾 <b>Buyurtma #%d:</b> %s\n", o.ID, html.EscapeString(orderLabel(o.WorkType, o.Kind)))
 	fmt.Fprintf(&b, "💰 <b>Summa:</b> %s", formatSum(o.Price))
-	if !ai.WorkType(o.WorkType).IsDocument() && o.Volume > 0 {
+	switch {
+	case o.Volume <= 0:
+	case perPage(o.WorkType):
+		fmt.Fprintf(&b, " <i>(%d sahifa)</i>", o.Volume)
+	case !ai.WorkType(o.WorkType).IsDocument():
 		fmt.Fprintf(&b, " <i>(%d slayd)</i>", o.Volume)
 	}
 	b.WriteString("\n\n")

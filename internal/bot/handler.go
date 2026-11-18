@@ -47,6 +47,7 @@ type ContentGenerator interface {
 	GeneratePresentation(ctx context.Context, req ai.PresentationRequest) (*ai.Presentation, error)
 	GenerateDocument(ctx context.Context, req ai.DocumentRequest) (*ai.Document, error)
 	GenerateDesign(ctx context.Context, req ai.DesignRequest) (*ai.Design, error)
+	GenerateDocDesign(ctx context.Context, req ai.DesignRequest) (*ai.DocDesign, error)
 }
 
 // SlidesBuilder — taqdimot (.pptx) faylini yaratuvchi generator.
@@ -56,11 +57,14 @@ type SlidesBuilder interface {
 	ContentSlides(total int) int
 }
 
-// PaperBuilder — mustaqil ish / amaliy topshiriq (.docx) faylini yaratuvchi generator.
+// PaperBuilder — Word ish (mustaqil ish, referat, amaliy topshiriq) .docx
+// faylini yaratuvchi generator.
 type PaperBuilder interface {
 	Build(ctx context.Context, paper generator.Paper) (string, error)
 	// ContentWords sahifalar sonidan asosiy matnning taxminiy hajmini (so'zlarda) hisoblaydi.
 	ContentWords(pages int) int
+	// FigureWords bitta rasm matn o'rnida egallaydigan joy (so'zlarda).
+	FigureWords() int
 }
 
 // ImageService — rasmli dizaynlar uchun AI rasm generatsiyasi (internal/images).
@@ -86,6 +90,8 @@ type Options struct {
 	// DesignPreview — dizayn mavzulari ko'rinishi rasmi (ixtiyoriy). Fayl
 	// bo'lmasa, dizayn tanlash xabari rasmsiz yuboriladi.
 	DesignPreview string
+	// DocDesignPreview — Word dizaynlari ko'rinishi rasmi (ixtiyoriy).
+	DocDesignPreview string
 	// Images — AI rasm generatsiyasi (ixtiyoriy). nil yoki provayder ulanmagan
 	// bo'lsa, rasmli dizaynlar rasm o'rnida bezakli fon bilan chiqadi.
 	Images ImageService
@@ -125,7 +131,7 @@ const (
 	msgWelcome = "👋 Assalomu alaykum, <b>%s</b>!\n\n" +
 		"Men siz uchun tez va sifatli tayyorlab beraman:\n" +
 		"📊 <b>taqdimot</b> — PowerPoint (.pptx): tayyor dizaynlarda yoki mavzungizga mos ✨ maxsus dizaynda\n" +
-		"📚 <b>mustaqil ish</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx)\n\n" +
+		"📚 <b>mustaqil ish</b>, 📝 <b>referat</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx), chiroyli dizaynlarda\n\n" +
 		"Bir nechta savolga javob bering — qolganini o'zim qilaman ✨"
 	msgChooseWorkType = "📌 <b>Ish turini tanlang:</b>"
 	msgPressButton    = "👇 Iltimos, quyidagi tugmalardan birini tanlang."
@@ -179,8 +185,9 @@ type Handler struct {
 
 	// previewID — Telegram serveriga bir marta yuklangan dizaynlar rasmi
 	// identifikatori (keyingi safar fayl qayta yuklanmaydi).
-	previewMu sync.Mutex
-	previewID string
+	previewMu    sync.Mutex
+	previewID    string
+	docPreviewID string // Word dizaynlari rasmi
 
 	// Bir foydalanuvchining update'lari parallel kelganda (telebot handlerlarni
 	// alohida goroutine'larda ishga tushiradi) FSM holati buzilmasligi uchun
@@ -496,7 +503,7 @@ func (h *Handler) onText(c tele.Context) error {
 	case StateLanguage:
 		return c.Send(msgPressButton, languageKeyboard())
 	case StateDesign:
-		return c.Send(msgDesignHint, designKeyboard(h.customOn()))
+		return c.Send(msgDesignHint, h.designKeyboardFor(s))
 	case StateTariff:
 		return c.Send(msgTariffHint, h.tariffKeyboard(s))
 	case StateConfirm:
@@ -542,10 +549,14 @@ func (h *Handler) onText(c tele.Context) error {
 		}
 		return h.sendSummary(c, s)
 	case StateDesign:
-		if err := c.Send(fmt.Sprintf("👌 Slaydlar soni: <b>%d</b>", s.Volume), removeKeyboard()); err != nil {
+		unit := "Slaydlar soni"
+		if ai.WorkType(s.WorkType).IsDocument() {
+			unit = "Sahifalar soni"
+		}
+		if err := c.Send(fmt.Sprintf("👌 %s: <b>%d</b>", unit, s.Volume), removeKeyboard()); err != nil {
 			return err
 		}
-		return h.askDesign(c)
+		return h.askDesign(c, s)
 	}
 	return h.ask(c, s, next)
 }
@@ -618,7 +629,7 @@ func (h *Handler) onLanguage(c tele.Context) error {
 	return h.ask(c, s, StateTopic)
 }
 
-// onDesign taqdimot dizayni tanlanganda chaqiriladi.
+// onDesign taqdimot yoki Word ish dizayni tanlanganda chaqiriladi.
 func (h *Handler) onDesign(c tele.Context) error {
 	defer h.lock(c.Sender().ID)()
 	ctx, cancel := requestContext()
@@ -644,6 +655,20 @@ func (h *Handler) onDesign(c tele.Context) error {
 		h.editPrompt(c, "🎨 Dizayn: <b>"+customLabel+"</b>")
 		return h.askTariff(c, s)
 	}
+	if ai.WorkType(s.WorkType).IsDocument() {
+		dt, ok := generator.FindDocTheme(c.Data())
+		if !ok {
+			return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
+		}
+		s.Design = dt.ID
+		s.State = string(StateStudent)
+		if err := h.sessions.Save(ctx, s); err != nil {
+			return err
+		}
+		_ = c.Respond(&tele.CallbackResponse{Text: dt.Name})
+		h.editPrompt(c, fmt.Sprintf("🎨 Dizayn: <b>%s %s</b>", dt.Emoji, html.EscapeString(dt.Name)))
+		return h.ask(c, s, StateStudent)
+	}
 	theme, ok := generator.FindTheme(c.Data())
 	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
@@ -660,21 +685,32 @@ func (h *Handler) onDesign(c tele.Context) error {
 	return h.ask(c, s, StateStudent)
 }
 
+// designKeyboardFor ish turiga mos dizayn tugmalari.
+func (h *Handler) designKeyboardFor(s *storage.Session) *tele.ReplyMarkup {
+	if ai.WorkType(s.WorkType).IsDocument() {
+		return docDesignKeyboard(h.customOn())
+	}
+	return designKeyboard(h.customOn())
+}
+
 // askDesign dizayn tanlash xabarini yuboradi: dizaynlar ko'rinishi rasmi
-// (bo'lsa) va har bir dizayn uchun tugma.
-func (h *Handler) askDesign(c tele.Context) error {
-	text := designPrompt(h.customOn())
-	keyboard := designKeyboard(h.customOn())
+// (bo'lsa) va har bir dizayn uchun tugma. Word ishlar uchun — Word dizaynlari.
+func (h *Handler) askDesign(c tele.Context, s *storage.Session) error {
+	text, path, cache := designPrompt(h.customOn()), h.opts.DesignPreview, &h.previewID
+	if ai.WorkType(s.WorkType).IsDocument() {
+		text, path, cache = docDesignPrompt(h.customOn()), h.opts.DocDesignPreview, &h.docPreviewID
+	}
+	keyboard := h.designKeyboardFor(s)
 	h.previewMu.Lock()
-	cached := h.previewID
+	cached := *cache
 	h.previewMu.Unlock()
 
 	var file tele.File
 	switch {
 	case cached != "":
 		file = tele.File{FileID: cached}
-	case h.opts.DesignPreview != "" && fileExists(h.opts.DesignPreview):
-		file = tele.FromDisk(h.opts.DesignPreview)
+	case path != "" && fileExists(path):
+		file = tele.FromDisk(path)
 	default:
 		return c.Send(text, keyboard)
 	}
@@ -687,15 +723,48 @@ func (h *Handler) askDesign(c tele.Context) error {
 	if err != nil {
 		// Rasmni yuborib bo'lmasa (masalan, file_id eskirgan) — rasmsiz davom etamiz.
 		h.log.Warn("failed to send design preview", zap.Error(err))
-		if h.previewID == cached {
-			h.previewID = ""
+		if *cache == cached {
+			*cache = ""
 		}
 		return c.Send(text, keyboard)
 	}
-	if msg != nil && msg.Photo != nil && h.previewID == "" {
-		h.previewID = msg.Photo.FileID
+	if msg != nil && msg.Photo != nil && *cache == "" {
+		*cache = msg.Photo.FileID
 	}
 	return nil
+}
+
+// docDesignPrompt Word dizaynini tanlash xabari (rasm izohi — 1024 belgigacha).
+func docDesignPrompt(custom bool) string {
+	var b strings.Builder
+	b.WriteString("🎨 <b>Hujjat dizaynini tanlang:</b>\n\n")
+	for i, t := range generator.DocThemes() {
+		fmt.Fprintf(&b, "%d. %s <b>%s</b> — %s\n", i+1, t.Emoji, html.EscapeString(t.Name), html.EscapeString(t.Description))
+	}
+	b.WriteString("\n<i>Barcha dizaynlarda asosiy matn OTM talablariga mos: Times New Roman 14, interval 1,5.</i>")
+	if custom {
+		b.WriteString("\n✨ <b>Maxsus dizayn</b> — mavzungizga mos noyob uslub va boblarda rasmlar (3 ta tarif).")
+	}
+	return b.String()
+}
+
+// docDesignKeyboard Word dizaynlari tugmalari (qatorda 2 tadan).
+func docDesignKeyboard(custom bool) *tele.ReplyMarkup {
+	m := &tele.ReplyMarkup{}
+	themes := generator.DocThemes()
+	rows := make([]tele.Row, 0, (len(themes)+1)/2+1)
+	if custom {
+		rows = append(rows, m.Row(m.Data(customLabel+" — mavzuga mos", cbDesign, generator.ThemeCustom)))
+	}
+	for i := 0; i < len(themes); i += 2 {
+		var btns []tele.Btn
+		for j, t := range themes[i:min(i+2, len(themes))] {
+			btns = append(btns, m.Data(fmt.Sprintf("%d. %s %s", i+j+1, t.Emoji, t.Name), cbDesign, t.ID))
+		}
+		rows = append(rows, m.Row(btns...))
+	}
+	m.Inline(rows...)
+	return m
 }
 
 // designPrompt dizayn tanlash xabari matni (custom — AI maxsus dizayn yoqilgan).
@@ -1140,21 +1209,51 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 	return info
 }
 
-// buildPaper mustaqil ish yoki amaliy topshiriqni (.docx) yaratadi. Hujjat
-// bir necha AI so'rovi bilan yoziladi, shuning uchun jarayon holati
-// foydalanuvchiga alohida xabarda ko'rsatib boriladi.
+// buildPaper Word ishni (mustaqil ish, referat, amaliy topshiriq) .docx
+// ko'rinishida yaratadi. Hujjat bir necha AI so'rovi bilan yoziladi, shuning
+// uchun jarayon holati foydalanuvchiga alohida xabarda ko'rsatib boriladi.
+//
+// Maxsus dizaynda (custom.go) avval tarif modeli mavzuga mos uslub yaratadi,
+// matnni ham shu model yozadi, boblarning bir qismiga esa tarif sifatida rasm
+// chiziladi (matn hajmi rasmlar egallaydigan joyga qarab kamaytiriladi).
 func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Papers
-
 	li := lang.Get(s.Language)
+
+	var (
+		gen      = h.ai
+		spec     *generator.DocSpec
+		aiDesign *ai.DocDesign
+		tariff   CustomTariff
+		figures  int
+	)
+	custom := isCustom(s)
+	if custom {
+		var ok bool
+		if tariff, ok = h.customTariff(s.Tariff); !ok {
+			return nil, fmt.Errorf("maxsus dizayn tarifi topilmadi: %q", s.Tariff)
+		}
+		gen = tariff.AI
+		var err error
+		if aiDesign, spec, err = h.customDocDesign(ctx, chat, log, s, tariff, li.Prompt); err != nil {
+			return nil, err
+		}
+		figures = h.customDocImages(s, tariff)
+	}
+	words := b.ContentWords(s.Volume)
+	if figures > 0 {
+		words = max(words/2, words-figures*b.FigureWords())
+	}
+
 	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Bo'limlar yozilmoqda..."))
-	doc, err := h.ai.GenerateDocument(ctx, ai.DocumentRequest{
+	doc, err := gen.GenerateDocument(ctx, ai.DocumentRequest{
 		WorkType:     opt.Type,
 		Topic:        s.Topic,
-		Words:        b.ContentWords(s.Volume),
+		Words:        words,
 		OnProgress:   report,
 		Language:     li.Prompt,
 		Requirements: s.Requirements,
+		Figures:      figures > 0,
 	})
 	stopProgress()
 	if err != nil {
@@ -1173,28 +1272,131 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		Conclusion:   toParagraphs(doc.Conclusion),
 		References:   doc.References,
 		Chapters:     make([]generator.Section, 0, len(doc.Chapters)),
+		Custom:       spec,
+	}
+	if opt.Type.HasDesigns() {
+		paper.Design = s.Design
 	}
 	for _, ch := range doc.Chapters {
 		paper.Chapters = append(paper.Chapters, generator.Section{Title: ch.Title, Paragraphs: toParagraphs(ch.Paragraphs)})
+	}
+	var pics picturesInfo
+	if figures > 0 {
+		imageStyle := ""
+		if aiDesign != nil {
+			imageStyle = aiDesign.ImageStyle
+		}
+		pics = h.addDocFigures(ctx, chat, log, doc, &paper, tariff.Images, imageStyle, figures)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	path, err := b.Build(ctx, paper)
 	if err != nil {
 		return nil, fmt.Errorf("docx: %w", err)
 	}
 
+	designName := ""
+	switch {
+	case custom:
+		designName = docCustomCaption(aiDesign, s.Tariff)
+	case opt.Type.HasDesigns():
+		if t, ok := generator.FindDocTheme(s.Design); ok {
+			designName = t.Emoji + " " + t.Name
+		}
+	}
+	caption := fmt.Sprintf("📎 <b>%s</b>\n%s · %d sahifa", html.EscapeString(s.Topic), html.EscapeString(opt.Name), s.Volume)
+	summary := fmt.Sprintf("%d sahifa · %d bob · %d manba", s.Volume, len(paper.Chapters), len(paper.References))
+	if designName != "" {
+		caption += " · " + html.EscapeString(designName)
+		summary += " · " + designName
+	}
+	if custom {
+		summary += fmt.Sprintf(" · %s, %s:%s", tariff.TextModel, tariff.ImageModel, tariff.ImageQuality)
+	}
+	if pics.requested > 0 {
+		summary += fmt.Sprintf(" · 🖼 %d/%d rasm", pics.placed, pics.requested)
+	}
+
 	return &output{
 		path:     path,
 		fileName: documentFileName(s.Topic, ".docx"),
 		mime:     docxMIME,
-		caption: fmt.Sprintf("📎 <b>%s</b>\n%s · %d sahifa",
-			html.EscapeString(s.Topic), html.EscapeString(opt.Name), s.Volume),
-		summary: fmt.Sprintf("%d sahifa · %d bob · %d manba", s.Volume, len(paper.Chapters), len(paper.References)),
+		caption:  caption,
+		summary:  summary,
 		logFields: []zap.Field{
 			zap.Int("pages_requested", s.Volume),
 			zap.Int("chapters", len(paper.Chapters)),
 			zap.Int("references", len(paper.References)),
+			zap.String("design", s.Design),
+			zap.Int("figures", pics.placed),
 		},
 	}, nil
+}
+
+// docImageStage — Word ish rasmlarini chizish bosqichi.
+var docImageStage = progressStage{icon: "🖼", first: "Rasmlar chizilmoqda...", writing: "Rasmlar chizilmoqda...", last: "Hujjat tayyorlanmoqda..."}
+
+// addDocFigures rasm g'oyasi bor boblardan n tasiga (teng oraliqda) rasm
+// chizadi va ularni hujjatga qo'shadi. Chizilmagan rasm o'rnida bob rasmsiz qoladi.
+func (h *Handler) addDocFigures(ctx context.Context, chat *tele.Chat, log *zap.Logger, doc *ai.Document,
+	paper *generator.Paper, svc ImageService, imageStyle string, n int) picturesInfo {
+	var cand []int
+	for i, ch := range doc.Chapters {
+		if ch.Figure != nil && ch.Figure.Prompt != "" && i < len(paper.Chapters) {
+			cand = append(cand, i)
+		}
+	}
+	targets := spreadPick(cand, n)
+	info := picturesInfo{tier: images.TierStandard, requested: len(targets)}
+	if len(targets) == 0 || svc == nil {
+		log.Warn("AI returned no figure ideas")
+		return info
+	}
+
+	reqs := make([]images.Request, len(targets))
+	for k, i := range targets {
+		prompt := doc.Chapters[i].Figure.Prompt
+		if imageStyle != "" {
+			prompt += ". Style: " + imageStyle
+		}
+		reqs[k] = images.Request{Prompt: prompt + ". No text, letters, numbers or logos in the image.", Shape: images.Landscape}
+	}
+	report, stop := h.startProgress(ctx, chat, log, docImageStage)
+	report(0, len(reqs))
+	started := time.Now()
+	results := svc.Generate(ctx, info.tier, reqs, report)
+	stop()
+
+	for k, r := range results {
+		if r.Data == nil {
+			continue
+		}
+		i := targets[k]
+		paper.Chapters[i].Figure = &generator.Figure{Data: r.Data, Caption: doc.Chapters[i].Figure.Caption}
+		info.placed++
+		if info.provider == "" {
+			info.provider = r.Provider
+		}
+	}
+	log.Info("figures generated", zap.Int("requested", info.requested), zap.Int("placed", info.placed),
+		zap.String("provider", info.provider), zap.Duration("took", time.Since(started)))
+	return info
+}
+
+// spreadPick list dan k ta elementni teng oraliqda tanlaydi (tartib saqlanadi).
+func spreadPick(list []int, k int) []int {
+	if k <= 0 || len(list) == 0 {
+		return nil
+	}
+	if k >= len(list) {
+		return list
+	}
+	out := make([]int, k)
+	for j := range out {
+		out[j] = list[(2*j+1)*len(list)/(2*k)]
+	}
+	return out
 }
 
 func toParagraphs(in []ai.Paragraph) []generator.Paragraph {
@@ -1531,6 +1733,10 @@ func orderDetails(s *storage.Session, maxRequirements int) string {
 	e := html.EscapeString
 	if isCustom(s) {
 		format += "\n🎨 <b>Dizayn:</b> " + customLabel + " · " + tariffName(s.Tariff)
+	} else if ai.WorkType(s.WorkType).HasDesigns() {
+		if t, ok := generator.FindDocTheme(s.Design); ok {
+			format += "\n🎨 <b>Dizayn:</b> " + t.Emoji + " " + e(t.Name)
+		}
 	} else if !ai.WorkType(s.WorkType).IsDocument() {
 		if t, ok := generator.FindTheme(s.Design); ok {
 			format += "\n🎨 <b>Dizayn:</b> " + t.Emoji + " " + e(t.Name)

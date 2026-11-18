@@ -78,7 +78,7 @@ func run() error {
 	}
 
 	// 4. AI klient va fayl generatorlari: taqdimot — .pptx (shablon asosida),
-	// mustaqil ish va amaliy topshiriq — .docx.
+	// mustaqil ish, referat va amaliy topshiriq — .docx.
 	aiClient, err := ai.New(ctx, cfg.AI, log)
 	if err != nil {
 		return err
@@ -118,7 +118,8 @@ func run() error {
 				zap.String("vision_model", cfg.Payment.VisionModel),
 				zap.Int("price_slide_photo", cfg.Payment.PriceSlidePhoto),
 				zap.Int("price_slide_plain", cfg.Payment.PriceSlidePlain),
-				zap.Int("price_document", cfg.Payment.PriceDocument))
+				zap.Int("price_document", cfg.Payment.PriceDocument),
+				zap.Int("price_page", cfg.Payment.PricePage))
 		} else {
 			log.Warn("OPENAI_API_KEY yo'q — to'lov cheklari AI siz, faqat admin tomonidan tekshiriladi")
 		}
@@ -155,6 +156,7 @@ func run() error {
 		JobTimeout:        cfg.Generator.JobTimeout,
 		// Dizaynlar ko'rinishi rasmi shablon yonida turadi (go run ./cmd/preview bilan yangilanadi).
 		DesignPreview:    filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "designs.png"),
+		DocDesignPreview: filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "doc_designs.png"),
 		Images:           imageService,
 		DefaultImageTier: images.Tier(cfg.Images.DefaultTier),
 		Billing:          billing,
@@ -166,6 +168,7 @@ func run() error {
 			PriceSlidePhoto: cfg.Payment.PriceSlidePhoto,
 			PriceSlidePlain: cfg.Payment.PriceSlidePlain,
 			PriceDocument:   cfg.Payment.PriceDocument,
+			PricePage:       cfg.Payment.PricePage,
 			FreePhoto:       cfg.Payment.FreePhoto,
 			FreePlain:       cfg.Payment.FreePlain,
 			AdminPassword:   cfg.Payment.AdminPassword,
@@ -245,6 +248,7 @@ func newCustomTariffs(cfg *config.Config, log *zap.Logger) map[string]bot.Custom
 			cfg.Images.Parallel, cfg.Images.Timeout, false, log.With(zap.String("tariff", name)))
 		out[name] = bot.CustomTariff{
 			PriceSlide:   t.PriceSlide,
+			PricePage:    t.PricePage,
 			ImagePercent: t.ImagePercent,
 			AI:           ai.NewOpenAIModel(cfg.AI, t.TextModel, log),
 			Images:       svc,
@@ -255,6 +259,7 @@ func newCustomTariffs(cfg *config.Config, log *zap.Logger) map[string]bot.Custom
 		log.Info("custom design tariff",
 			zap.String("tariff", name),
 			zap.Int("price_slide", t.PriceSlide),
+			zap.Int("price_page", t.PricePage),
 			zap.String("text_model", t.TextModel),
 			zap.String("image", cfg.Custom.ImageModel+":"+t.ImageQuality),
 			zap.Int("image_percent", t.ImagePercent))

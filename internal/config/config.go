@@ -125,10 +125,12 @@ type CustomConfig struct {
 // CustomTier — bitta tarif sozlamalari.
 type CustomTier struct {
 	PriceSlide   int    // bitta slayd narxi, so'mda (titul va yakuniy slayd ham sanaladi)
+	PricePage    int    // Word ish (mustaqil ish, referat): bitta sahifa narxi, so'mda
 	TextModel    string // slaydlar matni va dizayn konsepsiyasini yozadigan model
 	ImageQuality string // low | medium | high
-	// ImagePercent — rasmlar soni slaydlar sonining necha foizi (titul rasmi
-	// ham kiradi): 20 slayd va 40% — 8 ta rasm.
+	// ImagePercent — rasmlar soni: taqdimotda slaydlar sonining (titul rasmi
+	// ham kiradi; 20 slayd va 40% — 8 ta rasm), Word ishda boblar sonining
+	// necha foizi (5 bob va 40% — 2 ta rasm).
 	ImagePercent int
 }
 
@@ -145,9 +147,10 @@ func (c CustomConfig) Tier(name string) (CustomTier, bool) {
 //	optimal  — gpt-4.1-mini  + gpt-image-1 medium, 8 rasm  ≈ $0.35–0.39
 //	premium  — gpt-4o        + gpt-image-1 high,   10 rasm ≈ $1.72
 func customConfig(p *parser) CustomConfig {
-	tier := func(prefix string, price int, model, quality string, percent int) CustomTier {
+	tier := func(prefix string, price, pagePrice int, model, quality string, percent int) CustomTier {
 		return CustomTier{
 			PriceSlide:   p.int(prefix+"_PRICE", price),
+			PricePage:    p.int(prefix+"_PAGE_PRICE", pagePrice),
 			TextModel:    p.str(prefix+"_TEXT_MODEL", model),
 			ImageQuality: strings.ToLower(p.str(prefix+"_IMAGE_QUALITY", quality)),
 			ImagePercent: p.int(prefix+"_IMAGE_PERCENT", percent),
@@ -157,9 +160,9 @@ func customConfig(p *parser) CustomConfig {
 		Enabled:    p.bool("CUSTOM_DESIGN_ENABLED", true),
 		ImageModel: p.str("CUSTOM_IMAGE_MODEL", "gpt-image-1"),
 		Tiers: map[string]CustomTier{
-			TariffStandard: tier("CUSTOM_STANDARD", 300, "gpt-4o-mini", "low", 40),
-			TariffOptimal:  tier("CUSTOM_OPTIMAL", 500, "gpt-4.1-mini", "medium", 40),
-			TariffPremium:  tier("CUSTOM_PREMIUM", 1700, "gpt-4o", "high", 50),
+			TariffStandard: tier("CUSTOM_STANDARD", 300, 400, "gpt-4o-mini", "low", 40),
+			TariffOptimal:  tier("CUSTOM_OPTIMAL", 500, 700, "gpt-4.1-mini", "medium", 40),
+			TariffPremium:  tier("CUSTOM_PREMIUM", 1700, 1500, "gpt-4o", "high", 50),
 		},
 	}
 }
@@ -177,6 +180,9 @@ func (c CustomConfig) validate() []error {
 		key := "CUSTOM_" + strings.ToUpper(name)
 		if t.PriceSlide <= 0 {
 			add("%s_PRICE musbat bo'lishi kerak", key)
+		}
+		if t.PricePage <= 0 {
+			add("%s_PAGE_PRICE musbat bo'lishi kerak", key)
 		}
 		if t.TextModel == "" {
 			add("%s_TEXT_MODEL majburiy", key)
@@ -266,7 +272,7 @@ type GeneratorConfig struct {
 type LimitsConfig struct {
 	MinSlides int // taqdimot: umumiy slaydlar soni (titul va yakuniy slayd bilan)
 	MaxSlides int
-	MinPages  int // mustaqil ish / amaliy topshiriq: umumiy sahifalar soni (titul, reja, adabiyotlar bilan)
+	MinPages  int // Word ishlar: umumiy sahifalar soni (titul, reja, adabiyotlar bilan)
 	MaxPages  int
 }
 
@@ -280,7 +286,8 @@ type PaymentConfig struct {
 	// Taqdimot narxi slaydlar soniga qarab hisoblanadi: slaydlar × bitta slayd narxi.
 	PriceSlidePhoto int // rasmli dizayndagi bitta slayd narxi, so'mda
 	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd narxi, so'mda
-	PriceDocument   int // mustaqil ish / amaliy topshiriq (Word) narxi, so'mda
+	PriceDocument   int // amaliy topshiriq (Word) narxi, so'mda (qat'iy)
+	PricePage       int // mustaqil ish va referat: bitta sahifa narxi, so'mda
 	FreePhoto       int // har bir foydalanuvchiga beriladigan bepul rasmli urinishlar soni
 	FreePlain       int // bepul rasmsiz urinishlar soni
 
@@ -324,6 +331,7 @@ func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
 		PriceSlidePlain: p.int("PRICE_SLIDE_PLAIN", 250),
 		// Eski .env lar uchun: PRICE_DOCUMENT berilmasa, PRICE_PLAIN olinadi.
 		PriceDocument: p.int("PRICE_DOCUMENT", p.int("PRICE_PLAIN", 7000)),
+		PricePage:     p.int("PRICE_PAGE", 200),
 		FreePhoto:     p.int("FREE_PHOTO", 1),
 		FreePlain:     p.int("FREE_PLAIN", 1),
 		VisionModel:   p.str("PAYMENT_VISION_MODEL", ai.OpenAIModel),
@@ -342,8 +350,8 @@ func (c PaymentConfig) validate() []error {
 	if n := len(digitsOnly(c.CardNumber)); n < 16 || n > 19 {
 		add("PAYMENT_ENABLED=true uchun PAYMENT_CARD_NUMBER majburiy (16–19 ta raqam)")
 	}
-	if c.PriceSlidePhoto <= 0 || c.PriceSlidePlain <= 0 || c.PriceDocument <= 0 {
-		add("PRICE_SLIDE_PHOTO, PRICE_SLIDE_PLAIN va PRICE_DOCUMENT musbat bo'lishi kerak")
+	if c.PriceSlidePhoto <= 0 || c.PriceSlidePlain <= 0 || c.PriceDocument <= 0 || c.PricePage <= 0 {
+		add("PRICE_SLIDE_PHOTO, PRICE_SLIDE_PLAIN, PRICE_DOCUMENT va PRICE_PAGE musbat bo'lishi kerak")
 	}
 	if c.FreePhoto < 0 || c.FreePlain < 0 {
 		add("FREE_PHOTO va FREE_PLAIN manfiy bo'lishi mumkin emas")

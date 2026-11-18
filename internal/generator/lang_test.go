@@ -89,7 +89,7 @@ func TestPaperLabelsFollowLanguage(t *testing.T) {
 			t.Errorf("ruscha hujjatda o'zbekcha yozuv qolgan: %q", unwanted)
 		}
 	}
-	if styles := string(ru[docStylesPath]); !strings.Contains(styles, `w:val="ru-RU"`) || strings.Contains(styles, docxDefaultLang) {
+	if styles := string(ru[docStylesPath]); !strings.Contains(styles, `w:val="ru-RU"`) || strings.Contains(styles, "uz-Latn-UZ") {
 		t.Errorf("styles.xml imlo tili ru-RU emas")
 	}
 

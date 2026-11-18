@@ -35,12 +35,13 @@ const (
 	WorkPresentation WorkType = "presentation" // Slayd (taqdimot) → .pptx
 	WorkIndependent  WorkType = "independent"  // Mustaqil ish → .docx
 	WorkPractical    WorkType = "practical"    // Amaliy topshiriq → .docx
+	WorkReferat      WorkType = "referat"      // Referat → .docx
 )
 
 // Valid ish turi ma'lum qiymatlardan biri ekanini tekshiradi.
 func (w WorkType) Valid() bool {
 	switch w {
-	case WorkPresentation, WorkIndependent, WorkPractical:
+	case WorkPresentation, WorkIndependent, WorkPractical, WorkReferat:
 		return true
 	}
 	return false
@@ -48,7 +49,13 @@ func (w WorkType) Valid() bool {
 
 // IsDocument ish turi matnli hujjat (.docx) ekanini bildiradi.
 func (w WorkType) IsDocument() bool {
-	return w == WorkIndependent || w == WorkPractical
+	return w == WorkIndependent || w == WorkPractical || w == WorkReferat
+}
+
+// HasDesigns Word ish uchun dizayn tanlanishini bildiradi (mustaqil ish va
+// referat; amaliy topshiriq — doim Klassik uslubda).
+func (w WorkType) HasDesigns() bool {
+	return w == WorkIndependent || w == WorkReferat
 }
 
 // Client — matn generatsiya qiluvchi servis.
@@ -59,6 +66,8 @@ type Client interface {
 	GenerateDocument(ctx context.Context, req DocumentRequest) (*Document, error)
 	// GenerateDesign mavzuga mos maxsus dizayn konsepsiyasini yaratadi.
 	GenerateDesign(ctx context.Context, req DesignRequest) (*Design, error)
+	// GenerateDocDesign Word hujjat uchun maxsus dizayn konsepsiyasini yaratadi.
+	GenerateDocDesign(ctx context.Context, req DesignRequest) (*DocDesign, error)
 }
 
 // task — provayderga yuboriladigan bitta so'rov.

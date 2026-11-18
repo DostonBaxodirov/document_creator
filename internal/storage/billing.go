@@ -14,7 +14,7 @@ import (
 // Buyurtma (narx) toifalari.
 const (
 	KindPhoto = "photo" // rasmli taqdimot
-	KindPlain = "plain" // rasmsiz taqdimot, mustaqil ish va amaliy topshiriq
+	KindPlain = "plain" // rasmsiz taqdimot va tayyor dizayndagi Word ishlar
 
 	// kindAIPrefix — AI maxsus dizayndagi taqdimot: "ai_standard",
 	// "ai_optimal", "ai_premium" (toifa tarifni ham saqlaydi — hisobotda

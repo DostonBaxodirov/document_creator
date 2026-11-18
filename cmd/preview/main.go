@@ -20,6 +20,12 @@
 //
 // Bot dizayn tanlashda ko'rsatadigan templates/designs.png rasmi
 // scripts/design_preview.py bilan shu vosita orqali yangilanadi.
+//
+// Word dizaynlari (mustaqil ish, referat) namunalari — .docx:
+//
+//	go run ./cmd/preview -out ./previews -docs
+//
+// templates/doc_designs.png esa scripts/doc_design_preview.py bilan yangilanadi.
 package main
 
 import (
@@ -43,8 +49,16 @@ func main() {
 	only := flag.String("theme", "", "faqat shu mavzu (bo'sh — barchasi)")
 	photos := flag.String("photos", "", "haqiqiy AI rasmlar tarifi: standard yoki premium (bo'sh — namunaviy rasmlar)")
 	language := flag.String("lang", "", "yozuvlar tili: uz, uz-cyrl, ru, en (bo'sh — uz)")
+	docs := flag.Bool("docs", false, "Word dizaynlari namunalari (.docx): tayyor dizaynlar va maxsus dizayn namunalari")
 	flag.Parse()
 
+	if *docs {
+		if err := runDocs(*out); err != nil {
+			fmt.Fprintln(os.Stderr, "preview:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(*tpl, *out, *only, *photos, *language); err != nil {
 		fmt.Fprintln(os.Stderr, "preview:", err)
 		os.Exit(1)
@@ -163,4 +177,39 @@ func addPhotos(ctx context.Context, svc *images.Service, tier images.Tier, d *ge
 		placed++
 	}
 	return placed, len(reqs)
+}
+
+// runDocs har bir Word dizaynida namunaviy hujjat yaratadi: tayyor dizaynlar
+// (namuna-<id>.docx) va rasmli maxsus dizayn namunalari (namuna-doc-custom-N.docx).
+func runDocs(out string) error {
+	if err := os.MkdirAll(out, 0o750); err != nil {
+		return err
+	}
+	g, err := generator.NewDOCX(out, "O'ZBEKISTON RESPUBLIKASI OLIY TA'LIM, FAN VA INNOVATSIYALAR VAZIRLIGI", zap.NewNop())
+	if err != nil {
+		return err
+	}
+	save := func(p generator.Paper, name, label string) error {
+		tmp, err := g.Build(context.Background(), p)
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		dst := filepath.Join(out, name+".docx")
+		if err := os.Rename(tmp, dst); err != nil {
+			return err
+		}
+		fmt.Printf("%s\t%s\n", dst, label)
+		return nil
+	}
+	for _, t := range generator.DocThemes() {
+		if err := save(generator.SamplePaper(t.ID, nil, false), "namuna-"+t.ID, t.Emoji+" "+t.Name); err != nil {
+			return err
+		}
+	}
+	for i, spec := range generator.SampleDocSpecs() {
+		if err := save(generator.SamplePaper("", &spec, true), fmt.Sprintf("namuna-doc-custom-%d", i+1), "✨ "+spec.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }

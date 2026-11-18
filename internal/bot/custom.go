@@ -29,8 +29,11 @@ import (
 
 // CustomTariff — AI maxsus dizayn tarifi.
 type CustomTariff struct {
-	PriceSlide   int // bitta slayd narxi, so'm
-	ImagePercent int // rasmlar soni — slaydlar sonining necha foizi (titul rasmi bilan)
+	PriceSlide int // bitta slayd narxi, so'm
+	PricePage  int // Word ish (mustaqil ish, referat): bitta sahifa narxi, so'm
+	// ImagePercent — rasmlar soni: taqdimotda slaydlar sonining (titul rasmi
+	// bilan), Word ishda boblar sonining necha foizi.
+	ImagePercent int
 	// AI — dizayn konsepsiyasi va slaydlarni yozadigan model.
 	AI ContentGenerator
 	// Images — rasm xizmati (images.TierStandard orqali chaqiriladi). nil
@@ -87,9 +90,37 @@ func (h *Handler) customTariffs() []string {
 	return out
 }
 
-// isCustom buyurtma AI maxsus dizaynda ekanini bildiradi.
+// isCustom buyurtma maxsus dizaynda (taqdimot yoki mustaqil ish/referat)
+// ekanini bildiradi.
 func isCustom(s *storage.Session) bool {
-	return !ai.WorkType(s.WorkType).IsDocument() && s.Design == generator.ThemeCustom
+	w := ai.WorkType(s.WorkType)
+	return s.Design == generator.ThemeCustom && (!w.IsDocument() || w.HasDesigns())
+}
+
+// customDocImageCount Word ishdagi rasmlar soni: taxminiy boblar sonining
+// percent foizi, kamida 1 (percent 0 bo'lsa — rasmsiz).
+func customDocImageCount(contentWords, percent int) int {
+	if percent <= 0 {
+		return 0
+	}
+	chapters := ai.PlanChapters(contentWords)
+	return min(chapters, max(1, int(math.Round(float64(chapters)*float64(percent)/100))))
+}
+
+// customDocImages Word ish uchun rasmlar soni (rasm xizmati ulanmagan bo'lsa — 0).
+func (h *Handler) customDocImages(s *storage.Session, t CustomTariff) int {
+	if t.Images == nil || !t.Images.Available() || h.builders.Papers == nil {
+		return 0
+	}
+	return customDocImageCount(h.builders.Papers.ContentWords(s.Volume), t.ImagePercent)
+}
+
+// customPrice maxsus dizayndagi buyurtma narxi (tarif tugmalari va matni uchun).
+func (h *Handler) customPrice(s *storage.Session, t CustomTariff) int {
+	if ai.WorkType(s.WorkType).IsDocument() {
+		return t.PricePage * max(s.Volume, 1)
+	}
+	return t.PriceSlide * max(s.Volume, 1)
 }
 
 // customImageCount taqdimotdagi AI rasmlar soni (titul rasmi bilan): slaydlar
@@ -105,21 +136,41 @@ func customImageCount(slides, percent int) int {
 // tariffPrompt tarif tanlash xabari: har bir tarif narxi (slaydlar soni
 // bo'yicha), tavsifi va rasmlar soni.
 func (h *Handler) tariffPrompt(s *storage.Session) string {
+	doc := ai.WorkType(s.WorkType).IsDocument()
 	var b strings.Builder
 	b.WriteString("✨ <b>Maxsus dizayn</b>\n\n")
-	fmt.Fprintf(&b, "«%s» mavzusiga mos <b>noyob dizayn noldan yaratiladi</b>: "+
-		"ranglar palitrasi, shriftlar, titul kompozitsiyasi, bezaklar va mavzuga mos rasmlar. "+
-		"Slaydlar tuzilishi ham mazmunga qarab tanlanadi (vaqt chizig'i, sikl, sxema, SWOT ...).\n\n",
-		html.EscapeString(truncateRunes(s.Topic, 120)))
-	fmt.Fprintf(&b, "<b>Tarifni tanlang</b> (%d ta slayd):\n", s.Volume)
+	topic := html.EscapeString(truncateRunes(s.Topic, 120))
+	if doc {
+		fmt.Fprintf(&b, "«%s» mavzusiga mos <b>noyob dizayn noldan yaratiladi</b>: "+
+			"sarlavhalar rangi va shrifti, titul varaq kompozitsiyasi, ramka va bezaklar, boblarda mavzuga mos rasmlar. "+
+			"Matnni tarif modeli yozadi; asosiy matn OTM talablariga mos qoladi (Times New Roman 14, interval 1,5).\n\n", topic)
+		fmt.Fprintf(&b, "<b>Tarifni tanlang</b> (%d sahifa):\n", s.Volume)
+	} else {
+		fmt.Fprintf(&b, "«%s» mavzusiga mos <b>noyob dizayn noldan yaratiladi</b>: "+
+			"ranglar palitrasi, shriftlar, titul kompozitsiyasi, bezaklar va mavzuga mos rasmlar. "+
+			"Slaydlar tuzilishi ham mazmunga qarab tanlanadi (vaqt chizig'i, sikl, sxema, SWOT ...).\n\n", topic)
+		fmt.Fprintf(&b, "<b>Tarifni tanlang</b> (%d ta slayd):\n", s.Volume)
+	}
 	for _, name := range h.customTariffs() {
 		t, _ := h.customTariff(name)
 		v := tariffViews[name]
 		fmt.Fprintf(&b, "\n%s <b>%s</b>", v.emoji, v.name)
 		if h.paymentsOn() {
-			fmt.Fprintf(&b, " — %s/slayd → <b>%s</b>", formatSum(t.PriceSlide), formatSum(t.PriceSlide*max(s.Volume, 1)))
+			rate, unit := t.PriceSlide, "slayd"
+			if doc {
+				rate, unit = t.PricePage, "sahifa"
+			}
+			fmt.Fprintf(&b, " — %s/%s → <b>%s</b>", formatSum(rate), unit, formatSum(h.customPrice(s, t)))
 		}
-		fmt.Fprintf(&b, "\n     %s; %d ta rasm\n", v.about, customImageCount(s.Volume, t.ImagePercent))
+		images := customImageCount(s.Volume, t.ImagePercent)
+		if doc {
+			images = h.customDocImages(s, t)
+		}
+		if images > 0 {
+			fmt.Fprintf(&b, "\n     %s; %d ta rasm\n", v.about, images)
+		} else {
+			fmt.Fprintf(&b, "\n     %s\n", v.about)
+		}
 	}
 	if h.paymentsOn() {
 		b.WriteString("\n<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>")
@@ -135,7 +186,7 @@ func (h *Handler) tariffKeyboard(s *storage.Session) *tele.ReplyMarkup {
 		t, _ := h.customTariff(name)
 		label := tariffName(name)
 		if h.paymentsOn() {
-			label += " — " + formatSum(t.PriceSlide*max(s.Volume, 1))
+			label += " — " + formatSum(h.customPrice(s, t))
 		}
 		rows = append(rows, m.Row(m.Data(label, cbTariff, name)))
 	}
@@ -171,7 +222,7 @@ func (h *Handler) onTariff(c tele.Context) error {
 		}
 		_ = c.Respond()
 		h.removeButtons(c)
-		return h.askDesign(c)
+		return h.askDesign(c, s)
 	}
 
 	name := c.Data()
@@ -279,10 +330,51 @@ func customPhotoTargets(design generator.Design, pres *ai.Presentation, deck *ge
 
 // customCaption fayl izohidagi dizayn nomi: "✨ Chuqur okean (maxsus dizayn, 🥇 Premium)".
 func customCaption(d *ai.Design, tariff string) string {
-	if d != nil && d.Name != "" {
-		return fmt.Sprintf("✨ %s (maxsus dizayn, %s)", d.Name, tariffName(tariff))
+	name := ""
+	if d != nil {
+		name = d.Name
+	}
+	return customCaptionName(name, tariff)
+}
+
+// docCustomCaption — Word ishdagi maxsus dizayn nomi (customCaption kabi).
+func docCustomCaption(d *ai.DocDesign, tariff string) string {
+	name := ""
+	if d != nil {
+		name = d.Name
+	}
+	return customCaptionName(name, tariff)
+}
+
+func customCaptionName(name, tariff string) string {
+	if name != "" {
+		return fmt.Sprintf("✨ %s (maxsus dizayn, %s)", name, tariffName(tariff))
 	}
 	return fmt.Sprintf("✨ Maxsus dizayn (%s)", tariffName(tariff))
+}
+
+// customDocDesign AI dan Word dizayni konsepsiyasini oladi va uni generator
+// spetsifikatsiyasiga aylantiradi.
+func (h *Handler) customDocDesign(ctx context.Context, chat *tele.Chat, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.DocDesign, *generator.DocSpec, error) {
+	report, stop := h.startProgress(ctx, chat, log, designStage)
+	report(0, 1)
+	started := time.Now()
+	d, err := t.AI.GenerateDocDesign(ctx, ai.DesignRequest{Topic: s.Topic, Language: language, Requirements: s.Requirements})
+	stop()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: dizayn: %w", errAI, err)
+	}
+	log.Info("custom doc design generated",
+		zap.String("name", d.Name),
+		zap.String("title", d.Title),
+		zap.String("heading", d.Heading),
+		zap.String("border", d.Border),
+		zap.String("primary", d.Primary),
+		zap.Duration("took", time.Since(started)))
+	return d, &generator.DocSpec{
+		Name: d.Name, Primary: d.Primary, Accent: d.Accent, HeadingFont: d.HeadingFont,
+		Title: d.Title, Heading: d.Heading, Border: d.Border, Ornament: d.Ornament,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -304,13 +396,13 @@ func (h *Handler) guideText() string {
 
 	b.WriteString("<b>1. Nima tayyorlab beraman?</b>\n")
 	fmt.Fprintf(&b, "📊 <b>Taqdimot</b> — PowerPoint (.pptx), %d–%d slayd\n", l.MinSlides, l.MaxSlides)
-	fmt.Fprintf(&b, "📚 <b>Mustaqil ish</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx), %d–%d sahifa\n", l.MinPages, l.MaxPages)
+	fmt.Fprintf(&b, "📚 <b>Mustaqil ish</b>, 📝 <b>referat</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx), %d–%d sahifa\n", l.MinPages, l.MaxPages)
 	b.WriteString("🌐 Tillar: o'zbekcha (lotin va kirill), ruscha, inglizcha\n\n")
 
 	b.WriteString("<b>2. Buyurtma berish tartibi</b>\n")
 	b.WriteString("1️⃣ /start → ish turini va tilini tanlang\n")
 	b.WriteString("2️⃣ Mavzuni yozing va hajmni (slaydlar yoki sahifalar soni) kiriting\n")
-	fmt.Fprintf(&b, "3️⃣ Taqdimot uchun dizayn: %d ta tayyor dizayn (📷 — rasmli)", len(generator.Themes()))
+	fmt.Fprintf(&b, "3️⃣ Dizayn: taqdimotga %d ta, mustaqil ish va referatga %d ta tayyor dizayn", len(generator.Themes()), len(generator.DocThemes()))
 	if h.customOn() {
 		b.WriteString(" yoki <b>" + customLabel + "</b>")
 	}
@@ -325,7 +417,8 @@ func (h *Handler) guideText() string {
 		section("Narxlar")
 		fmt.Fprintf(&b, "📊 Tayyor dizayndagi taqdimot: har bir slayd — %s (📷 rasmli dizaynda — %s)\n",
 			formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto))
-		fmt.Fprintf(&b, "📚 Word ishlar: %s\n", formatSum(p.PriceDocument))
+		fmt.Fprintf(&b, "📚 Mustaqil ish va referat: har bir sahifa — %s\n", formatSum(p.PricePage))
+		fmt.Fprintf(&b, "🛠 Amaliy topshiriq: %s\n", formatSum(p.PriceDocument))
 		if p.FreePhoto > 0 || p.FreePlain > 0 {
 			fmt.Fprintf(&b, "🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>\n", p.FreePhoto, p.FreePlain)
 		}
@@ -334,7 +427,8 @@ func (h *Handler) guideText() string {
 
 	if h.customOn() {
 		section("✨ Maxsus dizayn — tariflar")
-		b.WriteString("Mavzungizga mos noyob dizayn noldan yaratiladi: ranglar, shriftlar, kompozitsiya va mavzuga mos rasmlar.\n")
+		b.WriteString("Mavzungizga mos noyob dizayn noldan yaratiladi: ranglar, shriftlar, kompozitsiya va mavzuga mos rasmlar " +
+			"(taqdimot, mustaqil ish va referat uchun).\n")
 		const sample = 20
 		var examples []string
 		for _, name := range h.customTariffs() {
@@ -342,10 +436,10 @@ func (h *Handler) guideText() string {
 			v := tariffViews[name]
 			fmt.Fprintf(&b, "%s <b>%s</b>", v.emoji, v.name)
 			if h.paymentsOn() {
-				fmt.Fprintf(&b, " — %s/slayd", formatSum(t.PriceSlide))
+				fmt.Fprintf(&b, " — %s/slayd, %s/sahifa", formatSum(t.PriceSlide), formatSum(t.PricePage))
 				examples = append(examples, fmt.Sprintf("%s — %s", v.name, formatSum(t.PriceSlide*sample)))
 			}
-			fmt.Fprintf(&b, "\n     %s; slaydlarning ~%d%% ida rasm\n", v.about, t.ImagePercent)
+			fmt.Fprintf(&b, "\n     %s; slaydlar yoki boblarning ~%d%% ida rasm\n", v.about, t.ImagePercent)
 		}
 		if len(examples) > 0 {
 			fmt.Fprintf(&b, "<i>Masalan, %d slayd: %s.</i>\n", sample, strings.Join(examples, ", "))

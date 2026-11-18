@@ -18,9 +18,9 @@ import (
 // testTariffs — skrinshotdagi narxlar bo'yicha tariflar.
 func testTariffs() map[string]CustomTariff {
 	return map[string]CustomTariff{
-		config.TariffStandard: {PriceSlide: 300, ImagePercent: 40, TextModel: "gpt-4o-mini", ImageModel: "gpt-image-1", ImageQuality: "low"},
-		config.TariffOptimal:  {PriceSlide: 500, ImagePercent: 40, TextModel: "gpt-4.1-mini", ImageModel: "gpt-image-1", ImageQuality: "medium"},
-		config.TariffPremium:  {PriceSlide: 1700, ImagePercent: 50, TextModel: "gpt-4o", ImageModel: "gpt-image-1", ImageQuality: "high"},
+		config.TariffStandard: {PriceSlide: 300, PricePage: 400, ImagePercent: 40, TextModel: "gpt-4o-mini", ImageModel: "gpt-image-1", ImageQuality: "low"},
+		config.TariffOptimal:  {PriceSlide: 500, PricePage: 700, ImagePercent: 40, TextModel: "gpt-4.1-mini", ImageModel: "gpt-image-1", ImageQuality: "medium"},
+		config.TariffPremium:  {PriceSlide: 1700, PricePage: 1500, ImagePercent: 50, TextModel: "gpt-4o", ImageModel: "gpt-image-1", ImageQuality: "high"},
 	}
 }
 
@@ -29,7 +29,7 @@ func customHandler(fb *fakeBilling) *Handler {
 		Limits:  Limits{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30},
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, FreePhoto: 1, FreePlain: 1},
+		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200, FreePhoto: 1, FreePlain: 1},
 		Custom:  testTariffs(),
 	})
 }
@@ -140,10 +140,21 @@ func TestCustomSummaryAndKind(t *testing.T) {
 	if txt := summaryText(s); !strings.Contains(txt, "Maxsus dizayn · 🥇 Premium") {
 		t.Errorf("xulosada tarif yo'q:\n%s", txt)
 	}
-	s.WorkType = string(ai.WorkIndependent)
-	if isCustom(s) || strings.Contains(summaryText(s), "Dizayn") {
-		t.Error("hujjatda AI dizayn bo'lmasligi kerak")
+	for _, w := range []ai.WorkType{ai.WorkIndependent, ai.WorkReferat} {
+		s.WorkType = string(w)
+		if !isCustom(s) || orderKind(s) != "ai_premium" || !strings.Contains(summaryText(s), "Maxsus dizayn · 🥇 Premium") {
+			t.Errorf("%s: maxsus dizayn bo'lishi kerak: %s", w, summaryText(s))
+		}
 	}
+	s.WorkType = string(ai.WorkPractical)
+	if isCustom(s) || strings.Contains(summaryText(s), "Dizayn") {
+		t.Error("amaliy topshiriqda dizayn bo'lmasligi kerak")
+	}
+	s.WorkType, s.Design = string(ai.WorkReferat), generator.DocThemeAcademic
+	if isCustom(s) || orderKind(s) != storage.KindPlain || !strings.Contains(summaryText(s), "Dizayn:</b> 🎓 Akademik") {
+		t.Errorf("tayyor Word dizayni xulosada ko'rinishi kerak:\n%s", summaryText(s))
+	}
+	s.Design = generator.ThemeCustom
 	resetDraft(s)
 	if s.Tariff != "" {
 		t.Error("resetDraft tarifni tozalashi kerak")
@@ -217,7 +228,7 @@ func TestGuideText(t *testing.T) {
 			t.Errorf("o'chirilgan holatda qo'llanmada %q bo'lmasligi kerak", unwanted)
 		}
 	}
-	if !strings.Contains(customHandler(&fakeBilling{}).pricingText(), "Maxsus dizayn (har bir slayd): Standart — 300 so'm") {
+	if !strings.Contains(customHandler(&fakeBilling{}).pricingText(), "Maxsus dizayn: Standart — 300 so'm/slayd, 400 so'm/sahifa") {
 		t.Errorf("qisqa narxlar matnida tariflar yo'q:\n%s", customHandler(&fakeBilling{}).pricingText())
 	}
 }
@@ -245,6 +256,7 @@ func TestNoAIMention(t *testing.T) {
 		"guide":     h.guideText(),
 		"pricing":   h.pricingText(),
 		"design":    designPrompt(true),
+		"docDesign": docDesignPrompt(true),
 		"tariff":    h.tariffPrompt(s),
 		"summary":   summaryText(s),
 		"caption":   customCaption(nil, config.TariffOptimal),

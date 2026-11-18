@@ -11,12 +11,13 @@ import (
 	"telegram-presentation-bot/internal/storage"
 )
 
-func TestVolumeRoutesToDesignOnlyForPresentation(t *testing.T) {
+func TestVolumeRoutesToDesign(t *testing.T) {
 	st := steps[StateVolume]
 	cases := map[ai.WorkType]State{
 		ai.WorkPresentation: StateDesign,
-		ai.WorkIndependent:  StateStudent,
-		ai.WorkPractical:    StateStudent,
+		ai.WorkIndependent:  StateDesign,
+		ai.WorkReferat:      StateDesign,
+		ai.WorkPractical:    StateStudent, // amaliy topshiriq — doim Klassik
 	}
 	for wt, want := range cases {
 		if got := st.nextState(&storage.Session{WorkType: string(wt)}); got != want {

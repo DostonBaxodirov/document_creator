@@ -1,9 +1,13 @@
 package generator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // rasm o'lchamini aniqlash uchun
+	_ "image/png"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +17,8 @@ import (
 	"telegram-presentation-bot/internal/lang"
 )
 
-// DOCX generatori mustaqil ish va amaliy topshiriq uchun Word (.docx) hujjatni
-// shablonsiz, to'g'ridan-to'g'ri WordprocessingML (XML) dan yig'adi.
+// DOCX generatori mustaqil ish, referat va amaliy topshiriq uchun Word (.docx)
+// hujjatni shablonsiz, to'g'ridan-to'g'ri WordprocessingML (XML) dan yig'adi.
 //
 // Rasmiylashtirish O'zbekiston OTMlarida keng qo'llaniladigan talablarga mos:
 //   - A4, hoshiyalar: chap 3 sm, o'ng 1,5 sm, yuqori va past 2 sm;
@@ -23,6 +27,10 @@ import (
 //   - reja, kirish va adabiyotlar ro'yxati yangi sahifadan boshlanadi; boblar va
 //     xulosa matn ketidan davom etadi (sahifalar soni oldindan aytilganiga yaqin
 //     chiqishi uchun — har bir bobni yangi sahifadan boshlash chala sahifalar beradi).
+//
+// Dizayn (docdesign.go) asosiy matnga tegmaydi: sarlavhalar shrifti, rangi va
+// bezagi, sahifa ramkasi va titul varaq kompozitsiyasini belgilaydi. Boblarga
+// rasm (Section.Figure) qo'yilishi mumkin — raqamlangan izohi bilan.
 //
 // Hujjat tuzilmasi: titul varaq → REJA → KIRISH → 1..N boblar → XULOSA →
 // FOYDALANILGAN ADABIYOTLAR.
@@ -33,10 +41,18 @@ type Paragraph struct {
 	Code bool
 }
 
+// Figure — bob ichidagi rasm va uning izohi.
+type Figure struct {
+	Data    []byte // JPEG yoki PNG
+	Caption string // "1-rasm." dan keyingi matn
+}
+
 // Section — hujjatning bitta bobi.
 type Section struct {
 	Title      string
 	Paragraphs []Paragraph
+	// Figure — bobdagi rasm (ixtiyoriy): birinchi paragrafdan keyin qo'yiladi.
+	Figure *Figure
 }
 
 // Paper — .docx hujjatni yaratish uchun barcha ma'lumotlar.
@@ -53,6 +69,11 @@ type Paper struct {
 	Chapters     []Section
 	Conclusion   []Paragraph
 	References   []string
+
+	// Design — tayyor Word dizayni (DocTheme*; bo'sh yoki noma'lum — Klassik).
+	Design string
+	// Custom — AI maxsus dizayni (berilsa, Design dan ustun).
+	Custom *DocSpec
 }
 
 // labels hujjat tiliga mos qotirilgan yozuvlar ("Bajardi", "KIRISH" ...).
@@ -69,6 +90,8 @@ const (
 	docSlackWords = 250
 	// docMinWords — eng kichik hujjat uchun ham yetarli matn bo'lishi uchun.
 	docMinWords = 200
+	// docFigureWords — bitta rasm (izohi bilan) egallaydigan joy, so'zlarda (~0,45 sahifa).
+	docFigureWords = 110
 )
 
 // DOCX — .docx hujjatlarni yaratuvchi generator. Holatsiz, shuning uchun
@@ -96,6 +119,10 @@ func (g *DOCX) ContentWords(pages int) int {
 	return max(docMinWords, (pages-docServicePages)*docWordsPerPage-docSlackWords)
 }
 
+// FigureWords bitta rasm matn o'rnida egallaydigan joy (so'zlarda): rasmli
+// hujjatda matn hajmi shuncha kamaytiriladi.
+func (g *DOCX) FigureWords() int { return docFigureWords }
+
 // OOXML ichki yo'llari.
 const (
 	docRelsPath       = "_rels/.rels"
@@ -111,6 +138,22 @@ const (
 	docFileNamePrefix = "document-*.docx"
 )
 
+// docImage — hujjatga joylanadigan rasm.
+type docImage struct {
+	path    string // paket ichidagi yo'li: word/media/image1.jpeg
+	relID   string
+	id      int   // docPr id (1 dan)
+	cx, cy  int64 // o'lchami, EMU
+	data    []byte
+	caption string
+}
+
+// Rasm o'lchamlari chegarasi (EMU: 1 sm = 360000).
+const (
+	docFigureMaxW = 14 * 360000
+	docFigureMaxH = 9 * 360000
+)
+
 // Build Paper asosida yangi .docx faylni outputDir ichida yaratadi va uning
 // yo'lini qaytaradi. Faylni o'chirish (os.Remove) chaqiruvchining vazifasi.
 func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
@@ -122,22 +165,34 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 	}
 
 	started := time.Now()
+	st := docStyleFor(p.Design, p.Custom)
+	figures := g.collectFigures(p)
+
 	files := map[string][]byte{
 		docContentTypes:  []byte(docxContentTypes),
 		docRelsPath:      []byte(docxRootRels),
-		docDocumentRels:  []byte(docxDocumentRels),
-		docStylesPath:    []byte(strings.Replace(docxStyles, docxDefaultLang, lang.Get(p.Lang).OOXML, 1)),
+		docDocumentRels:  []byte(docxDocumentRels(figures)),
+		docStylesPath:    []byte(docxStyles(st, lang.Get(p.Lang).OOXML)),
 		docSettingsPath:  []byte(docxSettings),
-		docFooterPath:    []byte(docxPageNumberFooter),
+		docFooterPath:    []byte(docxPageNumberFooter(st)),
 		docFooterTitle:   []byte(docxEmptyFooter),
 		docAppPropsPath:  []byte(docxAppProps),
 		docCorePropsPath: []byte(docxCoreProps(p.Topic, p.StudentName, time.Now().UTC())),
-		docDocumentPath:  []byte(g.renderDocument(p)),
+		docDocumentPath:  []byte(g.renderDocument(p, st, figures)),
 	}
 	order := []string{
 		docContentTypes, docRelsPath, docCorePropsPath, docAppPropsPath,
 		docDocumentPath, docDocumentRels, docStylesPath, docSettingsPath,
 		docFooterPath, docFooterTitle,
+	}
+	placed := 0
+	for _, f := range figures {
+		if f == nil {
+			continue
+		}
+		files[f.path] = f.data
+		order = append(order, f.path)
+		placed++
 	}
 
 	out, err := writeArchive(ctx, g.outputDir, docFileNamePrefix, order, files)
@@ -147,9 +202,48 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 	g.log.Info("docx generated",
 		zap.String("file", out),
 		zap.Int("chapters", len(p.Chapters)),
+		zap.Int("figures", placed),
 		zap.Int("references", len(p.References)),
 		zap.Duration("took", time.Since(started)))
 	return out, nil
+}
+
+// collectFigures boblardagi rasmlarni tayyorlaydi (bob indeksi bo'yicha; rasm
+// yo'q yoki o'qib bo'lmagan bob — nil).
+func (g *DOCX) collectFigures(p Paper) []*docImage {
+	out := make([]*docImage, len(p.Chapters))
+	n := 0
+	for i, ch := range p.Chapters {
+		if ch.Figure == nil || len(ch.Figure.Data) == 0 {
+			continue
+		}
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(ch.Figure.Data))
+		if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+			g.log.Warn("figure skipped: unreadable image", zap.Int("chapter", i+1), zap.Error(err))
+			continue
+		}
+		ext := "jpeg"
+		if format == "png" {
+			ext = "png"
+		}
+		cx := int64(docFigureMaxW)
+		cy := cx * int64(cfg.Height) / int64(cfg.Width)
+		if cy > docFigureMaxH {
+			cy = docFigureMaxH
+			cx = cy * int64(cfg.Width) / int64(cfg.Height)
+		}
+		n++
+		out[i] = &docImage{
+			path:    fmt.Sprintf("word/media/image%d.%s", n, ext),
+			relID:   fmt.Sprintf("rIdImg%d", n),
+			id:      n,
+			cx:      cx,
+			cy:      cy,
+			data:    ch.Figure.Data,
+			caption: strings.TrimSpace(ch.Figure.Caption),
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -157,13 +251,16 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 // ---------------------------------------------------------------------------
 
 // renderDocument hujjat tanasini (titul, reja, matn, adabiyotlar) yig'adi.
-func (g *DOCX) renderDocument(p Paper) string {
+func (g *DOCX) renderDocument(p Paper, st docStyle, figures []*docImage) string {
 	var w docBuilder
 	w.raw(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n" +
 		`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +
-		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`)
+		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
+		`xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+		`xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
+		`xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>`)
 
-	g.renderTitlePage(&w, p)
+	g.renderTitlePage(&w, p, st)
 	l := p.labels()
 
 	// Reja.
@@ -185,9 +282,20 @@ func (g *DOCX) renderDocument(p Paper) string {
 	// Asosiy matn.
 	w.heading(strings.ToUpper(l.Introduction), true)
 	w.body(p.Introduction)
+	figNo := 0
 	for i, ch := range p.Chapters {
 		w.heading(chapterTitles[i], false)
-		w.body(ch.Paragraphs)
+		fig := figures[i]
+		if fig == nil {
+			w.body(ch.Paragraphs)
+			continue
+		}
+		// Rasm birinchi paragrafdan keyin (bob bitta paragrafdan iborat bo'lsa — oxirida).
+		at := min(1, len(ch.Paragraphs))
+		w.body(ch.Paragraphs[:at])
+		figNo++
+		w.figure(fig, fmt.Sprintf(l.FigureFormat, figNo))
+		w.body(ch.Paragraphs[at:])
 	}
 	w.heading(strings.ToUpper(l.Conclusion), false)
 	w.body(p.Conclusion)
@@ -200,7 +308,7 @@ func (g *DOCX) renderDocument(p Paper) string {
 		}
 	}
 
-	w.raw(docxSectionProperties + `</w:body></w:document>`)
+	w.raw(docxSectionProperties(st) + `</w:body></w:document>`)
 	return w.String()
 }
 
@@ -210,27 +318,107 @@ const (
 	titleGapBeforeTopic     = 360
 	titleGapBeforeSign      = 2600 // mavzu → "Bajardi"
 	titleGapBeforeYear      = 2600 // "Tekshirdi" → yil
+	titleOrnamentHeight     = 500  // bezak qatori egallaydigan joy (masofalardan ayriladi)
 )
 
-// renderTitlePage titul varaqni chizadi. Uzun universitet nomi yoki mavzu
-// bo'lsa ham hammasi bitta sahifaga sig'adigan qilib masofalar tanlangan.
-func (g *DOCX) renderTitlePage(w *docBuilder, p Paper) {
-	const (
+// renderTitlePage titul varaqni dizayn kompozitsiyasiga qarab chizadi. Uzun
+// universitet nomi yoki mavzu bo'lsa ham hammasi bitta sahifaga sig'adigan
+// qilib masofalar tanlangan.
+func (g *DOCX) renderTitlePage(w *docBuilder, p Paper, st docStyle) {
+	l := p.labels()
+	color := func(c string) string {
+		if c == "" || c == "000000" {
+			return ""
+		}
+		return `<w:color w:val="` + c + `"/>`
+	}
+	headFont := ""
+	if st.headingFont != "" {
+		headFont = `<w:rFonts w:ascii="` + st.headingFont + `" w:hAnsi="` + st.headingFont + `" w:cs="` + st.headingFont + `"/>`
+	}
+	var (
 		bold      = `<w:rPr><w:b/><w:bCs/></w:rPr>`
 		boldCaps  = `<w:rPr><w:b/><w:bCs/><w:caps/></w:rPr>`
-		workType  = `<w:rPr><w:b/><w:bCs/><w:caps/><w:sz w:val="44"/><w:szCs w:val="44"/></w:rPr>`
-		topicBold = `<w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>`
+		workColor = color(st.primary)
+		topicRPr  = `<w:rPr>` + headFont + `<w:b/><w:bCs/>` + color(st.primary) + `<w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>`
 	)
-	if g.header != "" {
-		w.para("TitleCenter", "", textRun(g.header, boldCaps))
+	if st.title == docTitleBand {
+		workColor = `<w:color w:val="FFFFFF"/>`
 	}
-	w.para("TitleCenter", spacingBefore(240), textRun(p.University, boldCaps))
-	w.para("TitleCenter", spacingBefore(titleGapAfterUniversity), textRun(p.WorkType, workType))
-	l := p.labels()
-	w.para("TitleCenter", spacingBefore(titleGapBeforeTopic), textRun(l.Topic+": ", topicBold)+textRun(p.Topic, topicBold))
-	w.para("TitleSign", spacingBefore(titleGapBeforeSign), textRun(l.Student+": ", bold)+textRun(p.StudentName, ""))
-	w.para("TitleSign", spacingBefore(120), textRun(l.Teacher+": ", bold)+textRun(p.TeacherName, ""))
-	w.para("TitleCenter", spacingBefore(titleGapBeforeYear), textRun(fmt.Sprintf(l.YearFormat, p.Year), bold))
+	workRPr := `<w:rPr>` + headFont + `<w:b/><w:bCs/><w:caps/>` + workColor + `<w:spacing w:val="20"/><w:sz w:val="44"/><w:szCs w:val="44"/></w:rPr>`
+
+	// Kompozitsiyaga qarab paragraf uslubi va qo'shimcha xususiyatlar.
+	center, sign := "TitleCenter", "TitleSign"
+	sidebar := ""
+	if st.title == docTitleSidebar {
+		// Chapga tekislangan; barcha paragraflarda bir xil chap chiziq — Word
+		// ularni bitta uzluksiz chiziqqa birlashtiradi.
+		center, sign = "TitleLeft", "TitleLeft"
+		sidebar = `<w:pBdr><w:left w:val="single" w:sz="36" w:space="14" w:color="` + st.accent + `"/></w:pBdr>`
+	}
+	pPr := func(extra string) string { return extra }
+	if sidebar != "" {
+		// pBdr sxema bo'yicha spacing dan oldin keladi.
+		pPr = func(extra string) string { return sidebar + extra }
+	}
+
+	gapUni, gapSign := titleGapAfterUniversity, titleGapBeforeSign
+	ornament := ""
+	switch st.ornament {
+	case docOrnamentDiamond:
+		ornament = "◆   ◆   ◆"
+	case docOrnamentDots:
+		ornament = "•   •   •   •   •"
+	}
+	if ornament != "" {
+		gapSign -= titleOrnamentHeight
+	}
+
+	if g.header != "" {
+		w.para(center, pPr(""), textRun(g.header, boldCaps))
+	}
+	uniPPr := spacingBefore(240)
+	if st.ornament == docOrnamentLine && sidebar == "" {
+		// Universitet ostida ingichka chiziq.
+		uniPPr = `<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="8" w:color="` + st.accent + `"/></w:pBdr>` + uniPPr
+	}
+	w.para(center, pPr(uniPPr), textRun(p.University, boldCaps))
+
+	// Ish turi va mavzu.
+	workPPr := spacingBefore(gapUni)
+	topicPPr := spacingBefore(titleGapBeforeTopic)
+	ornPPr := spacingBefore(200)
+	switch st.title {
+	case docTitleBand:
+		// Rangli lenta: fon rangidagi chegaralar lentaga ichki bo'shliq beradi.
+		band := `<w:pBdr>` +
+			`<w:top w:val="single" w:sz="4" w:space="10" w:color="` + st.primary + `"/>` +
+			`<w:bottom w:val="single" w:sz="4" w:space="10" w:color="` + st.primary + `"/>` +
+			`</w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="` + st.primary + `"/>`
+		workPPr = band + spacingBefore(gapUni)
+		topicPPr = `<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="10" w:color="` + st.accent + `"/></w:pBdr>` + spacingBefore(480)
+	case docTitleFrame:
+		// Ish turi va mavzu bitta chiziqli blok ichida (bir xil chegaralar birlashadi).
+		box := `<w:pBdr>` +
+			`<w:top w:val="double" w:sz="6" w:space="14" w:color="` + st.accent + `"/>` +
+			`<w:left w:val="double" w:sz="6" w:space="14" w:color="` + st.accent + `"/>` +
+			`<w:bottom w:val="double" w:sz="6" w:space="14" w:color="` + st.accent + `"/>` +
+			`<w:right w:val="double" w:sz="6" w:space="14" w:color="` + st.accent + `"/>` +
+			`</w:pBdr>`
+		ind := `<w:ind w:left="567" w:right="567" w:firstLine="0"/>`
+		workPPr = box + spacingBefore(gapUni) + ind
+		topicPPr = box + spacingBefore(titleGapBeforeTopic) + ind
+		ornPPr = box + spacingBefore(200) + ind // bezak ham blok ichida (blok bo'linmasin)
+	}
+	w.para(center, pPr(workPPr), textRun(p.WorkType, workRPr))
+	if ornament != "" {
+		w.para(center, pPr(ornPPr), textRun(ornament, `<w:rPr>`+color(st.accent)+`<w:sz w:val="24"/></w:rPr>`))
+	}
+	w.para(center, pPr(topicPPr), textRun(l.Topic+": ", topicRPr)+textRun(p.Topic, topicRPr))
+
+	w.para(sign, pPr(spacingBefore(gapSign)), textRun(l.Student+": ", bold)+textRun(p.StudentName, ""))
+	w.para(sign, pPr(spacingBefore(120)), textRun(l.Teacher+": ", bold)+textRun(p.TeacherName, ""))
+	w.para(center, pPr(spacingBefore(titleGapBeforeYear)), textRun(fmt.Sprintf(l.YearFormat, p.Year), bold))
 }
 
 // docBuilder — document.xml ni bo'lakma-bo'lak yig'uvchi yordamchi.
@@ -241,7 +429,7 @@ type docBuilder struct {
 func (w *docBuilder) raw(s string) { w.WriteString(s) }
 
 // para paragraf yozadi. extraPPr — pStyle dan keyingi qo'shimcha xususiyatlar;
-// OOXML sxemasidagi tartibga rioya qilinishi kerak (spacing → ind → jc).
+// OOXML sxemasidagi tartibga rioya qilinishi kerak (pBdr → shd → spacing → ind → jc).
 func (w *docBuilder) para(style, extraPPr, runs string) {
 	w.WriteString(`<w:p><w:pPr><w:pStyle w:val="`)
 	w.WriteString(style)
@@ -274,6 +462,29 @@ func (w *docBuilder) body(paras []Paragraph) {
 	}
 }
 
+// figure rasmni (markazda) va uning izohini ("1-rasm. ...") yozadi.
+func (w *docBuilder) figure(f *docImage, label string) {
+	cx, cy := strconv.FormatInt(f.cx, 10), strconv.FormatInt(f.cy, 10)
+	id := strconv.Itoa(f.id)
+	w.para("Figure", "", `<w:r><w:drawing>`+
+		`<wp:inline distT="0" distB="0" distL="0" distR="0">`+
+		`<wp:extent cx="`+cx+`" cy="`+cy+`"/>`+
+		`<wp:effectExtent l="0" t="0" r="0" b="0"/>`+
+		`<wp:docPr id="`+id+`" name="Rasm `+id+`"/>`+
+		`<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>`+
+		`<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">`+
+		`<pic:pic><pic:nvPicPr><pic:cNvPr id="`+id+`" name="image`+id+`"/><pic:cNvPicPr/></pic:nvPicPr>`+
+		`<pic:blipFill><a:blip r:embed="`+f.relID+`"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`+
+		`<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="`+cx+`" cy="`+cy+`"/></a:xfrm>`+
+		`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>`+
+		`</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`)
+	runs := textRun(label, `<w:rPr><w:b/><w:bCs/></w:rPr>`)
+	if f.caption != "" {
+		runs += textRun(" "+f.caption, "")
+	}
+	w.para("FigureCaption", "", runs)
+}
+
 // textRun bitta matn bo'lagini (w:r) yaratadi; rPr — formatlash (yoki bo'sh).
 func textRun(text, rPr string) string {
 	return `<w:r>` + rPr + `<w:t xml:space="preserve">` + xmlEscape(text) + `</w:t></w:r>`
@@ -300,20 +511,47 @@ func spacingBefore(twips int) string {
 	return `<w:spacing w:before="` + strconv.Itoa(twips) + `"/>`
 }
 
-// docxSectionProperties — sahifa o'lchami (A4), hoshiyalar va kolontitullar.
-// w:titlePg — birinchi (titul) sahifa uchun alohida, bo'sh kolontitul.
-// Raqamlash titul varaqdan boshlanadi, shuning uchun reja 2-sahifa bo'ladi.
-const docxSectionProperties = `<w:sectPr>` +
-	`<w:footerReference w:type="default" r:id="rId3"/>` +
-	`<w:footerReference w:type="first" r:id="rId4"/>` +
-	`<w:pgSz w:w="11906" w:h="16838"/>` +
-	`<w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1701" w:header="709" w:footer="567" w:gutter="0"/>` +
-	`<w:pgNumType w:start="1"/>` +
-	`<w:titlePg/>` +
-	`</w:sectPr>`
+// docxSectionProperties — sahifa o'lchami (A4), hoshiyalar, ramka va
+// kolontitullar. w:titlePg — birinchi (titul) sahifa uchun alohida, bo'sh
+// kolontitul. Raqamlash titul varaqdan boshlanadi, shuning uchun reja
+// 2-sahifa bo'ladi.
+func docxSectionProperties(st docStyle) string {
+	return `<w:sectPr>` +
+		`<w:footerReference w:type="default" r:id="rId3"/>` +
+		`<w:footerReference w:type="first" r:id="rId4"/>` +
+		`<w:pgSz w:w="11906" w:h="16838"/>` +
+		`<w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1701" w:header="709" w:footer="567" w:gutter="0"/>` +
+		pageBorders(st) +
+		`<w:pgNumType w:start="1"/>` +
+		`<w:titlePg/>` +
+		`</w:sectPr>`
+}
+
+// pageBorders sahifa ramkasi: sahifa chetidan 20 pt ichkarida (sahifa
+// raqami ramka ichida qoladi), barcha sahifalarda.
+func pageBorders(st docStyle) string {
+	var tl, br, sz string
+	switch st.border {
+	case docBorderSingle:
+		tl, br, sz = "single", "single", "12"
+	case docBorderDouble:
+		tl, br, sz = "double", "double", "6"
+	case docBorderThinThick:
+		// Tashqarida ingichka, ichkarida qalin chiziq — har tomonda nosimmetrik.
+		tl, br, sz = "thinThickSmallGap", "thickThinSmallGap", "18"
+	default:
+		return ""
+	}
+	side := func(name, val string) string {
+		return `<w:` + name + ` w:val="` + val + `" w:sz="` + sz + `" w:space="20" w:color="` + st.accent + `"/>`
+	}
+	return `<w:pgBorders w:offsetFrom="page">` +
+		side("top", tl) + side("left", tl) + side("bottom", br) + side("right", br) +
+		`</w:pgBorders>`
+}
 
 // ---------------------------------------------------------------------------
-// Paketning qolgan qismlari (o'zgarmas XML)
+// Paketning qolgan qismlari
 // ---------------------------------------------------------------------------
 
 const xmlHeader = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"
@@ -322,6 +560,8 @@ const docxContentTypes = xmlHeader +
 	`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
 	`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
 	`<Default Extension="xml" ContentType="application/xml"/>` +
+	`<Default Extension="jpeg" ContentType="image/jpeg"/>` +
+	`<Default Extension="png" ContentType="image/png"/>` +
 	`<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
 	`<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>` +
 	`<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>` +
@@ -338,13 +578,26 @@ const docxRootRels = xmlHeader +
 	`<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>` +
 	`</Relationships>`
 
-const docxDocumentRels = xmlHeader +
-	`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-	`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
-	`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>` +
-	`<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>` +
-	`<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer2.xml"/>` +
-	`</Relationships>`
+// docxDocumentRels document.xml bog'lanishlari: uslublar, sozlamalar,
+// kolontitullar va rasmlar.
+func docxDocumentRels(figures []*docImage) string {
+	var b strings.Builder
+	b.WriteString(xmlHeader +
+		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+		`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+		`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>` +
+		`<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>` +
+		`<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer2.xml"/>`)
+	for _, f := range figures {
+		if f == nil {
+			continue
+		}
+		b.WriteString(`<Relationship Id="` + f.relID + `" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="` +
+			strings.TrimPrefix(f.path, "word/") + `"/>`)
+	}
+	b.WriteString(`</Relationships>`)
+	return b.String()
+}
 
 const docxSettings = xmlHeader +
 	`<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
@@ -354,89 +607,143 @@ const docxSettings = xmlHeader +
 	`<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>` +
 	`</w:settings>`
 
-// docxDefaultLang — docxStyles dagi imlo tekshiruvi tili; Build uni
-// hujjat tiliga (Paper.Lang) almashtiradi.
-const docxDefaultLang = "uz-Latn-UZ"
+// docxStyles — hujjat uslublari (dizaynga qarab sarlavhalar). Elementlar
+// tartibi OOXML sxemasiga mos (Word tartib buzilgan faylni "shikastlangan"
+// deb ochmasligi mumkin). ooxmlLang — imlo tekshiruvi tili.
+func docxStyles(st docStyle, ooxmlLang string) string {
+	headFont := ""
+	if st.headingFont != "" {
+		headFont = `<w:rFonts w:ascii="` + st.headingFont + `" w:hAnsi="` + st.headingFont + `" w:cs="` + st.headingFont + `"/>`
+	}
+	headColor := st.primary
+	var headPPr string
+	switch st.heading {
+	case docHeadingUnderline:
+		headPPr = `<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="4" w:color="` + st.accent + `"/></w:pBdr>` +
+			`<w:spacing w:before="480" w:after="240"/><w:ind w:firstLine="0"/><w:jc w:val="left"/>`
+	case docHeadingBand:
+		headColor = "FFFFFF"
+		headPPr = `<w:pBdr>` +
+			`<w:top w:val="single" w:sz="4" w:space="3" w:color="` + st.primary + `"/>` +
+			`<w:left w:val="single" w:sz="4" w:space="6" w:color="` + st.primary + `"/>` +
+			`<w:bottom w:val="single" w:sz="4" w:space="3" w:color="` + st.primary + `"/>` +
+			`<w:right w:val="single" w:sz="4" w:space="6" w:color="` + st.primary + `"/>` +
+			`</w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="` + st.primary + `"/>` +
+			`<w:spacing w:before="480" w:after="240"/><w:ind w:left="113" w:right="113" w:firstLine="0"/><w:jc w:val="left"/>`
+	case docHeadingBar:
+		headPPr = `<w:pBdr><w:left w:val="single" w:sz="36" w:space="8" w:color="` + st.accent + `"/></w:pBdr>` +
+			`<w:spacing w:before="480" w:after="240"/><w:ind w:left="170" w:firstLine="0"/><w:jc w:val="left"/>`
+	default:
+		headPPr = `<w:spacing w:before="480" w:after="240"/><w:ind w:firstLine="0"/><w:jc w:val="center"/>`
+	}
+	headRPr := headFont + `<w:b/><w:bCs/>`
+	if headColor != "" && headColor != "000000" {
+		headRPr += `<w:color w:val="` + headColor + `"/>`
+	}
 
-// docxStyles — hujjat uslublari. Elementlar tartibi OOXML sxemasiga mos
-// (Word tartib buzilgan faylni "shikastlangan" deb ochmasligi mumkin).
-const docxStyles = xmlHeader +
-	`<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
-	`<w:docDefaults>` +
-	`<w:rPrDefault><w:rPr>` +
-	`<w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>` +
-	`<w:sz w:val="28"/><w:szCs w:val="28"/>` +
-	`<w:lang w:val="` + docxDefaultLang + `" w:eastAsia="en-US" w:bidi="ar-SA"/>` +
-	`</w:rPr></w:rPrDefault>` +
-	`<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>` +
-	`</w:docDefaults>` +
+	return xmlHeader +
+		`<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+		`<w:docDefaults>` +
+		`<w:rPrDefault><w:rPr>` +
+		`<w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>` +
+		`<w:sz w:val="28"/><w:szCs w:val="28"/>` +
+		`<w:lang w:val="` + ooxmlLang + `" w:eastAsia="en-US" w:bidi="ar-SA"/>` +
+		`</w:rPr></w:rPrDefault>` +
+		`<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>` +
+		`</w:docDefaults>` +
 
-	// Asosiy matn: xatboshi 1,25 sm, ikki tomonga tekislash, 1,5 interval.
-	`<w:style w:type="paragraph" w:default="1" w:styleId="Normal">` +
-	`<w:name w:val="Normal"/><w:qFormat/>` +
-	`<w:pPr><w:widowControl/><w:ind w:firstLine="709"/><w:jc w:val="both"/></w:pPr>` +
-	`</w:style>` +
+		// Asosiy matn: xatboshi 1,25 sm, ikki tomonga tekislash, 1,5 interval.
+		`<w:style w:type="paragraph" w:default="1" w:styleId="Normal">` +
+		`<w:name w:val="Normal"/><w:qFormat/>` +
+		`<w:pPr><w:widowControl/><w:ind w:firstLine="709"/><w:jc w:val="both"/></w:pPr>` +
+		`</w:style>` +
 
-	// Bo'lim sarlavhasi: markazda, qalin, keyingi paragrafdan ajralmaydi.
-	`<w:style w:type="paragraph" w:styleId="Heading1">` +
-	`<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/>` +
-	`<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="480" w:after="240"/>` +
-	`<w:ind w:firstLine="0"/><w:jc w:val="center"/><w:outlineLvl w:val="0"/></w:pPr>` +
-	`<w:rPr><w:b/><w:bCs/></w:rPr>` +
-	`</w:style>` +
+		// Bo'lim sarlavhasi: dizayn uslubida, keyingi paragrafdan ajralmaydi.
+		`<w:style w:type="paragraph" w:styleId="Heading1">` +
+		`<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/>` +
+		`<w:pPr><w:keepNext/><w:keepLines/>` + headPPr + `<w:outlineLvl w:val="0"/></w:pPr>` +
+		`<w:rPr>` + headRPr + `</w:rPr>` +
+		`</w:style>` +
 
-	// Titul varaq: markazlashtirilgan matn.
-	`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleCenter">` +
-	`<w:name w:val="Title Center"/><w:basedOn w:val="Normal"/>` +
-	`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr>` +
-	`</w:style>` +
+		// Titul varaq: markazlashtirilgan matn.
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleCenter">` +
+		`<w:name w:val="Title Center"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr>` +
+		`</w:style>` +
 
-	// Titul varaq: "Bajardi / Tekshirdi" bloki (o'ng tomonda).
-	`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleSign">` +
-	`<w:name w:val="Title Signature"/><w:basedOn w:val="Normal"/>` +
-	`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="4820" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
-	`</w:style>` +
+		// Titul varaq: chapga tekislangan (yon chiziqli kompozitsiya).
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleLeft">` +
+		`<w:name w:val="Title Left"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="284" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
+		`</w:style>` +
 
-	// Reja bandlari.
-	`<w:style w:type="paragraph" w:customStyle="1" w:styleId="PlanItem">` +
-	`<w:name w:val="Plan Item"/><w:basedOn w:val="Normal"/>` +
-	`<w:pPr><w:ind w:left="0" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
-	`</w:style>` +
+		// Titul varaq: "Bajardi / Tekshirdi" bloki (o'ng tomonda).
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleSign">` +
+		`<w:name w:val="Title Signature"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="4820" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
+		`</w:style>` +
 
-	// Adabiyotlar: osilgan xatboshi.
-	`<w:style w:type="paragraph" w:customStyle="1" w:styleId="Reference">` +
-	`<w:name w:val="Reference"/><w:basedOn w:val="Normal"/>` +
-	`<w:pPr><w:ind w:left="567" w:hanging="567"/></w:pPr>` +
-	`</w:style>` +
+		// Reja bandlari.
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="PlanItem">` +
+		`<w:name w:val="Plan Item"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:ind w:left="0" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
+		`</w:style>` +
 
-	// Dastur kodi: monoshirift, kulrang fon, bitta interval.
-	`<w:style w:type="paragraph" w:customStyle="1" w:styleId="Code">` +
-	`<w:name w:val="Code"/><w:basedOn w:val="Normal"/>` +
-	`<w:pPr><w:keepLines/><w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/>` +
-	`<w:spacing w:before="120" w:after="120" w:line="240" w:lineRule="auto"/>` +
-	`<w:ind w:left="284" w:right="284" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
-	`<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/><w:noProof/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>` +
-	`</w:style>` +
+		// Rasm: markazda, izohidan ajralmaydi.
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="Figure">` +
+		`<w:name w:val="Figure"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="60" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr>` +
+		`</w:style>` +
 
-	// Kolontitul (sahifa raqami).
-	`<w:style w:type="paragraph" w:styleId="Footer">` +
-	`<w:name w:val="footer"/><w:basedOn w:val="Normal"/>` +
-	`<w:pPr><w:spacing w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr>` +
-	`<w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>` +
-	`</w:style>` +
-	`</w:styles>`
+		// Rasm izohi: "1-rasm. ..." markazda, 12 pt.
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="FigureCaption">` +
+		`<w:name w:val="Figure Caption"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:spacing w:after="240" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr>` +
+		`<w:rPr><w:i/><w:iCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>` +
+		`</w:style>` +
 
-// docxPageNumberFooter — markazda sahifa raqami (PAGE maydoni).
-const docxPageNumberFooter = xmlHeader +
-	`<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +
-	`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
-	`<w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr>` +
-	`<w:r><w:fldChar w:fldCharType="begin"/></w:r>` +
-	`<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>` +
-	`<w:r><w:fldChar w:fldCharType="separate"/></w:r>` +
-	`<w:r><w:t>2</w:t></w:r>` +
-	`<w:r><w:fldChar w:fldCharType="end"/></w:r>` +
-	`</w:p></w:ftr>`
+		// Adabiyotlar: osilgan xatboshi.
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="Reference">` +
+		`<w:name w:val="Reference"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:ind w:left="567" w:hanging="567"/></w:pPr>` +
+		`</w:style>` +
+
+		// Dastur kodi: monoshirift, kulrang fon, bitta interval.
+		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="Code">` +
+		`<w:name w:val="Code"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:keepLines/><w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/>` +
+		`<w:spacing w:before="120" w:after="120" w:line="240" w:lineRule="auto"/>` +
+		`<w:ind w:left="284" w:right="284" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
+		`<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/><w:noProof/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>` +
+		`</w:style>` +
+
+		// Kolontitul (sahifa raqami).
+		`<w:style w:type="paragraph" w:styleId="Footer">` +
+		`<w:name w:val="footer"/><w:basedOn w:val="Normal"/>` +
+		`<w:pPr><w:spacing w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr>` +
+		`<w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>` +
+		`</w:style>` +
+		`</w:styles>`
+}
+
+// docxPageNumberFooter — markazda sahifa raqami (PAGE maydoni), dizayn rangida.
+func docxPageNumberFooter(st docStyle) string {
+	rPr := ""
+	if st.primary != "" && st.primary != "000000" {
+		rPr = `<w:rPr><w:color w:val="` + st.primary + `"/></w:rPr>`
+	}
+	run := func(inner string) string { return `<w:r>` + rPr + inner + `</w:r>` }
+	return xmlHeader +
+		`<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +
+		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+		`<w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr>` +
+		run(`<w:fldChar w:fldCharType="begin"/>`) +
+		run(`<w:instrText xml:space="preserve"> PAGE </w:instrText>`) +
+		run(`<w:fldChar w:fldCharType="separate"/>`) +
+		run(`<w:t>2</w:t>`) +
+		run(`<w:fldChar w:fldCharType="end"/>`) +
+		`</w:p></w:ftr>`
+}
 
 const docxEmptyFooter = xmlHeader +
 	`<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +

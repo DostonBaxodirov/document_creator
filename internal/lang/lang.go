@@ -38,6 +38,10 @@ type Labels struct {
 	TitlePresentation string
 	TitleIndependent  string
 	TitlePractical    string
+	TitleReferat      string
+
+	// FigureFormat — hujjatdagi rasm raqami (fmt formati, %d — raqam): "%d-rasm.".
+	FigureFormat string
 }
 
 // Info — bitta til haqida ma'lumot.
@@ -60,6 +64,7 @@ var all = []Info{
 			Plan: "Reja", Introduction: "Kirish", Conclusion: "Xulosa",
 			References: "Foydalanilgan adabiyotlar", YearFormat: "%s-yil",
 			TitlePresentation: "TAQDIMOT", TitleIndependent: "MUSTAQIL ISH", TitlePractical: "AMALIY TOPSHIRIQ",
+			TitleReferat: "REFERAT", FigureFormat: "%d-rasm.",
 		},
 	},
 	{
@@ -71,6 +76,7 @@ var all = []Info{
 			Plan: "Режа", Introduction: "Кириш", Conclusion: "Хулоса",
 			References: "Фойдаланилган адабиётлар", YearFormat: "%s йил",
 			TitlePresentation: "ТАҚДИМОТ", TitleIndependent: "МУСТАҚИЛ ИШ", TitlePractical: "АМАЛИЙ ТОПШИРИҚ",
+			TitleReferat: "РЕФЕРАТ", FigureFormat: "%d-расм.",
 		},
 	},
 	{
@@ -82,6 +88,7 @@ var all = []Info{
 			Plan: "План", Introduction: "Введение", Conclusion: "Заключение",
 			References: "Список использованной литературы", YearFormat: "%s г.",
 			TitlePresentation: "ПРЕЗЕНТАЦИЯ", TitleIndependent: "САМОСТОЯТЕЛЬНАЯ РАБОТА", TitlePractical: "ПРАКТИЧЕСКОЕ ЗАДАНИЕ",
+			TitleReferat: "РЕФЕРАТ", FigureFormat: "Рис. %d.",
 		},
 	},
 	{
@@ -93,6 +100,7 @@ var all = []Info{
 			Plan: "Outline", Introduction: "Introduction", Conclusion: "Conclusion",
 			References: "References", YearFormat: "%s",
 			TitlePresentation: "PRESENTATION", TitleIndependent: "INDEPENDENT STUDY", TitlePractical: "PRACTICAL ASSIGNMENT",
+			TitleReferat: "ESSAY", FigureFormat: "Figure %d.",
 		},
 	},
 }
