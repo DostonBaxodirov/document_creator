@@ -546,29 +546,31 @@ func (c *Config) validate() error {
 		add("JOB_TIMEOUT musbat bo'lishi kerak")
 	}
 
-	// Kamida 3 ta slayd: titul + kamida 1 ta mazmunli slayd + yakuniy slayd.
-	if c.Limits.MinSlides < 3 {
-		add("MIN_SLIDES kamida 3 bo'lishi kerak")
-	}
-	if c.Limits.MaxSlides < c.Limits.MinSlides {
-		add("MAX_SLIDES (%d) MIN_SLIDES (%d) dan kichik bo'lmasligi kerak", c.Limits.MaxSlides, c.Limits.MinSlides)
-	}
-	if c.Limits.MaxSlides > 60 {
-		add("MAX_SLIDES 60 dan oshmasligi kerak")
-	}
-
-	// Kamida 4 sahifa: titul + reja + kamida 1 sahifa matn + adabiyotlar.
-	if c.Limits.MinPages < 4 {
-		add("MIN_PAGES kamida 4 bo'lishi kerak")
-	}
-	if c.Limits.MaxPages < c.Limits.MinPages {
-		add("MAX_PAGES (%d) MIN_PAGES (%d) dan kichik bo'lmasligi kerak", c.Limits.MaxPages, c.Limits.MinPages)
-	}
-	if c.Limits.MaxPages > 60 {
-		add("MAX_PAGES 60 dan oshmasligi kerak")
-	}
+	errs = append(errs, c.Limits.validate()...)
 
 	return errors.Join(errs...)
+}
+
+// validate slayd/sahifa chegaralarining faqat mantiqiy to'g'riligini tekshiradi.
+// Yuqori va quyi chegara erkin: generatorlar kichik qiymatda ham ishlaydi
+// (taqdimotda kamida 1 ta mazmunli slayd, hujjatda kamida 200 so'z matn).
+func (l LimitsConfig) validate() []error {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+
+	if l.MinSlides < 1 {
+		add("MIN_SLIDES kamida 1 bo'lishi kerak")
+	}
+	if l.MaxSlides < l.MinSlides {
+		add("MAX_SLIDES (%d) MIN_SLIDES (%d) dan kichik bo'lmasligi kerak", l.MaxSlides, l.MinSlides)
+	}
+	if l.MinPages < 1 {
+		add("MIN_PAGES kamida 1 bo'lishi kerak")
+	}
+	if l.MaxPages < l.MinPages {
+		add("MAX_PAGES (%d) MIN_PAGES (%d) dan kichik bo'lmasligi kerak", l.MaxPages, l.MinPages)
+	}
+	return errs
 }
 
 // parser muhit o'zgaruvchilarini tiplarga o'giradi va format xatolarini yig'adi,

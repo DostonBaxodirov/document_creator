@@ -38,6 +38,29 @@ func TestImagesConfigDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func TestLimitsValidation(t *testing.T) {
+	// Kichik va katta qiymatlar ruxsat etiladi — chegaralar to'liq sozlamalarga bog'liq.
+	for _, l := range []LimitsConfig{
+		{MinSlides: 1, MaxSlides: 1, MinPages: 1, MaxPages: 1},
+		{MinSlides: 2, MaxSlides: 200, MinPages: 2, MaxPages: 150},
+	} {
+		if errs := l.validate(); len(errs) > 0 {
+			t.Errorf("%+v yaroqli bo'lishi kerak: %v", l, errs)
+		}
+	}
+
+	errs := LimitsConfig{MinSlides: 0, MaxSlides: 10, MinPages: 20, MaxPages: 10}.validate()
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	for _, want := range []string{"MIN_SLIDES", "MAX_PAGES"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("%s xatosi kutilgan edi:\n%s", want, joined)
+		}
+	}
+}
+
 func TestPaymentConfig(t *testing.T) {
 	for _, k := range []string{"PAYMENT_ENABLED", "PAYMENT_CARD_NUMBER", "PAYMENT_CARD_HOLDER", "PRICE_SLIDE_PHOTO", "PRICE_SLIDE_PLAIN", "PRICE_DOCUMENT", "PRICE_PLAIN",
 		"FREE_PHOTO", "FREE_PLAIN", "PAYMENT_VISION_MODEL", "PAYMENT_CHECK_TIMEOUT", "ADMIN_PASSWORD"} {
