@@ -119,8 +119,27 @@ jobs:
           fi
 
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          # Windows qator oxirlari (\r) va bir qatorga "\n" bilan yozilgan kalit tuzatiladi.
+          key="${SSH_KEY//$'\r'/}"
+          if [[ "$key" != *$'\n'* && "$key" == *'\n'* ]]; then key="${key//\\n/$'\n'}"; fi
+          printf '%s\n' "$key" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
+          # Kalit yaroqliligini tekshirish (kalit matni logga chiqarilmaydi).
+          if ! err="$(ssh-keygen -y -P "" -f ~/.ssh/deploy_key 2>&1 > ~/.ssh/deploy_key.pub)"; then
+            case "$(head -n1 ~/.ssh/deploy_key)" in
+              ssh-*|ecdsa-*) hint="bu PUBLIC kalit (.pub). Secretga .pub siz faylning matnini kiriting" ;;
+              PuTTY-User-Key-File*) hint="bu PuTTY (.ppk) formati, OpenSSH formatidagi kalit kerak" ;;
+              -----BEGIN*PRIVATE\ KEY-----)
+                if [[ "$err" == *passphrase* ]]; then hint="kalit parol bilan himoyalangan — parolsiz kalit yarating (ssh-keygen -N \"\")"
+                else hint="kalit buzilgan yoki to'liq ko'chirilmagan — BEGIN va END qatorlari bilan butun faylni kiriting"; fi ;;
+              *) hint="kalit '-----BEGIN ... PRIVATE KEY-----' qatori bilan boshlanishi kerak" ;;
+            esac
+            echo "::error::VPS_SSH_KEY yaroqsiz: $hint"
+            exit 1
+          fi
+          echo "VPS dagi ~/.ssh/authorized_keys da shu public kalit bo'lishi kerak:"
+          cat ~/.ssh/deploy_key.pub
 
           if [ -n "$KNOWN_HOSTS" ]; then
             printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
@@ -136,10 +155,26 @@ jobs:
             Port $SSH_PORT
             IdentityFile ~/.ssh/deploy_key
             IdentitiesOnly yes
+            BatchMode yes
+            PasswordAuthentication no
             StrictHostKeyChecking yes
             ServerAliveInterval 30
             ConnectTimeout 20
           EOF
+
+      - name: VPS ga ulanishni tekshirish
+        env:
+          VPS_USER: ${{ secrets.VPS_USER || vars.VPS_USER || 'root' }}
+        run: |
+          if ! ssh vps true; then
+            echo "::error::VPS kalitni qabul qilmadi: yuqoridagi public kalit VPS dagi /home/$VPS_USER/.ssh/authorized_keys (root uchun /root/.ssh/authorized_keys) ga qo'shilmagan yoki VPS_USER/VPS_HOST noto'g'ri"
+            exit 1
+          fi
+          if ! ssh vps 'docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1'; then
+            echo "::error::VPS da docker/docker compose ishlamayapti yoki $VPS_USER docker guruhida emas (sudo usermod -aG docker $VPS_USER)"
+            exit 1
+          fi
+          ssh vps 'echo "Ulanildi: $(whoami)@$(hostname), $(docker compose version)"'
 
       # Environmentdagi variable va secretlardan VPS uchun .env yig'iladi (deploy/make-env.sh).
       - name: .env yaratish
