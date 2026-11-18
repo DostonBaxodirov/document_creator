@@ -29,7 +29,7 @@ func TestVolumeRoutesToDesignOnlyForPresentation(t *testing.T) {
 }
 
 func TestDesignKeyboard(t *testing.T) {
-	kb := designKeyboard()
+	kb := designKeyboard(false)
 	var ids []string
 	for _, row := range kb.InlineKeyboard {
 		if len(row) > 2 {
@@ -64,7 +64,7 @@ func TestDesignKeyboard(t *testing.T) {
 }
 
 func TestDesignPromptAndSummary(t *testing.T) {
-	p := designPrompt()
+	p := designPrompt(true)
 	for i, th := range generator.Themes() {
 		if !strings.Contains(p, strconv.Itoa(i+1)+". "+th.Emoji+" <b>"+th.Name+"</b>") {
 			t.Errorf("dizayn matnida %d. %s yo'q", i+1, th.Name)
@@ -121,7 +121,7 @@ func TestProgressText(t *testing.T) {
 }
 
 func TestDesignPromptMarksPhotoThemes(t *testing.T) {
-	p := designPrompt()
+	p := designPrompt(false)
 	for _, th := range generator.Themes() {
 		line := th.Emoji + " <b>" + th.Name + "</b>"
 		if th.Photos {

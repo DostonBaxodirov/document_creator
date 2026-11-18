@@ -100,9 +100,13 @@ func (h *Handler) paymentsOn() bool {
 	return h.opts.Payment.Enabled && h.billing != nil
 }
 
-// orderKind buyurtmaning narx toifasini aniqlaydi: rasmli dizayndagi
-// taqdimot — "photo", rasmsiz taqdimot va Word ishlar — "plain".
+// orderKind buyurtmaning narx toifasini aniqlaydi: AI maxsus dizayn —
+// "ai_<tarif>", rasmli dizayndagi taqdimot — "photo", rasmsiz taqdimot va
+// Word ishlar — "plain".
 func orderKind(s *storage.Session) string {
+	if isCustom(s) {
+		return storage.AIKind(s.Tariff)
+	}
 	if !ai.WorkType(s.WorkType).IsDocument() && generator.ThemeHasPhotos(s.Design) {
 		return storage.KindPhoto
 	}
@@ -120,8 +124,14 @@ func (h *Handler) kindOf(s *storage.Session) string {
 	return k
 }
 
-// slideRate bitta slayd narxi: rasmli dizaynda — PriceSlidePhoto, aks holda — PriceSlidePlain.
+// slideRate bitta slayd narxi: AI maxsus dizaynda — tarif narxi, rasmli
+// dizaynda — PriceSlidePhoto, aks holda — PriceSlidePlain.
 func (h *Handler) slideRate(kind string) int {
+	if tariff, ok := storage.KindTariff(kind); ok {
+		if t, ok := h.customTariff(tariff); ok {
+			return t.PriceSlide
+		}
+	}
 	if kind == storage.KindPhoto {
 		return h.opts.Payment.PriceSlidePhoto
 	}
@@ -137,7 +147,11 @@ func (h *Handler) price(s *storage.Session, kind string) int {
 	return max(s.Volume, 1) * h.slideRate(kind)
 }
 
+// freeLimit toifa uchun bepul urinishlar soni (AI maxsus dizayn — bepul emas).
 func (h *Handler) freeLimit(kind string) int {
+	if _, ok := storage.KindTariff(kind); ok {
+		return 0
+	}
 	if kind == storage.KindPhoto {
 		return h.opts.Payment.FreePhoto
 	}
@@ -152,9 +166,18 @@ func (h *Handler) pricingText() string {
 	p := h.opts.Payment
 	s := fmt.Sprintf("\n\n💳 <b>Narxlar:</b> taqdimot — har bir slayd %s (📷 rasmli dizaynda — %s), Word ishlar — %s.",
 		formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto), formatSum(p.PriceDocument))
+	if h.customOn() {
+		var parts []string
+		for _, name := range h.customTariffs() {
+			t, _ := h.customTariff(name)
+			parts = append(parts, fmt.Sprintf("%s — %s", tariffViews[name].name, formatSum(t.PriceSlide)))
+		}
+		s += "\n✨ AI maxsus dizayn (har bir slayd): " + strings.Join(parts, ", ") + "."
+	}
 	if p.FreePhoto > 0 || p.FreePlain > 0 {
 		s += fmt.Sprintf("\n🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>!", p.FreePhoto, p.FreePlain)
 	}
+	s += "\nℹ️ Batafsil qo'llanma — /help"
 	return s
 }
 
@@ -335,6 +358,9 @@ func orderLabel(workType, kind string) string {
 	if ai.WorkType(workType).IsDocument() {
 		return name
 	}
+	if tariff, ok := storage.KindTariff(kind); ok {
+		return name + ", ✨ AI maxsus dizayn — " + tariffName(tariff)
+	}
 	if kind == storage.KindPhoto {
 		return name + ", rasmli dizayn"
 	}
@@ -346,7 +372,7 @@ func (h *Handler) paymentText(o *storage.Order, intro bool) string {
 	p := h.opts.Payment
 	var b strings.Builder
 	b.WriteString("💳 <b>To'lov</b>\n\n")
-	if intro && (p.FreePhoto > 0 || p.FreePlain > 0) {
+	if intro && h.freeLimit(o.Kind) > 0 {
 		fmt.Fprintf(&b, "Bepul sinov imkoniyatidan foydalanib bo'lgansiz (har bir foydalanuvchiga %d ta rasmli va %d ta rasmsiz ish bepul beriladi).\n\n",
 			p.FreePhoto, p.FreePlain)
 	}

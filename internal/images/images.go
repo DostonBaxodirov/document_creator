@@ -50,11 +50,18 @@ type Shape int
 const (
 	Landscape Shape = iota // yotiq (titul va yakuniy slayd foni)
 	Portrait               // tik (mazmunli slayd yonidagi panel)
+	// Square — kvadrat (1024x1024). AI maxsus dizaynda ishlatiladi: kvadrat
+	// rasm yotiq/tik rasmdan ~1.5 barobar arzon, slaydga esa "cover" usulida
+	// qirqib joylanadi (generator.coverCrop).
+	Square
 )
 
 func (s Shape) String() string {
-	if s == Portrait {
+	switch s {
+	case Portrait:
 		return "portrait"
+	case Square:
+		return "square"
 	}
 	return "landscape"
 }

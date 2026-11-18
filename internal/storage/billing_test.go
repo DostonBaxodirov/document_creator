@@ -223,3 +223,20 @@ func TestBillingFlow(t *testing.T) {
 		t.Fatalf("takroriy migratsiya: %v", err)
 	}
 }
+
+func TestAIKind(t *testing.T) {
+	for _, tariff := range []string{"standard", "optimal", "premium"} {
+		k := AIKind(tariff)
+		if len(k) > 16 {
+			t.Errorf("%s: toifa %q 16 belgidan uzun (orders.kind — varchar(16))", tariff, k)
+		}
+		if got, ok := KindTariff(k); !ok || got != tariff {
+			t.Errorf("KindTariff(%q) = %q, %v", k, got, ok)
+		}
+	}
+	for _, k := range []string{KindPhoto, KindPlain, "ai_", ""} {
+		if _, ok := KindTariff(k); ok {
+			t.Errorf("KindTariff(%q) AI toifa emas", k)
+		}
+	}
+}

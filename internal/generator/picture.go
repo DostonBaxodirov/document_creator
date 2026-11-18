@@ -12,7 +12,6 @@ import (
 	_ "image/jpeg" // DecodeConfig uchun formatlarni ro'yxatdan o'tkazish
 	_ "image/png"
 	"math"
-	"strings"
 )
 
 // Picture — slaydga joylanadigan rasm. Bitta Picture bir nechta slaydda
@@ -73,15 +72,7 @@ const photoSuffix = "High-quality realistic photograph, natural composition, " +
 // PhotoPrompt AI yozgan rasm tavsifiga dizayn uslubini va umumiy talablarni
 // qo'shadi — shunda bitta taqdimotdagi rasmlar dizayn ruhiga mos chiqadi.
 func PhotoPrompt(themeID, desc string) string {
-	desc = strings.TrimRight(strings.TrimSpace(desc), ".")
-	var b strings.Builder
-	b.WriteString(desc)
-	b.WriteString(". ")
-	if t := themeByID(themeID); t.photoStyle != "" {
-		b.WriteString("Style: " + t.photoStyle + ". ")
-	}
-	b.WriteString(photoSuffix)
-	return b.String()
+	return Design{themeByID(themeID)}.PhotoPrompt(desc)
 }
 
 // photoFits slayd maketi yonida rasm uchun joy bor-yo'qligini bildiradi
@@ -128,14 +119,12 @@ func SlideTakesPhoto(themeID string, _ Slide) bool {
 // SlidePhotoWide slayd rasmi yotiq (tepadagi banner) bo'lishini bildiradi;
 // aks holda tik rasm (slayd yonidagi panel) so'raladi.
 func SlidePhotoWide(themeID string, s Slide) bool {
-	t := themeByID(themeID)
-	return t.ID == themeID && t.photos && t.photoAsBanner(normalizeSlide(s))
+	return DesignFor(themeID, nil).PhotoWide(s)
 }
 
 // ThemeHasPhotos dizayn rasmli ekanini bildiradi.
 func ThemeHasPhotos(themeID string) bool {
-	t := themeByID(themeID)
-	return t.ID == themeID && t.photos
+	return DesignFor(themeID, nil).Photos()
 }
 
 // limitPictures rasmlar umumiy hajmini chegaralaydi (Telegram bot yuboradigan

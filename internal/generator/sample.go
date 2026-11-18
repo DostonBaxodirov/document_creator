@@ -64,6 +64,49 @@ var samplePhotoByLayout = map[string]string{
 	LayoutStatement:  "A teacher talking with a student in an empty sunlit classroom, warm natural light",
 }
 
+// SampleCustomSpecs — AI maxsus dizayni namunalari (AI qaytaradigan kabi):
+// och, to'q va iliq palitralar hamda turli titul, sarlavha, kartochka va motiv
+// variantlari. cmd/preview va testlar uchun.
+func SampleCustomSpecs() []CustomSpec {
+	return []CustomSpec{
+		{
+			Name: "Deep Ocean", Background: "#F3F7FA", Surface: "#FFFFFF", Primary: "#0B4F6C", Secondary: "#01A7C2",
+			Accent: "#F4A259", Text: "#102A43", Muted: "#52667A", HeadingFont: "Georgia", BodyFont: "Calibri",
+			Cover: CoverSplit, Header: HeaderBar, Cards: CardsShadow, Corners: CornersRounded, Markers: MarkerCircle,
+			Motif: MotifWaves, PhotoSide: PhotoRight, Signature: []string{LayoutHub, LayoutTimeline},
+			PhotoStyle: "clean documentary photography, cool blue and teal tones, soft daylight",
+		},
+		{
+			Name: "Midnight Circuit", Background: "#0F172A", Surface: "#1E293B", Primary: "#38BDF8", Secondary: "#818CF8",
+			Accent: "#F472B6", Text: "#F1F5F9", Muted: "#94A3B8", HeadingFont: "Segoe UI", BodyFont: "Segoe UI",
+			Cover: CoverFull, Header: HeaderBand, Cards: CardsOutline, Corners: CornersRounded, Markers: MarkerSquare,
+			Motif: MotifDots, PhotoSide: PhotoLeft, Signature: []string{LayoutCycle, LayoutMatrix},
+			PhotoStyle: "futuristic technology photography, deep blue shadows with neon cyan and magenta highlights",
+		},
+		{
+			Name: "Silk Road", Background: "#FBF6EE", Surface: "#FFFFFF", Primary: "#8C2F39", Secondary: "#B88B4A",
+			Accent: "#D4A017", Text: "#2B1D16", Muted: "#6B5B4E", HeadingFont: "Cambria", BodyFont: "Calibri",
+			Cover: CoverFrame, Header: HeaderUnderline, Cards: CardsTint, Corners: CornersSquare, Markers: MarkerOutline,
+			Motif: MotifDiagonal, PhotoSide: PhotoRight, Signature: []string{LayoutTimeline, LayoutStatement},
+			PhotoStyle: "warm historical travel photography, golden sunlight, earthy terracotta and sand tones",
+		},
+	}
+}
+
+// SampleCustomDeck — namunaviy taqdimot maxsus dizaynda: titulda va
+// slaydlarning ~40% ida namunaviy kvadrat rasmlar (bot kabi).
+func SampleCustomDeck(spec CustomSpec) Deck {
+	t := customTheme(&spec)
+	d := sampleDeckFor(t, ThemeCustom)
+	d.Custom = &spec
+	d.CoverImage = SamplePicture(1024, 1024, t.pal.primary, t.pal.accent)
+	design := Design{t}
+	for k, i := range design.PhotoSlides(d.Slides, len(d.Slides)*2/5) {
+		d.Slides[i].Image = SamplePicture(1024, 1024, t.seriesColor(k), t.seriesColor(k+1))
+	}
+	return d
+}
+
 // SamplePicture namunaviy rasm yaratadi: ikki rang orasidagi diagonal
 // gradient va yumshoq doiralar (JPEG). Faqat preview va testlar uchun.
 func SamplePicture(w, h int, from, to string) *Picture {
@@ -103,7 +146,11 @@ func lerpColor(a, b color.RGBA, t float64) color.RGBA {
 // rasmida (scripts/design_preview.py) aynan ular ko'rinadi. Rasmli (yon
 // rasmli) dizaynlarda 4-slayd — rasmli kartochkalar.
 func sampleDeck(themeID string) Deck {
-	t := themeByID(themeID)
+	return sampleDeckFor(themeByID(themeID), themeID)
+}
+
+// sampleDeckFor — sampleDeck berilgan mavzu (tayyor yoki maxsus) uchun.
+func sampleDeckFor(t *theme, themeID string) Deck {
 	byLayout := make(map[string]Slide)
 	for _, s := range sampleSlides() {
 		byLayout[s.Layout] = s

@@ -231,6 +231,14 @@ func TestOpenAIGenerate(t *testing.T) {
 	if !strings.HasPrefix(o.Name(), "openai/gpt-image-2") {
 		t.Errorf("Name = %q", o.Name())
 	}
+
+	// Kvadrat rasm (AI maxsus dizayn) — 1024x1024.
+	if _, err := o.Generate(context.Background(), "a dog", Square); err != nil {
+		t.Fatalf("Generate(Square): %v", err)
+	}
+	if got["size"] != "1024x1024" {
+		t.Errorf("Square size = %v, kutilgan 1024x1024", got["size"])
+	}
 }
 
 func TestOpenAIErrors(t *testing.T) {

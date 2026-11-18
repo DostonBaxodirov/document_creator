@@ -105,6 +105,10 @@ type PresentationRequest struct {
 	// mavzu tilidagi muqobili.
 	OutlineTitle    string
 	ConclusionTitle string
+
+	// Custom — AI maxsus dizayni (ixtiyoriy): tuzilish vizualroq va xilma-xil
+	// bo'ladi, rasm tavsiflari dizaynning rasm uslubiga moslanadi.
+	Custom *DesignBrief
 }
 
 // layouts so'rov uchun ruxsat etilgan maketlar (noma'lumlari tashlanadi).
@@ -253,6 +257,7 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 			if err != nil {
 				return nil, 0, err
 			}
+			s = dropForeignSlides(s, plan, b[0], b[1])
 			if len(s) > want {
 				s = s[:want]
 			}
@@ -281,6 +286,31 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 		zap.Int("requested", n),
 		zap.Int("batches", len(batches)))
 	return pres, nil
+}
+
+// dropForeignSlides guruh javobidan boshqa guruhga rejalashtirilgan slaydlarni
+// olib tashlaydi: modellar ba'zan guruhni oldingi guruhning oxirgi slaydidan
+// boshlaydi va taqdimotda bir slayd ikki marta chiqadi. Sarlavhasi faqat
+// [from, to) dan tashqaridagi reja slaydiga mos keladigan slayd tashlanadi;
+// natija kam bo'lsa, generateJSON qayta so'raydi.
+func dropForeignSlides(slides []Slide, plan *deckOutline, from, to int) []Slide {
+	key := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	inside, outside := map[string]bool{}, map[string]bool{}
+	for i, p := range plan.Slides {
+		if i >= from && i < to {
+			inside[key(p.Title)] = true
+		} else {
+			outside[key(p.Title)] = true
+		}
+	}
+	out := slides[:0]
+	for _, s := range slides {
+		if k := key(s.Title); outside[k] && !inside[k] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // splitBatches n ta slaydni ko'pi bilan size tadan teng guruhlarga bo'ladi:
@@ -427,6 +457,18 @@ func slideJSONShape(images bool) string {
 const imageRule = `Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. ` +
 	`No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.`
 
+// writeImageRules rasmli dizaynda rasm tavsiflari qoidalarini qo'shadi
+// (maxsus dizaynda — uning rasm uslubiga moslash talabi bilan).
+func writeImageRules(b *strings.Builder, req PresentationRequest) {
+	if !req.Images {
+		return
+	}
+	b.WriteString(imageRule + "\n")
+	if req.Custom != nil {
+		b.WriteString(customImageRule(req.Custom) + "\n")
+	}
+}
+
 // coverImageRule — titul slayd rasmi.
 const coverImageRule = `The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.`
 
@@ -466,13 +508,16 @@ func structureRules(n int, req PresentationRequest) string {
 		fmt.Fprintf(&b, "2. Slides 2-%d are the main sections, covering the topic logically from fundamentals to details; each slide focuses on one idea and they do not overlap. "+
 			"A \"definition\" slide fits well right after the outline.\n", n-1)
 		fmt.Fprintf(&b, "3. Slide %d is the conclusion: layout \"conclusion\", %s.\n", n, conclusionTitle)
-		if n >= 6 {
+		switch {
+		case req.Custom != nil:
+			b.WriteString("Choose for each main slide the layout that best fits its content.\n")
+			b.WriteString(customDeckRules(n, req.Custom) + "\n")
+		case n >= 6:
 			b.WriteString("Choose for each main slide the layout that best fits its content and vary them: use at least 4 different layouts, and never the same layout on more than 2 consecutive slides.\n")
-		} else {
+		default:
 			b.WriteString("Choose for each main slide the layout that best fits its content; avoid repeating the same layout.\n")
 		}
-		if main := n - 2; main >= 2 && len(signature) > 0 {
-			k := min(len(signature), max(1, main/2))
+		if k := signatureMinimum(n, signature); k > 0 {
 			quoted := make([]string, len(signature))
 			var hints []string
 			for i, l := range signature {
@@ -496,6 +541,16 @@ func structureRules(n int, req PresentationRequest) string {
 	return b.String()
 }
 
+// signatureMinimum — taqdimotda kamida nechta imzo maketi ishlatilishi kerak
+// (n — mazmunli slaydlar soni; asosiy slaydlarning yarmigacha). 0 — talab yo'q.
+func signatureMinimum(n int, signature []string) int {
+	main := n - 2
+	if n < 3 || main < 2 || len(signature) == 0 {
+		return 0
+	}
+	return min(len(signature), max(1, main/2))
+}
+
 // buildDeckPrompt — butun taqdimot bitta so'rovda.
 func buildDeckPrompt(req PresentationRequest) string {
 	n := req.SlideCount
@@ -505,9 +560,7 @@ func buildDeckPrompt(req PresentationRequest) string {
 	fmt.Fprintf(&b, "Number of slides in \"slides\": exactly %d\n\n", n)
 	b.WriteString(structureRules(n, req))
 	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n")
-	if req.Images {
-		b.WriteString(imageRule + "\n")
-	}
+	writeImageRules(&b, req)
 	b.WriteString("\n")
 	top := ""
 	if req.Images {
@@ -517,6 +570,9 @@ func buildDeckPrompt(req PresentationRequest) string {
 	b.WriteString(`The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.`)
 	if req.Images {
 		b.WriteString("\n" + coverImageRule)
+	}
+	if req.Custom != nil {
+		b.WriteString("\n\n" + numberedCheck(append(customPlanChecks(n, req.signature()), customContentChecks(false)...)))
 	}
 	writeRequirements(&b, req.Requirements)
 	return b.String()
@@ -536,10 +592,18 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 	if req.Images {
 		top = `, "image": string`
 	}
-	b.WriteString(`JSON shape: {"title": string, "subtitle": string` + top + `, "slides": [{"title": string, "layout": string, "focus": string}, ...]}` + "\n")
+	b.WriteString(`JSON shape: {"title": string, "subtitle": string` + top + `, "slides": [{"n": number, "title": string, "layout": string, "focus": string}, ...]}` + "\n")
+	// Raqamlash modellarga slaydlarni aniq sanashga yordam beradi (raqamsiz
+	// rejalarda bir slayd ko'pincha tushib qoladi).
+	if n >= 2 {
+		fmt.Fprintf(&b, "Number the slides in \"n\" from 1 to %d without gaps: slide %d is the conclusion.\n", n, n)
+	}
 	b.WriteString(`The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.`)
 	if req.Images {
 		b.WriteString("\n" + coverImageRule)
+	}
+	if req.Custom != nil {
+		b.WriteString("\n\n" + numberedCheck(customPlanChecks(n, req.signature())))
 	}
 	writeRequirements(&b, req.Requirements)
 	return b.String()
@@ -558,11 +622,12 @@ func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to
 	fmt.Fprintf(&b, "\nWrite the full content of slides %d-%d only (%d slides), exactly as planned: same order, titles and layouts. "+
 		"Stay within each slide's focus and do not repeat what other slides cover.\n\n", from+1, to, to-from)
 	b.WriteString(layoutGuide(req.layouts(), req.Compact) + "\n")
-	if images {
-		b.WriteString(imageRule + "\n")
-	}
+	writeImageRules(&b, req)
 	b.WriteString("\n")
 	b.WriteString(`JSON shape: {"slides": [` + slideJSONShape(images) + `, ...]}`)
+	if req.Custom != nil {
+		b.WriteString("\n\n" + numberedCheck(customContentChecks(true)))
+	}
 	writeRequirements(&b, req.Requirements)
 	return b.String()
 }
@@ -641,12 +706,13 @@ func deckOutlineSchema(images bool, layouts []string) *genai.Schema {
 			"slides": {Type: genai.TypeArray, Items: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
+					"n":      {Type: genai.TypeInteger},
 					"title":  {Type: genai.TypeString},
 					"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
 					"focus":  {Type: genai.TypeString},
 				},
-				Required:         []string{"title", "layout", "focus"},
-				PropertyOrdering: []string{"title", "layout", "focus"},
+				Required:         []string{"n", "title", "layout", "focus"},
+				PropertyOrdering: []string{"n", "title", "layout", "focus"},
 			}},
 		},
 		Required:         []string{"title", "subtitle", "slides"},
@@ -766,9 +832,24 @@ func normalizeLayout(l string) string {
 }
 
 // fit slaydlar sonini kerakli miqdorga keltiradi. Ortiqcha bo'lsa — oxirgi
-// (xulosa) slaydni saqlagan holda o'rtadagilarni qisqartiradi.
+// (xulosa) slaydni saqlagan holda o'rtadagilarni qisqartiradi. Xulosa
+// slaydi oxirida bo'lmasa (model undan keyin yana slayd qo'ygan) — oxirga ko'chiriladi.
 func (p *Presentation) fit(want int) {
-	p.Slides = fitSlides(p.Slides, want)
+	p.Slides = fitSlides(conclusionLast(p.Slides, func(s Slide) string { return s.Layout }), want)
+}
+
+// conclusionLast oxirgi slayd xulosa bo'lmasa, eng oxirgi "conclusion"
+// maketli slaydni ro'yxat oxiriga ko'chiradi (xulosa yo'q bo'lsa — o'zgarishsiz).
+func conclusionLast[T any](s []T, layout func(T) string) []T {
+	if len(s) == 0 || layout(s[len(s)-1]) == LayoutConclusion {
+		return s
+	}
+	for i := len(s) - 2; i >= 0; i-- {
+		if layout(s[i]) == LayoutConclusion {
+			return append(append(append([]T(nil), s[:i]...), s[i+1:]...), s[i])
+		}
+	}
+	return s
 }
 
 func fitSlides[T any](s []T, want int) []T {
@@ -787,6 +868,7 @@ func fitSlides[T any](s []T, want int) []T {
 // ---------------------------------------------------------------------------
 
 type plannedSlide struct {
+	N      int    `json:"n"` // tartib raqami (faqat sanash uchun; ishlatilmaydi)
 	Title  string `json:"title"`
 	Layout string `json:"layout"`
 	Focus  string `json:"focus"`
@@ -823,4 +905,6 @@ func parseDeckOutline(raw string) (*deckOutline, error) {
 	return &o, nil
 }
 
-func (o *deckOutline) fit(want int) { o.Slides = fitSlides(o.Slides, want) }
+func (o *deckOutline) fit(want int) {
+	o.Slides = fitSlides(conclusionLast(o.Slides, func(s plannedSlide) string { return s.Layout }), want)
+}

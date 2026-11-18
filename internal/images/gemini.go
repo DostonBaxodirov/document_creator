@@ -32,8 +32,11 @@ func (g *Gemini) Name() string { return "gemini/" + g.model }
 
 func (g *Gemini) Generate(ctx context.Context, prompt string, shape Shape) ([]byte, error) {
 	ratio := "3:2"
-	if shape == Portrait {
+	switch shape {
+	case Portrait:
 		ratio = "2:3"
+	case Square:
+		ratio = "1:1"
 	}
 	resp, err := g.client.Models.GenerateContent(ctx, g.model, genai.Text(prompt), &genai.GenerateContentConfig{
 		ResponseModalities: []string{"IMAGE"},

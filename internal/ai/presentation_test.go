@@ -205,3 +205,42 @@ func TestNewLayoutAliases(t *testing.T) {
 		}
 	}
 }
+
+func TestDropForeignSlides(t *testing.T) {
+	plan := &deckOutline{Slides: []plannedSlide{{Title: "Reja"}, {Title: "Qonunchilik"}, {Title: "Harbiy  strategiya"}, {Title: "Xulosa"}}}
+	got := dropForeignSlides([]Slide{{Title: "qonunchilik"}, {Title: "Harbiy strategiya"}, {Title: "Xulosa"}, {Title: "Yangi nom"}}, plan, 2, 4)
+	var titles []string
+	for _, s := range got {
+		titles = append(titles, s.Title)
+	}
+	// "qonunchilik" — oldingi guruh slaydi (tashlanadi); reja sarlavhasidan farq qilgan slayd qoladi.
+	if strings.Join(titles, "|") != "Harbiy strategiya|Xulosa|Yangi nom" {
+		t.Errorf("natija: %v", titles)
+	}
+}
+
+func TestConclusionLast(t *testing.T) {
+	layouts := func(s []Slide) string {
+		var out []string
+		for _, x := range s {
+			out = append(out, x.Layout)
+		}
+		return strings.Join(out, " ")
+	}
+	p := &Presentation{Slides: []Slide{{Layout: "agenda"}, {Layout: "conclusion"}, {Layout: "statement"}}}
+	p.fit(3)
+	if got := layouts(p.Slides); got != "agenda statement conclusion" {
+		t.Errorf("xulosa oxirga ko'chmadi: %s", got)
+	}
+	o := &deckOutline{Slides: []plannedSlide{{Layout: "agenda"}, {Layout: "conclusion"}, {Layout: "cards"}, {Layout: "conclusion"}}}
+	o.fit(4)
+	if o.Slides[3].Layout != "conclusion" || o.Slides[1].Layout != "conclusion" {
+		t.Errorf("oxiri xulosa bo'lsa, tartib o'zgarmasligi kerak: %+v", o.Slides)
+	}
+	if !strings.Contains(buildDeckOutlinePrompt(PresentationRequest{Topic: "T", SlideCount: 10}), `"n" from 1 to 10 without gaps: slide 10 is the conclusion`) {
+		t.Error("reja promptida raqamlash qoidasi yo'q")
+	}
+	if s := deckOutlineSchema(false, slideLayouts).Properties["slides"].Items; s.Properties["n"] == nil {
+		t.Error("reja sxemasida n maydoni yo'q")
+	}
+}

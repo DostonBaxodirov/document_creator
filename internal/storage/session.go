@@ -28,8 +28,12 @@ type Session struct {
 	// Volume — hajm: taqdimot uchun slaydlar soni, mustaqil ish va amaliy
 	// topshiriq uchun sahifalar soni.
 	Volume int `gorm:"not null;default:0"`
-	// Design — taqdimot dizayn mavzusi (generator.Theme* qiymatlari).
+	// Design — taqdimot dizayn mavzusi (generator.Theme* qiymatlari;
+	// "custom" — AI maxsus dizayni).
 	Design string `gorm:"size:32"`
+	// Tariff — AI maxsus dizayn tarifi: "standard" | "optimal" | "premium"
+	// (faqat Design == "custom" bo'lganda; har bir buyurtmada tozalanadi).
+	Tariff string `gorm:"size:16"`
 	// Language — ish yoziladigan til (lang.Code qiymatlari; bo'sh — o'zbek lotin).
 	Language string `gorm:"size:16"`
 	// Requirements — foydalanuvchining qo'shimcha talablari (ixtiyoriy, AI promptiga qo'shiladi).
@@ -51,6 +55,9 @@ type Session struct {
 	// Statistika.
 	GeneratedCount  int `gorm:"not null;default:0"`
 	LastGeneratedAt *time.Time
+	// GuideSentAt — foydalanish va tariflar bo'yicha qo'llanma yuborilgan
+	// vaqt (birinchi /start da bir marta yuboriladi; nil — hali yuborilmagan).
+	GuideSentAt *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

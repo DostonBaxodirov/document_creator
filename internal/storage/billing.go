@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -14,7 +15,21 @@ import (
 const (
 	KindPhoto = "photo" // rasmli taqdimot
 	KindPlain = "plain" // rasmsiz taqdimot, mustaqil ish va amaliy topshiriq
+
+	// kindAIPrefix — AI maxsus dizayndagi taqdimot: "ai_standard",
+	// "ai_optimal", "ai_premium" (toifa tarifni ham saqlaydi — hisobotda
+	// tariflar bo'yicha ajratish uchun).
+	kindAIPrefix = "ai_"
 )
+
+// AIKind AI maxsus dizayn tarifi uchun buyurtma toifasi: "premium" → "ai_premium".
+func AIKind(tariff string) string { return kindAIPrefix + tariff }
+
+// KindTariff toifa AI maxsus dizayn bo'lsa, uning tarifini qaytaradi.
+func KindTariff(kind string) (string, bool) {
+	t, ok := strings.CutPrefix(kind, kindAIPrefix)
+	return t, ok && t != ""
+}
 
 // Buyurtma holatlari. Qiymatlar bazada saqlanadi, shuning uchun o'zgartirmang.
 //

@@ -52,8 +52,11 @@ type openAIImageResponse struct {
 
 func (o *OpenAI) Generate(ctx context.Context, prompt string, shape Shape) ([]byte, error) {
 	size := "1536x1024"
-	if shape == Portrait {
+	switch shape {
+	case Portrait:
 		size = "1024x1536"
+	case Square:
+		size = "1024x1024"
 	}
 	payload := map[string]any{
 		"model":              o.model,

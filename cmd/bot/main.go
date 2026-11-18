@@ -97,6 +97,9 @@ func run() error {
 		log.Warn("rasm provayderlari ulanmagan (OPENAI_API_KEY / GEMINI_API_KEY) — rasmli dizaynlar rasmsiz chiqadi")
 	}
 
+	// AI maxsus dizayn: har bir tarif — o'z OpenAI matn modeli va rasm sifati.
+	customTariffs := newCustomTariffs(cfg, log)
+
 	// To'lov cheklarini OpenAI vision modeli o'qiydi. Kalit bo'lmasa — barcha
 	// cheklar admin tekshiruviga yuboriladi.
 	var verifier bot.ReceiptVerifier
@@ -147,6 +150,7 @@ func run() error {
 			FreePlain:       cfg.Payment.FreePlain,
 			AdminPassword:   cfg.Payment.AdminPassword,
 		},
+		Custom: customTariffs,
 	})
 
 	// 6. Telegram bot.
@@ -191,6 +195,48 @@ func run() error {
 
 	log.Info("bot stopped gracefully")
 	return nil
+}
+
+// newCustomTariffs AI maxsus dizayn tariflarini yaratadi: har bir tarif uchun
+// o'z matn modeli (dizayn konsepsiyasi va slaydlar) hamda o'z sifatidagi rasm
+// modeli. Ikkalasi ham OpenAI'da (OPENAI_API_KEY); kalit bo'lmasa yoki
+// CUSTOM_DESIGN_ENABLED=false bo'lsa — nil (tugma ko'rsatilmaydi).
+func newCustomTariffs(cfg *config.Config, log *zap.Logger) map[string]bot.CustomTariff {
+	if !cfg.Custom.Enabled {
+		log.Info("AI maxsus dizayn o'chirilgan (CUSTOM_DESIGN_ENABLED=false)")
+		return nil
+	}
+	if cfg.AI.OpenAIAPIKey == "" {
+		log.Warn("OPENAI_API_KEY yo'q — AI maxsus dizayn o'chirildi")
+		return nil
+	}
+	out := make(map[string]bot.CustomTariff, len(config.Tariffs))
+	for _, name := range config.Tariffs {
+		t, ok := cfg.Custom.Tier(name)
+		if !ok {
+			continue
+		}
+		gen := images.NewOpenAI(cfg.AI.OpenAIBaseURL, cfg.AI.OpenAIAPIKey, cfg.Custom.ImageModel, t.ImageQuality, cfg.Images.Timeout)
+		// Fallback yo'q: boshqa (qimmatroq yoki arzonroq) sifatga o'tib ketmaslik uchun.
+		svc := images.NewService(map[images.Tier]images.Generator{images.TierStandard: gen},
+			cfg.Images.Parallel, cfg.Images.Timeout, false, log.With(zap.String("tariff", name)))
+		out[name] = bot.CustomTariff{
+			PriceSlide:   t.PriceSlide,
+			ImagePercent: t.ImagePercent,
+			AI:           ai.NewOpenAIModel(cfg.AI, t.TextModel, log),
+			Images:       svc,
+			TextModel:    t.TextModel,
+			ImageModel:   cfg.Custom.ImageModel,
+			ImageQuality: t.ImageQuality,
+		}
+		log.Info("custom design tariff",
+			zap.String("tariff", name),
+			zap.Int("price_slide", t.PriceSlide),
+			zap.String("text_model", t.TextModel),
+			zap.String("image", cfg.Custom.ImageModel+":"+t.ImageQuality),
+			zap.Int("image_percent", t.ImagePercent))
+	}
+	return out
 }
 
 // newLogger muhitga mos zap logger yaratadi: production — JSON,

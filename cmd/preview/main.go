@@ -84,6 +84,24 @@ func run(tpl, out, only, photos, language string) error {
 		}
 	}
 
+	// AI maxsus dizayni: namunaviy spetsifikatsiyalar (-theme custom).
+	if only == generator.ThemeCustom || only == "" && svc == nil {
+		for i, spec := range generator.SampleCustomSpecs() {
+			tmp, err := g.Build(ctx, generator.SampleCustomDeck(spec))
+			if err != nil {
+				return fmt.Errorf("custom %d: %w", i+1, err)
+			}
+			dst := filepath.Join(out, fmt.Sprintf("namuna-custom-%d.pptx", i+1))
+			if err := os.Rename(tmp, dst); err != nil {
+				return err
+			}
+			fmt.Printf("%s\t✨ %s\n", dst, spec.Name)
+		}
+		if only == generator.ThemeCustom {
+			return nil
+		}
+	}
+
 	for _, t := range generator.Themes() {
 		if only != "" && t.ID != only || svc != nil && !t.Photos {
 			continue

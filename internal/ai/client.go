@@ -57,6 +57,8 @@ type Client interface {
 	GeneratePresentation(ctx context.Context, req PresentationRequest) (*Presentation, error)
 	// GenerateDocument mustaqil ish yoki amaliy topshiriq matnini yaratadi.
 	GenerateDocument(ctx context.Context, req DocumentRequest) (*Document, error)
+	// GenerateDesign mavzuga mos maxsus dizayn konsepsiyasini yaratadi.
+	GenerateDesign(ctx context.Context, req DesignRequest) (*Design, error)
 }
 
 // task — provayderga yuboriladigan bitta so'rov.
@@ -129,6 +131,27 @@ func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, err
 		parallel:   max(1, cfg.ParallelRequests),
 		log:        log.Named("ai"),
 	}, nil
+}
+
+// NewOpenAIModel OpenAI (yoki OPENAI_BASE_URL dagi mos API) bilan ishlaydigan,
+// modeli aniq berilgan Client yaratadi. AI maxsus dizayn tariflari uchun
+// (standard, optimal, premium) har biriga o'z modeli bilan alohida klient
+// yaratiladi; asosiy AI_PROVIDER ga bog'liq emas.
+func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
+	cfg.OpenAIModel = model
+	// AI_MAX_TOKENS asosiy provayder uchun sozlangan bo'lishi mumkin (masalan,
+	// DeepSeek'ning katta chegarasi) — OpenAI modeli uni rad etmasligi uchun
+	// modelning o'z standart chegarasi ishlatiladi.
+	cfg.MaxTokens = 0
+	p := newOpenAI(cfg)
+	log.Info("AI client initialised", zap.String("provider", p.name()), zap.String("purpose", "custom design"))
+	return &client{
+		p:          p,
+		timeout:    cfg.Timeout,
+		maxRetries: cfg.MaxRetries,
+		parallel:   max(1, cfg.ParallelRequests),
+		log:        log.Named("ai").With(zap.String("model", model)),
+	}
 }
 
 // generateJSON so'rovni yuboradi, javobni parse qiladi va kerak bo'lsa qayta uriniladi.
@@ -262,6 +285,17 @@ const maxRequirementsRunes = 800
 // blok sifatida qo'shadi. Talablar format, hajm va til qoidalarini bekor
 // qila olmaydi — bu promptda aniq aytiladi.
 func requirementsBlock(req string) string {
+	fenced := fencedRequirements(req)
+	if fenced == "" {
+		return ""
+	}
+	return "Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, " +
+		"the requested number of slides or chapters, the content language or the rules above:\n" + fenced
+}
+
+// fencedRequirements talablarni """ ... """ bloki ichida qaytaradi (bo'sh
+// bo'lsa — bo'sh satr).
+func fencedRequirements(req string) string {
 	// Foydalanuvchi matni blok chegarasini (""") buzmasligi kerak. Bir marta
 	// almashtirish yetmaydi: `"""""` → `"""`.
 	for strings.Contains(req, `"""`) {
@@ -271,9 +305,7 @@ func requirementsBlock(req string) string {
 	if req == "" {
 		return ""
 	}
-	return "Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, " +
-		"the requested number of slides or chapters, the content language or the rules above:\n" +
-		"\"\"\"\n" + truncateRunes(req, maxRequirementsRunes) + "\n\"\"\""
+	return "\"\"\"\n" + truncateRunes(req, maxRequirementsRunes) + "\n\"\"\""
 }
 
 // writeRequirements talablar blokini promptning oxiriga bo'sh qator bilan

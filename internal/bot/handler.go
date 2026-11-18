@@ -46,6 +46,7 @@ type SessionStore interface {
 type ContentGenerator interface {
 	GeneratePresentation(ctx context.Context, req ai.PresentationRequest) (*ai.Presentation, error)
 	GenerateDocument(ctx context.Context, req ai.DocumentRequest) (*ai.Document, error)
+	GenerateDesign(ctx context.Context, req ai.DesignRequest) (*ai.Design, error)
 }
 
 // SlidesBuilder — taqdimot (.pptx) faylini yaratuvchi generator.
@@ -100,6 +101,10 @@ type Options struct {
 	Verifier ReceiptVerifier
 	// Payment — narxlar, bepul urinishlar, karta va admin paroli.
 	Payment PaymentOptions
+
+	// Custom — AI maxsus dizayn tariflari (config.Tariff* → sozlamalar).
+	// Bo'sh bo'lsa, "✨ AI maxsus dizayn" tugmasi ko'rsatilmaydi.
+	Custom map[string]CustomTariff
 }
 
 const (
@@ -113,7 +118,7 @@ const (
 const (
 	msgWelcome = "👋 Assalomu alaykum, <b>%s</b>!\n\n" +
 		"Men sun'iy intellekt yordamida tayyorlab beraman:\n" +
-		"📊 <b>taqdimot</b> — PowerPoint (.pptx), 8 xil dizaynda (4 tasi AI chizgan rasmlar bilan)\n" +
+		"📊 <b>taqdimot</b> — PowerPoint (.pptx): tayyor dizaynlarda yoki ✨ AI mavzungizga mos yaratgan maxsus dizaynda\n" +
 		"📚 <b>mustaqil ish</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx)\n\n" +
 		"Bir nechta savolga javob bering — qolganini o'zim qilaman ✨"
 	msgChooseWorkType = "📌 <b>Ish turini tanlang:</b>"
@@ -136,17 +141,6 @@ const (
 		"Ma'lumotlaringiz saqlangan — «Qayta urinish» tugmasini bosing."
 	msgDesignHint = "👇 Iltimos, quyidagi tugmalardan biri bilan dizaynni tanlang."
 	msgChooseLang = "🌐 <b>Ish qaysi tilda yozilsin?</b>\n\n<i>Matn, titul varaq va sarlavhalar shu tilda bo'ladi.</i>"
-	msgHelp       = "ℹ️ <b>Bot qanday ishlaydi?</b>\n\n" +
-		"1️⃣ /start — yangi buyurtma\n" +
-		"2️⃣ Ish turini va tilini tanlang: 🇺🇿 o'zbekcha (lotin/kirill), 🇷🇺 ruscha yoki 🇬🇧 inglizcha\n" +
-		"3️⃣ Mavzu, hajm (slaydlar yoki sahifalar soni), F.I.Sh., universitet va tekshiruvchini kiriting\n" +
-		"     🎨 taqdimot uchun 8 xil dizayndan birini tanlaysiz (📷 — rasmli)\n" +
-		"     ✍️ xohlasangiz, qo'shimcha talablaringizni yozasiz (masalan: «ko'proq misollar»)\n" +
-		"4️⃣ Ma'lumotlarni tasdiqlang — bot tayyor faylni yuboradi:\n" +
-		"     📊 taqdimot — <b>.pptx</b> (PowerPoint)\n" +
-		"     📚 mustaqil ish, 🛠 amaliy topshiriq — <b>.docx</b> (Word)\n\n" +
-		"/cancel — joriy jarayonni bekor qilish\n" +
-		"/help — ushbu yordam"
 )
 
 // errAI AI bosqichidagi xatolarni belgilaydi (foydalanuvchiga mos xabar tanlash uchun).
@@ -226,6 +220,7 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle(&tele.Btn{Unique: cbWorkType}, h.onWorkType)
 	b.Handle(&tele.Btn{Unique: cbLanguage}, h.onLanguage)
 	b.Handle(&tele.Btn{Unique: cbDesign}, h.onDesign)
+	b.Handle(&tele.Btn{Unique: cbTariff}, h.onTariff)
 	b.Handle(&tele.Btn{Unique: cbConfirm}, h.onConfirm)
 	b.Handle(&tele.Btn{Unique: cbRestart}, h.onRestart)
 	b.Handle(&tele.Btn{Unique: cbCancel}, h.onCancelButton)
@@ -237,7 +232,7 @@ func (h *Handler) Register(b *tele.Bot) {
 	if err := b.SetCommands([]tele.Command{
 		{Text: "start", Description: "Yangi ish buyurtma qilish"},
 		{Text: "cancel", Description: "Joriy jarayonni bekor qilish"},
-		{Text: "help", Description: "Yordam"},
+		{Text: "help", Description: "Qo'llanma va tariflar"},
 	}); err != nil {
 		h.log.Warn("failed to set bot commands", zap.Error(err))
 	}
@@ -378,15 +373,25 @@ func (h *Handler) onStart(c tele.Context) error {
 	if name == "" {
 		name = "do'stim"
 	}
-	if err := c.Send(fmt.Sprintf(msgWelcome, html.EscapeString(name))+h.pricingText(), removeKeyboard()); err != nil {
+	// Birinchi /start da — to'liq qo'llanma (foydalanish tartibi va tariflar),
+	// keyingilarida — qisqa narxlar ro'yxati.
+	first := s.GuideSentAt == nil
+	welcome := fmt.Sprintf(msgWelcome, html.EscapeString(name))
+	if !first {
+		welcome += h.pricingText()
+	}
+	if err := c.Send(welcome, removeKeyboard()); err != nil {
 		return err
+	}
+	if first {
+		h.sendGuideOnce(ctx, c, s)
 	}
 	return c.Send(msgChooseWorkType, workTypeKeyboard())
 }
 
-// onHelp yordam matnini yuboradi.
+// onHelp to'liq qo'llanmani (foydalanish tartibi va tariflar) yuboradi.
 func (h *Handler) onHelp(c tele.Context) error {
-	return c.Send(msgHelp + h.pricingText())
+	return c.Send(h.guideText())
 }
 
 // onCancel /cancel buyrug'i.
@@ -479,7 +484,9 @@ func (h *Handler) onText(c tele.Context) error {
 	case StateLanguage:
 		return c.Send(msgPressButton, languageKeyboard())
 	case StateDesign:
-		return c.Send(msgDesignHint, designKeyboard())
+		return c.Send(msgDesignHint, designKeyboard(h.customOn()))
+	case StateTariff:
+		return c.Send(msgTariffHint, h.tariffKeyboard(s))
 	case StateConfirm:
 		return h.sendSummary(c, s)
 	case StatePayment:
@@ -612,6 +619,19 @@ func (h *Handler) onDesign(c tele.Context) error {
 	if State(s.State) != StateDesign {
 		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
 	}
+	if c.Data() == generator.ThemeCustom {
+		if !h.customOn() {
+			return c.Respond(&tele.CallbackResponse{Text: msgNoCustomCfg, ShowAlert: true})
+		}
+		s.Design, s.Tariff = generator.ThemeCustom, ""
+		s.State = string(StateTariff)
+		if err := h.sessions.Save(ctx, s); err != nil {
+			return err
+		}
+		_ = c.Respond(&tele.CallbackResponse{Text: customLabel})
+		h.editPrompt(c, "🎨 Dizayn: <b>"+customLabel+"</b>")
+		return h.askTariff(c, s)
+	}
 	theme, ok := generator.FindTheme(c.Data())
 	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: msgStaleButton})
@@ -631,7 +651,8 @@ func (h *Handler) onDesign(c tele.Context) error {
 // askDesign dizayn tanlash xabarini yuboradi: dizaynlar ko'rinishi rasmi
 // (bo'lsa) va har bir dizayn uchun tugma.
 func (h *Handler) askDesign(c tele.Context) error {
-	text := designPrompt()
+	text := designPrompt(h.customOn())
+	keyboard := designKeyboard(h.customOn())
 	h.previewMu.Lock()
 	cached := h.previewID
 	h.previewMu.Unlock()
@@ -643,12 +664,12 @@ func (h *Handler) askDesign(c tele.Context) error {
 	case h.opts.DesignPreview != "" && fileExists(h.opts.DesignPreview):
 		file = tele.FromDisk(h.opts.DesignPreview)
 	default:
-		return c.Send(text, designKeyboard())
+		return c.Send(text, keyboard)
 	}
 
 	// Tarmoq so'rovi qulfsiz bajariladi: birinchi yuklashlar bir vaqtga to'g'ri
 	// kelsa, rasm ikki marta yuklanishi mumkin — bu zararsiz.
-	msg, err := h.bot.Send(c.Recipient(), &tele.Photo{File: file, Caption: text}, designKeyboard())
+	msg, err := h.bot.Send(c.Recipient(), &tele.Photo{File: file, Caption: text}, keyboard)
 	h.previewMu.Lock()
 	defer h.previewMu.Unlock()
 	if err != nil {
@@ -657,7 +678,7 @@ func (h *Handler) askDesign(c tele.Context) error {
 		if h.previewID == cached {
 			h.previewID = ""
 		}
-		return c.Send(text, designKeyboard())
+		return c.Send(text, keyboard)
 	}
 	if msg != nil && msg.Photo != nil && h.previewID == "" {
 		h.previewID = msg.Photo.FileID
@@ -665,8 +686,9 @@ func (h *Handler) askDesign(c tele.Context) error {
 	return nil
 }
 
-// designPrompt dizayn tanlash xabari matni.
-func designPrompt() string {
+// designPrompt dizayn tanlash xabari matni (custom — AI maxsus dizayn yoqilgan).
+// Rasm izohi bo'lib yuboriladi — Telegram chegarasi 1024 belgi.
+func designPrompt(custom bool) string {
 	var b strings.Builder
 	b.WriteString("🎨 <b>Taqdimot dizaynini tanlang:</b>\n\n")
 	for i, t := range generator.Themes() {
@@ -677,7 +699,11 @@ func designPrompt() string {
 		fmt.Fprintf(&b, "%d. %s <b>%s</b>%s — %s\n", i+1, t.Emoji, html.EscapeString(t.Name), photo, html.EscapeString(t.Description))
 	}
 	b.WriteString("\n📷 — mavzuga mos AI rasmlar bilan.\n")
-	b.WriteString("<i>Har bir dizaynning o'z tuzilishi bor: vaqt chizig'i, piramida, SWOT, sikl, sxema va boshqa maketlar.</i>")
+	if custom {
+		b.WriteString("✨ <b>AI maxsus dizayn</b> — AI mavzungizga mos noyob dizaynni noldan yaratadi (3 ta tarif).")
+	} else {
+		b.WriteString("<i>Har bir dizaynning o'z tuzilishi bor: vaqt chizig'i, piramida, SWOT, sikl, sxema va boshqa maketlar.</i>")
+	}
 	return b.String()
 }
 
@@ -871,22 +897,49 @@ type output struct {
 // buildSlides taqdimotni yaratadi: titul va yakuniy slaydlarni generator
 // o'zi chizadi, AI faqat mazmunli slaydlarni yozadi. Katta taqdimot bir necha
 // so'rov bilan yoziladi — jarayon holati alohida xabarda ko'rsatiladi.
+//
+// AI maxsus dizaynda (custom.go) avval tarif modeli mavzuga mos dizayn
+// konsepsiyasini yaratadi, slaydlarni ham shu model yozadi, rasmlar esa
+// tarif sifatida slaydlarning bir qismiga chiziladi.
 func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Slides
 	content := b.ContentSlides(s.Volume)
-	photos := generator.ThemeHasPhotos(s.Design) && h.opts.Images != nil && h.opts.Images.Available()
+	li := lang.Get(s.Language)
+
+	var (
+		gen      = h.ai
+		spec     *generator.CustomSpec
+		aiDesign *ai.Design
+		plan     = picturePlan{svc: h.opts.Images, tier: h.imageTier(s)}
+		tariff   CustomTariff
+	)
+	custom := isCustom(s)
+	if custom {
+		var ok bool
+		if tariff, ok = h.customTariff(s.Tariff); !ok {
+			return nil, fmt.Errorf("AI maxsus dizayn tarifi topilmadi: %q", s.Tariff)
+		}
+		gen = tariff.AI
+		var err error
+		if aiDesign, spec, err = h.customDesign(ctx, chat, log, s, tariff, li.Prompt); err != nil {
+			return nil, err
+		}
+		plan = picturePlan{svc: tariff.Images, tier: images.TierStandard, limit: customImageCount(s.Volume, tariff.ImagePercent)}
+	}
+	plan.design = generator.DesignFor(s.Design, spec)
+	photos := plan.design.Photos() && plan.svc != nil && plan.svc.Available()
 
 	// Prompt tanlangan dizayn tuzilishiga moslanadi: AI dizayn chizadigan
 	// maketlardan tanlaydi, uning imzo maketlarini ishlatadi va matn hajmini
 	// dizayndagi joyga moslaydi.
-	design := generator.ThemeStructure(s.Design)
-	li := lang.Get(s.Language)
+	structure := plan.design.Structure()
 	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Slaydlar yozilmoqda..."))
-	pres, err := h.ai.GeneratePresentation(ctx, ai.PresentationRequest{
+	pres, err := gen.GeneratePresentation(ctx, ai.PresentationRequest{
 		Topic: s.Topic, SlideCount: content, OnProgress: report, Images: photos,
-		Layouts: design.Layouts, Signature: design.Signature, Compact: design.Compact,
+		Layouts: structure.Layouts, Signature: structure.Signature, Compact: structure.Compact,
 		Language: li.Prompt, Requirements: s.Requirements,
 		OutlineTitle: li.Labels.Plan, ConclusionTitle: li.Labels.Conclusion,
+		Custom: aiDesign.Brief(),
 	})
 	stopProgress()
 	if err != nil {
@@ -902,6 +955,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 		TeacherName: s.TeacherName,
 		Year:        strconv.Itoa(time.Now().Year()),
 		Theme:       s.Design,
+		Custom:      spec,
 		Lang:        string(li.Code),
 		Slides:      make([]generator.Slide, 0, len(pres.Slides)),
 	}
@@ -916,7 +970,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	}
 	var pics picturesInfo
 	if photos {
-		pics = h.addPictures(ctx, chat, log, s, pres, &deck)
+		pics = h.addPictures(ctx, chat, log, pres, &deck, plan)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -931,6 +985,9 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	if t, ok := generator.FindTheme(s.Design); ok {
 		designName = t.Emoji + " " + t.Name
 	}
+	if custom {
+		designName = customCaption(aiDesign, s.Tariff)
+	}
 	caption := fmt.Sprintf("📎 <b>%s</b>\n%s · %d ta slayd · %s",
 		html.EscapeString(s.Topic), html.EscapeString(opt.Name), total, html.EscapeString(designName))
 	if pics.placed > 0 {
@@ -938,6 +995,10 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	}
 	summary := fmt.Sprintf("%d ta slayd · %s", total, designName)
 	fields := []zap.Field{zap.Int("slides", total), zap.String("design", s.Design)}
+	if custom {
+		summary += fmt.Sprintf(" · %s, %s:%s", tariff.TextModel, tariff.ImageModel, tariff.ImageQuality)
+		fields = append(fields, zap.String("tariff", s.Tariff), zap.String("design_name", aiDesign.Name))
+	}
 	if photos {
 		summary += fmt.Sprintf(" · 🖼 %d/%d rasm (%s, %s)", pics.placed, pics.requested,
 			pics.tier, orDash(pics.provider != "", pics.provider))
@@ -978,11 +1039,14 @@ func (h *Handler) imageTier(s *storage.Session) images.Tier {
 }
 
 // addPictures AI yozgan rasm tavsiflari bo'yicha rasmlarni chizdiradi va
-// taqdimotga joylaydi: titul (va yakuniy) slayd uchun bitta yotiq rasm va
-// rasm sig'adigan mazmunli slaydlar uchun tik rasmlar. Chizilmagan rasm
-// o'rnida slayd rasmsiz (titulda — bezakli fon bilan) chiqadi.
-func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Logger, s *storage.Session, pres *ai.Presentation, deck *generator.Deck) picturesInfo {
-	info := picturesInfo{tier: h.imageTier(s)}
+// taqdimotga joylaydi: titul (va yakuniy) slayd uchun bitta rasm va
+// mazmunli slaydlar uchun rasmlar. Tayyor rasmli dizaynda — rasm sig'adigan
+// barcha slaydlarga (yon panel uchun tik, banner uchun yotiq rasm); AI maxsus
+// dizaynda — plan.limit ta kvadrat rasm, slaydlarga teng taqsimlangan.
+// Chizilmagan rasm o'rnida slayd rasmsiz (titulda — bezakli fon bilan) chiqadi.
+func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Logger, pres *ai.Presentation, deck *generator.Deck, plan picturePlan) picturesInfo {
+	info := picturesInfo{tier: plan.tier}
+	design := plan.design
 
 	var (
 		reqs    []images.Request
@@ -992,21 +1056,32 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 	for i := 0; cover == "" && i < len(pres.Slides); i++ {
 		cover = pres.Slides[i].Image
 	}
+	coverShape := images.Landscape
+	if plan.limit > 0 {
+		coverShape = images.Square
+	}
 	if cover != "" {
-		reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(s.Design, cover), Shape: images.Landscape})
+		reqs = append(reqs, images.Request{Prompt: design.PhotoPrompt(cover), Shape: coverShape})
 		targets = append(targets, -1)
 	}
-	for i, sl := range pres.Slides {
-		if sl.Image == "" || i >= len(deck.Slides) || !generator.SlideTakesPhoto(s.Design, deck.Slides[i]) {
-			continue
+	if plan.limit > 0 {
+		for _, i := range customPhotoTargets(design, pres, deck, plan.limit-len(reqs)) {
+			reqs = append(reqs, images.Request{Prompt: design.PhotoPrompt(pres.Slides[i].Image), Shape: images.Square})
+			targets = append(targets, i)
 		}
-		// Tepadagi banner uchun — yotiq rasm, yon panel uchun — tik rasm.
-		slideShape := images.Portrait
-		if generator.SlidePhotoWide(s.Design, deck.Slides[i]) {
-			slideShape = images.Landscape
+	} else {
+		for i, sl := range pres.Slides {
+			if sl.Image == "" || i >= len(deck.Slides) {
+				continue
+			}
+			// Tepadagi banner uchun — yotiq rasm, yon panel uchun — tik rasm.
+			slideShape := images.Portrait
+			if design.PhotoWide(deck.Slides[i]) {
+				slideShape = images.Landscape
+			}
+			reqs = append(reqs, images.Request{Prompt: design.PhotoPrompt(sl.Image), Shape: slideShape})
+			targets = append(targets, i)
 		}
-		reqs = append(reqs, images.Request{Prompt: generator.PhotoPrompt(s.Design, sl.Image), Shape: slideShape})
-		targets = append(targets, i)
 	}
 	info.requested = len(reqs)
 	if len(reqs) == 0 {
@@ -1017,7 +1092,7 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 	report, stop := h.startProgress(ctx, chat, log, imageStage)
 	report(0, len(reqs))
 	started := time.Now()
-	results := h.opts.Images.Generate(ctx, info.tier, reqs, report)
+	results := plan.svc.Generate(ctx, info.tier, reqs, report)
 	stop()
 
 	for k, r := range results {
@@ -1431,7 +1506,9 @@ func orderDetails(s *storage.Session, maxRequirements int) string {
 		volume, format = "📄 <b>Sahifalar soni:</b>", "Word (.docx)"
 	}
 	e := html.EscapeString
-	if !ai.WorkType(s.WorkType).IsDocument() {
+	if isCustom(s) {
+		format += "\n🎨 <b>Dizayn:</b> " + customLabel + " · " + tariffName(s.Tariff)
+	} else if !ai.WorkType(s.WorkType).IsDocument() {
 		if t, ok := generator.FindTheme(s.Design); ok {
 			format += "\n🎨 <b>Dizayn:</b> " + t.Emoji + " " + e(t.Name)
 			if t.Photos {
@@ -1485,11 +1562,15 @@ func languageKeyboard() *tele.ReplyMarkup {
 	return m
 }
 
-// designKeyboard dizayn tanlash tugmalari (qatorda 2 tadan).
-func designKeyboard() *tele.ReplyMarkup {
+// designKeyboard dizayn tanlash tugmalari (qatorda 2 tadan); custom bo'lsa —
+// birinchi qatorda "✨ AI maxsus dizayn" tugmasi.
+func designKeyboard(custom bool) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	themes := generator.Themes()
-	rows := make([]tele.Row, 0, (len(themes)+1)/2)
+	rows := make([]tele.Row, 0, (len(themes)+1)/2+1)
+	if custom {
+		rows = append(rows, m.Row(m.Data(customLabel+" — mavzuga mos", cbDesign, generator.ThemeCustom)))
+	}
 	for i := 0; i < len(themes); i += 2 {
 		var btns []tele.Btn
 		for j, t := range themes[i:min(i+2, len(themes))] {

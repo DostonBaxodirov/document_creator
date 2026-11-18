@@ -14,7 +14,6 @@ package generator
 import (
 	"fmt"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 )
@@ -103,6 +102,10 @@ type theme struct {
 	// maketlarga rasm qo'yiladi.
 	photoBanner bool
 
+	// custom — AI maxsus dizayni uchun variantlar (custom.go); tayyor
+	// dizaynlarda nil.
+	custom *customLook
+
 	cover   func(t *theme, c *canvas, d *Deck)
 	closing func(t *theme, c *canvas, d *Deck)
 	// chrome mazmunli slayd fonini, sarlavhasini va kolontitulini chizadi
@@ -174,14 +177,7 @@ var coreLayouts = []string{
 // ThemeStructure dizayn tuzilishini qaytaradi: asosiy maketlar va dizaynning
 // imzo maketlari. Noma'lum ID uchun — standart dizayn tuzilishi.
 func ThemeStructure(id string) Structure {
-	t := themeByID(id)
-	layouts := append([]string(nil), coreLayouts...)
-	for _, l := range t.signature {
-		if !slices.Contains(layouts, l) {
-			layouts = append(layouts, l)
-		}
-	}
-	return Structure{Layouts: layouts, Signature: slices.Clone(t.signature), Compact: t.compact}
+	return Design{themeByID(id)}.Structure()
 }
 
 // Themes barcha mavzular ro'yxatini (tanlash tugmalari uchun) qaytaradi.

@@ -24,6 +24,7 @@ const (
 	StateTopic        State = "await_topic"        // mavzu
 	StateVolume       State = "await_volume"       // hajm: slaydlar (taqdimot) yoki sahifalar (hujjat) soni
 	StateDesign       State = "await_design"       // taqdimot dizayni tanlanishi kutilmoqda (inline tugmalar)
+	StateTariff       State = "await_tariff"       // AI maxsus dizayn tarifi tanlanishi kutilmoqda (inline tugmalar)
 	StateStudent      State = "await_student"      // talabaning F.I.Sh.
 	StateUniversity   State = "await_university"   // universitet nomi
 	StateTeacher      State = "await_teacher"      // tekshiruvchi (o'qituvchi) F.I.Sh.
@@ -36,15 +37,17 @@ const (
 
 // FSM ketma-ketligi:
 //
-//	/start → WorkType → Language → Topic → Volume → [Design] → Student → University → Teacher → Requirements → Confirm → Generating → Idle
+//	/start → WorkType → Language → Topic → Volume → [Design → [Tariff]] → Student → University → Teacher → Requirements → Confirm → Generating → Idle
+//
+// Tariff qadami faqat "✨ AI maxsus dizayn" tanlanganda (custom.go).
 //
 // To'lov yoqilgan va bepul urinishlar tugagan bo'lsa, tasdiqlashdan keyin:
 //
 //	Confirm → Payment (chek kutiladi) → Review (AI/admin tekshiradi) → Generating
 //
 // Design qadami faqat taqdimot uchun. Matnli qadamlar (Topic..Requirements)
-// quyidagi `steps` jadvalida tavsiflangan; WorkType, Language, Design, Confirm
-// va Generating holatlari inline tugmalar orqali boshqariladi.
+// quyidagi `steps` jadvalida tavsiflangan; WorkType, Language, Design, Tariff,
+// Confirm va Generating holatlari inline tugmalar orqali boshqariladi.
 
 // Inline tugmalar uchun callback identifikatorlari (telebot "unique" maydoni).
 const (
@@ -320,6 +323,7 @@ func resetDraft(s *storage.Session) {
 	s.Topic = ""
 	s.Volume = 0
 	s.Requirements = ""
+	s.Tariff = ""
 	s.OrderID = nil
 }
 

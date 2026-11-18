@@ -51,6 +51,7 @@ type Config struct {
 	Generator GeneratorConfig
 	Limits    LimitsConfig
 	Payment   PaymentConfig
+	Custom    CustomConfig
 }
 
 // TelegramConfig — Telegram bot sozlamalari.
@@ -98,6 +99,97 @@ type ImagesConfig struct {
 	Timeout  time.Duration // bitta rasm uchun maksimal vaqt
 	Parallel int           // bir vaqtda chiziladigan rasmlar soni (bitta taqdimot ichida)
 	Fallback bool          // asosiy provayder ishlamasa, boshqa tarif provayderiga o'tish
+}
+
+// AI maxsus dizayn tariflari. Qiymatlar bazada (sessions.tariff,
+// orders.tariff) saqlanadi — o'zgartirmang.
+const (
+	TariffStandard = "standard"
+	TariffOptimal  = "optimal"
+	TariffPremium  = "premium"
+)
+
+// Tariffs — tariflar tartibi (arzonidan qimmatiga).
+var Tariffs = []string{TariffStandard, TariffOptimal, TariffPremium}
+
+// CustomConfig — AI maxsus dizayn: AI mavzuga mos dizaynni o'zi yaratadi,
+// slaydlarni tarif modeli yozadi va rasmlarni tarif sifatida chizadi.
+// Matn ham, rasm ham OpenAI orqali (OPENAI_API_KEY, OPENAI_BASE_URL).
+type CustomConfig struct {
+	Enabled    bool
+	ImageModel string // masalan gpt-image-1 (barcha tariflar uchun umumiy)
+	Tiers      map[string]CustomTier
+}
+
+// CustomTier — bitta tarif sozlamalari.
+type CustomTier struct {
+	PriceSlide   int    // bitta slayd narxi, so'mda (titul va yakuniy slayd ham sanaladi)
+	TextModel    string // slaydlar matni va dizayn konsepsiyasini yozadigan model
+	ImageQuality string // low | medium | high
+	// ImagePercent — rasmlar soni slaydlar sonining necha foizi (titul rasmi
+	// ham kiradi): 20 slayd va 40% — 8 ta rasm.
+	ImagePercent int
+}
+
+// Tier tarif sozlamalarini qaytaradi.
+func (c CustomConfig) Tier(name string) (CustomTier, bool) {
+	t, ok := c.Tiers[name]
+	return t, ok
+}
+
+// customConfig maxsus dizayn sozlamalarini o'qiydi. Standart qiymatlar
+// OpenAI narxlariga mos (20 slaydli taqdimot uchun taxminiy xarajat):
+//
+//	standard — gpt-4o-mini   + gpt-image-1 low,    8 rasm  ≈ $0.09
+//	optimal  — gpt-4.1-mini  + gpt-image-1 medium, 8 rasm  ≈ $0.35–0.39
+//	premium  — gpt-4o        + gpt-image-1 high,   10 rasm ≈ $1.72
+func customConfig(p *parser) CustomConfig {
+	tier := func(prefix string, price int, model, quality string, percent int) CustomTier {
+		return CustomTier{
+			PriceSlide:   p.int(prefix+"_PRICE", price),
+			TextModel:    p.str(prefix+"_TEXT_MODEL", model),
+			ImageQuality: strings.ToLower(p.str(prefix+"_IMAGE_QUALITY", quality)),
+			ImagePercent: p.int(prefix+"_IMAGE_PERCENT", percent),
+		}
+	}
+	return CustomConfig{
+		Enabled:    p.bool("CUSTOM_DESIGN_ENABLED", true),
+		ImageModel: p.str("CUSTOM_IMAGE_MODEL", "gpt-image-1"),
+		Tiers: map[string]CustomTier{
+			TariffStandard: tier("CUSTOM_STANDARD", 300, "gpt-4o-mini", "low", 40),
+			TariffOptimal:  tier("CUSTOM_OPTIMAL", 500, "gpt-4.1-mini", "medium", 40),
+			TariffPremium:  tier("CUSTOM_PREMIUM", 1700, "gpt-4o", "high", 50),
+		},
+	}
+}
+
+// validate maxsus dizayn sozlamalarini tekshiradi (faqat yoqilgan bo'lsa).
+// OPENAI_API_KEY bo'lmasa xato emas — bot maxsus dizaynni o'chirib, ogohlantiradi.
+func (c CustomConfig) validate() []error {
+	if !c.Enabled {
+		return nil
+	}
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	for _, name := range Tariffs {
+		t := c.Tiers[name]
+		key := "CUSTOM_" + strings.ToUpper(name)
+		if t.PriceSlide <= 0 {
+			add("%s_PRICE musbat bo'lishi kerak", key)
+		}
+		if t.TextModel == "" {
+			add("%s_TEXT_MODEL majburiy", key)
+		}
+		switch t.ImageQuality {
+		case "low", "medium", "high", "auto":
+		default:
+			add("%s_IMAGE_QUALITY noto'g'ri: %q (low, medium, high yoki auto bo'lishi kerak)", key, t.ImageQuality)
+		}
+		if t.ImagePercent < 0 || t.ImagePercent > 100 {
+			add("%s_IMAGE_PERCENT 0 dan 100 gacha bo'lishi kerak", key)
+		}
+	}
+	return errs
 }
 
 // DBConfig — PostgreSQL ulanish sozlamalari.
@@ -202,8 +294,8 @@ func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
 		PriceSlidePlain: p.int("PRICE_SLIDE_PLAIN", 250),
 		// Eski .env lar uchun: PRICE_DOCUMENT berilmasa, PRICE_PLAIN olinadi.
 		PriceDocument: p.int("PRICE_DOCUMENT", p.int("PRICE_PLAIN", 7000)),
-		FreePhoto:     p.int("FREE_PHOTO", 2),
-		FreePlain:     p.int("FREE_PLAIN", 2),
+		FreePhoto:     p.int("FREE_PHOTO", 1),
+		FreePlain:     p.int("FREE_PLAIN", 1),
 		VisionModel:   p.str("PAYMENT_VISION_MODEL", ai.OpenAIModel),
 		CheckTimeout:  p.duration("PAYMENT_CHECK_TIMEOUT", 60*time.Second),
 		AdminPassword: p.str("ADMIN_PASSWORD", ""),
@@ -256,6 +348,7 @@ func Load() (*Config, error) {
 		AI:      aiCfg,
 		Images:  imagesConfig(p),
 		Payment: paymentConfig(p, aiCfg),
+		Custom:  customConfig(p),
 		DB: DBConfig{
 			Host:            p.str("DB_HOST", "localhost"),
 			Port:            p.int("DB_PORT", 5432),
@@ -431,6 +524,7 @@ func (c *Config) validate() error {
 
 	errs = append(errs, c.Images.validate()...)
 	errs = append(errs, c.Payment.validate()...)
+	errs = append(errs, c.Custom.validate()...)
 
 	if c.DB.Port <= 0 || c.DB.Port > 65535 {
 		add("DB_PORT noto'g'ri: %d", c.DB.Port)

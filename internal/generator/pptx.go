@@ -97,6 +97,9 @@ type Deck struct {
 	Theme       string // ThemeAcademic, ThemeModern ...; bo'sh bo'lsa — DefaultTheme
 	// Lang — titul va yakuniy slayddagi yozuvlar tili (lang.Code); bo'sh bo'lsa — o'zbek (lotin).
 	Lang string
+	// Custom — AI maxsus dizayni (Theme == ThemeCustom); nil bo'lsa Theme
+	// bo'yicha tayyor mavzu ishlatiladi.
+	Custom *CustomSpec
 	// CoverImage — titul va yakuniy slayd rasmi (faqat rasmli dizaynlarda);
 	// nil bo'lsa, rasm o'rnida dizaynning bezakli foni chiziladi.
 	CoverImage *Picture
@@ -154,7 +157,7 @@ func (g *PPTX) Build(ctx context.Context, deck Deck) (string, error) {
 	}
 
 	started := time.Now()
-	t := themeByID(deck.Theme)
+	t := deckTheme(&deck)
 	limitPictures(&deck, maxMediaBytes)
 	slides := renderDeck(t, &deck)
 

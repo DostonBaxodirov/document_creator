@@ -280,8 +280,8 @@ type counter struct{ count, sum int }
 func (c *counter) add(amount int) { c.count++; c.sum += amount }
 
 type reportStats struct {
-	approved, photo, plain, review counter
-	rejected                       int
+	approved, photo, plain, custom, review counter
+	rejected                               int
 }
 
 func computeStats(list []storage.Payment) reportStats {
@@ -290,7 +290,9 @@ func computeStats(list []storage.Payment) reportStats {
 		switch p.Status {
 		case storage.PaymentApproved:
 			st.approved.add(p.Amount)
-			if p.Kind == storage.KindPhoto {
+			if _, ok := storage.KindTariff(p.Kind); ok {
+				st.custom.add(p.Amount)
+			} else if p.Kind == storage.KindPhoto {
 				st.photo.add(p.Amount)
 			} else {
 				st.plain.add(p.Amount)
@@ -314,6 +316,9 @@ func textReport(list []storage.Payment, p reportPeriod, now time.Time) string {
 	fmt.Fprintf(&b, "✅ Tasdiqlangan: <b>%d</b> ta · <b>%s</b>\n", st.approved.count, formatSum(st.approved.sum))
 	fmt.Fprintf(&b, "     📷 Rasmli: %d ta · %s\n", st.photo.count, formatSum(st.photo.sum))
 	fmt.Fprintf(&b, "     📄 Rasmsiz: %d ta · %s\n", st.plain.count, formatSum(st.plain.sum))
+	if st.custom.count > 0 {
+		fmt.Fprintf(&b, "     ✨ AI maxsus dizayn: %d ta · %s\n", st.custom.count, formatSum(st.custom.sum))
+	}
 	fmt.Fprintf(&b, "⏳ Tekshiruvda: %d ta · %s\n", st.review.count, formatSum(st.review.sum))
 	if st.review.count > 0 {
 		b.WriteString("     👉 Tasdiqlash/rad etish: /tekshiruv\n")

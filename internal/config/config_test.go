@@ -48,7 +48,7 @@ func TestPaymentConfig(t *testing.T) {
 	if len(p.errs) > 0 {
 		t.Fatal(p.errs)
 	}
-	if !c.Enabled || c.PriceSlidePhoto != 300 || c.PriceSlidePlain != 250 || c.PriceDocument != 7000 || c.FreePhoto != 2 || c.FreePlain != 2 || c.VisionModel != "gpt-x" {
+	if !c.Enabled || c.PriceSlidePhoto != 300 || c.PriceSlidePlain != 250 || c.PriceDocument != 7000 || c.FreePhoto != 1 || c.FreePlain != 1 || c.VisionModel != "gpt-x" {
 		t.Errorf("standart qiymatlar noto'g'ri: %+v", c)
 	}
 	// Yoqilgan, lekin karta va parol yo'q — xato.
@@ -93,5 +93,50 @@ func TestPaymentConfig(t *testing.T) {
 	t.Setenv("ADMIN_PASSWORD", "")
 	if errs := paymentConfig(&parser{}, AIConfig{}).validate(); len(errs) > 0 {
 		t.Errorf("o'chirilgan to'lov tekshirilmasligi kerak: %v", errs)
+	}
+}
+
+func TestCustomConfig(t *testing.T) {
+	keys := []string{"CUSTOM_DESIGN_ENABLED", "CUSTOM_IMAGE_MODEL"}
+	for _, tier := range []string{"STANDARD", "OPTIMAL", "PREMIUM"} {
+		for _, f := range []string{"PRICE", "TEXT_MODEL", "IMAGE_QUALITY", "IMAGE_PERCENT"} {
+			keys = append(keys, "CUSTOM_"+tier+"_"+f)
+		}
+	}
+	for _, k := range keys {
+		t.Setenv(k, "")
+	}
+	p := &parser{}
+	c := customConfig(p)
+	if len(p.errs) > 0 || len(c.validate()) > 0 {
+		t.Fatalf("standart sozlamalar yaroqli bo'lishi kerak: %v %v", p.errs, c.validate())
+	}
+	if !c.Enabled || c.ImageModel != "gpt-image-1" {
+		t.Errorf("standart qiymatlar: %+v", c)
+	}
+	want := map[string]CustomTier{
+		TariffStandard: {PriceSlide: 300, TextModel: "gpt-4o-mini", ImageQuality: "low", ImagePercent: 40},
+		TariffOptimal:  {PriceSlide: 500, TextModel: "gpt-4.1-mini", ImageQuality: "medium", ImagePercent: 40},
+		TariffPremium:  {PriceSlide: 1700, TextModel: "gpt-4o", ImageQuality: "high", ImagePercent: 50},
+	}
+	for _, name := range Tariffs {
+		if got, ok := c.Tier(name); !ok || got != want[name] {
+			t.Errorf("%s: %+v, kutilgan %+v", name, got, want[name])
+		}
+	}
+
+	t.Setenv("CUSTOM_PREMIUM_PRICE", "2000")
+	t.Setenv("CUSTOM_OPTIMAL_IMAGE_QUALITY", "HD")
+	t.Setenv("CUSTOM_STANDARD_IMAGE_PERCENT", "150")
+	c = customConfig(&parser{})
+	if c.Tiers[TariffPremium].PriceSlide != 2000 {
+		t.Errorf("narx o'qilmadi: %d", c.Tiers[TariffPremium].PriceSlide)
+	}
+	if errs := c.validate(); len(errs) != 2 {
+		t.Errorf("rasm sifati va foiz xatolari kutilgan edi: %v", errs)
+	}
+	t.Setenv("CUSTOM_DESIGN_ENABLED", "false")
+	if errs := customConfig(&parser{}).validate(); len(errs) > 0 {
+		t.Errorf("o'chirilgan maxsus dizayn tekshirilmasligi kerak: %v", errs)
 	}
 }
