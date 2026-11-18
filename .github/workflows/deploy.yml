@@ -1,0 +1,161 @@
+# CI/CD: main ga har bir push'da
+#   1) testlar (go vet + go test),
+#   2) Docker image yig'ilib GHCR (ghcr.io) ga yuklanadi,
+#   3) SSH orqali VPS da yangi image bilan bot qayta ishga tushiriladi.
+# Pull request'larda faqat testlar ishlaydi.
+#
+# Kerakli GitHub secretlari (Settings → Secrets and variables → Actions):
+#   VPS_HOST         — VPS IP manzili yoki domeni (majburiy)
+#   VPS_USER         — SSH foydalanuvchisi, docker'ni sudo'siz ishlata olishi kerak (majburiy)
+#   VPS_SSH_KEY      — deploy uchun maxsus SSH kalitning PRIVATE qismi (majburiy)
+#   VPS_PORT         — SSH porti (ixtiyoriy, standart 22)
+#   VPS_KNOWN_HOSTS  — `ssh-keyscan <host>` natijasi (ixtiyoriy, lekin tavsiya etiladi)
+# Ixtiyoriy variable (Variables bo'limida):
+#   DEPLOY_PATH      — VPS dagi loyiha papkasi (standart /opt/document_creator)
+#
+# Batafsil: docs/DEPLOY.md
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# main ga ketma-ket push qilinsa, deploylar navbat bilan bajariladi (yarim yo'lda to'xtatilmaydi).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Testlar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  build:
+    name: Docker image
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # GHCR faqat kichik harfli nomlarni qabul qiladi.
+      - name: Image nomi
+        id: vars
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Yig'ish va yuklash
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image }}:${{ github.sha }}
+            ${{ steps.vars.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: VPS ga deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/document_creator' }}
+      SSH_PORT: ${{ secrets.VPS_PORT || '22' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: SSH sozlash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ] || [ -z "$SSH_KEY" ]; then
+            echo "::error::VPS_HOST, VPS_USER va VPS_SSH_KEY secretlari kiritilmagan (docs/DEPLOY.md ga qarang)"
+            exit 1
+          fi
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS berilmagan — server kaliti ssh-keyscan orqali olinadi"
+            ssh-keyscan -p "$SSH_PORT" "$VPS_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $SSH_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+            ConnectTimeout 20
+          EOF
+
+      - name: Fayllarni VPS ga nusxalash
+        run: |
+          set -euo pipefail
+          ssh vps "mkdir -p '$DEPLOY_PATH'"
+          scp docker-compose.yml deploy/remote-deploy.sh "vps:$DEPLOY_PATH/"
+
+      - name: Botni yangilash
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}:${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Token buyruq qatorida ko'rinmasligi uchun stdin orqali uzatiladi.
+          printf '%s' "$GHCR_TOKEN" | ssh vps \
+            "cd '$DEPLOY_PATH' && IMAGE='$IMAGE' GHCR_USER='$GHCR_USER' bash remote-deploy.sh"
+
+      - name: SSH kalitni o'chirish
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

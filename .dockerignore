@@ -1,0 +1,12 @@
+# Docker build kontekstiga kerak bo'lmagan (yoki maxfiy) fayllar.
+.git
+.github
+.env
+.env.*
+/bot
+/preview
+/previews/
+docs
+scripts
+deploy
+*.md
