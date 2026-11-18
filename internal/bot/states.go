@@ -62,6 +62,8 @@ const (
 	cbPayReject    = "pay_no"  // admin: shubhali chekni rad etish (data — payment ID)
 	cbReportPeriod = "rep_per" // admin: hisobot davri (data — reportPeriod)
 	cbReportFormat = "rep_fmt" // admin: hisobot formati (data — davr|format)
+	cbUsersPeriod  = "usr_per" // admin: foydalanuvchilar ro'yxati davri (data — reportPeriod)
+	cbUsersFormat  = "usr_fmt" // admin: foydalanuvchilar ro'yxati formati (data — davr|format)
 )
 
 // workTypeOption — ish turining foydalanuvchi interfeysidagi ko'rinishi.

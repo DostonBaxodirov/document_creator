@@ -99,6 +99,57 @@ func TestStatsRepository(t *testing.T) {
 			t.Errorf("%d-kun: %+v, kutilgan %+v", i, g, w)
 		}
 	}
+
+	// Foydalanuvchilar ro'yxati: profil (users), tayyor ishlar (orders),
+	// tasdiqlangan to'lovlar (payments) va oxirgi tashrif (visits).
+	billing := NewBillingRepository(db)
+	u2, err := billing.EnsureUser(ctx, 2, "vali", "Vali")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := billing.SetAdmin(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []Payment{
+		{UserID: u2.ID, TelegramUserID: 2, OrderID: 1, Kind: KindPlain, Amount: 10000, Status: PaymentApproved, CheckFileID: "a", CheckMessageID: 1},
+		{UserID: u2.ID, TelegramUserID: 2, OrderID: 2, Kind: KindPlain, Amount: 15000, Status: PaymentApproved, CheckFileID: "b", CheckMessageID: 2},
+		{UserID: u2.ID, TelegramUserID: 2, OrderID: 2, Kind: KindPlain, Amount: 99000, Status: PaymentRejected, CheckFileID: "c", CheckMessageID: 3},
+	} {
+		if err := db.Create(&p).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Model(&Session{}).Where("user_id = ?", 3).
+		Updates(map[string]any{"student_name": "Karimova D.", "username": "dilnoza"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := r.ListUsers(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 || all[0].UserID != 3 || all[1].UserID != 2 || all[2].UserID != 1 {
+		t.Fatalf("ro'yxat eng yangisidan boshlanishi kerak: %+v", all)
+	}
+	vali := all[1]
+	if vali.FirstName != "Vali" || !vali.IsAdmin || vali.Delivered != 2 || vali.Payments != 2 || vali.PaidSum != 25000 {
+		t.Errorf("2-foydalanuvchi: %+v", vali)
+	}
+	if vali.LastVisit == nil || !vali.LastActive(loc).Equal(today) {
+		t.Errorf("2-foydalanuvchi bugun faol bo'lgan: %+v", vali.LastVisit)
+	}
+	dilnoza := all[0]
+	if dilnoza.StudentName != "Karimova D." || dilnoza.Username != "dilnoza" || dilnoza.FirstName != "" ||
+		dilnoza.IsAdmin || dilnoza.Delivered != 0 || dilnoza.PaidSum != 0 {
+		t.Errorf("3-foydalanuvchi (users jadvalida yo'q, yetkazilmagan buyurtma): %+v", dilnoza)
+	}
+	week, err := r.ListUsers(ctx, ptr(today.AddDate(0, 0, -6)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(week) != 2 || week[0].UserID != 3 || week[1].UserID != 2 {
+		t.Errorf("7 kunlik ro'yxat: %+v", week)
+	}
 }
 
 func ptr[T any](v T) *T { return &v }

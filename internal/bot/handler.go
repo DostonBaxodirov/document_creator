@@ -232,6 +232,7 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle("/chek", h.onChek)
 	b.Handle("/tekshiruv", h.onPendingChecks)
 	b.Handle("/statistika", h.onStats)
+	b.Handle("/foydalanuvchilar", h.onUsers)
 	b.Handle("/backup", h.onBackup)
 	b.Handle(tele.OnText, h.onText)
 	b.Handle(tele.OnPhoto, h.onPhoto)       // to'lov cheki
@@ -249,6 +250,8 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle(&tele.Btn{Unique: cbPayReject}, h.onPayReject)
 	b.Handle(&tele.Btn{Unique: cbReportPeriod}, h.onReportPeriod)
 	b.Handle(&tele.Btn{Unique: cbReportFormat}, h.onReportFormat)
+	b.Handle(&tele.Btn{Unique: cbUsersPeriod}, h.onUsersPeriod)
+	b.Handle(&tele.Btn{Unique: cbUsersFormat}, h.onUsersFormat)
 
 	if err := b.SetCommands([]tele.Command{
 		{Text: "start", Description: "Yangi ish buyurtma qilish"},

@@ -15,11 +15,18 @@ import (
 
 // fakeStats — xotiradagi statistika ombori.
 type fakeStats struct {
-	visits []int64
-	err    error
-	sinces []*time.Time
-	from   time.Time
-	days   int
+	visits     []int64
+	err        error
+	sinces     []*time.Time
+	from       time.Time
+	days       int
+	users      []storage.UserSummary
+	usersSince []*time.Time
+}
+
+func (f *fakeStats) ListUsers(_ context.Context, since *time.Time) ([]storage.UserSummary, error) {
+	f.usersSince = append(f.usersSince, since)
+	return f.users, nil
 }
 
 func (f *fakeStats) RecordVisit(_ context.Context, userID int64, _ time.Time) error {

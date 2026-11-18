@@ -1,7 +1,8 @@
 package storage
 
 // Tashrif buyuruvchilar statistikasi: har bir foydalanuvchining botga kirgan
-// kunlari (kuniga bitta yozuv) va admin hisoboti uchun hisob-kitoblar.
+// kunlari (kuniga bitta yozuv), admin hisoboti uchun hisob-kitoblar va
+// foydalanuvchilar ro'yxati.
 
 import (
 	"context"
@@ -140,6 +141,67 @@ func (r *StatsRepository) DailyStats(ctx context.Context, from time.Time, days i
 		day := start.AddDate(0, 0, i)
 		key := day.Format(time.DateOnly)
 		out[i] = DayStats{Day: day, NewUsers: newByDay[key], ActiveUsers: activeByDay[key]}
+	}
+	return out, nil
+}
+
+// UserSummary — admin uchun foydalanuvchilar ro'yxatidagi bitta foydalanuvchi.
+type UserSummary struct {
+	UserID      int64
+	Username    string
+	FirstName   string // Telegram'dagi ismi (narx hisoblangan yoki to'lov qilgan bo'lsa saqlangan)
+	StudentName string // titul uchun yozgan F.I.Sh.
+	University  string
+	Language    string
+	IsAdmin     bool
+	CreatedAt   time.Time  // botga birinchi kirgan vaqt
+	UpdatedAt   time.Time  // sessiya oxirgi o'zgargan vaqt
+	LastVisit   *time.Time // oxirgi tashrif kuni (date: UTC yarim tun)
+	Delivered   int64      // yetkazilgan (tayyor) ishlar
+	Payments    int64      // tasdiqlangan to'lovlar soni
+	PaidSum     int64      // tasdiqlangan to'lovlar summasi, so'm
+}
+
+// LastActive foydalanuvchi oxirgi faol bo'lgan kun boshi (loc mintaqasida):
+// tashriflar jadvali va sessiya o'zgarishining kechroqi.
+func (u UserSummary) LastActive(loc *time.Location) time.Time {
+	t := u.UpdatedAt.In(loc)
+	last := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+	if u.LastVisit != nil {
+		// date ustuni kunni UTC yarim tun sifatida saqlaydi (RecordVisit).
+		y, m, d := u.LastVisit.UTC().Date()
+		if v := time.Date(y, m, d, 0, 0, 0, 0, loc); v.After(last) {
+			last = v
+		}
+	}
+	return last
+}
+
+// ListUsers since dan boshlab (nil — barcha vaqt) botga kirgan
+// foydalanuvchilar: profil, oxirgi tashrif, tayyor ishlar va tasdiqlangan
+// to'lovlar. Eng yangi foydalanuvchi birinchi.
+func (r *StatsRepository) ListUsers(ctx context.Context, since *time.Time) ([]UserSummary, error) {
+	q := `SELECT s.user_id, s.username, COALESCE(u.first_name, '') AS first_name,
+		s.student_name, s.university, s.language, COALESCE(u.is_admin, FALSE) AS is_admin,
+		s.created_at, s.updated_at, v.last_visit,
+		COALESCE(o.delivered, 0) AS delivered, COALESCE(p.payments, 0) AS payments, COALESCE(p.paid_sum, 0) AS paid_sum
+	FROM sessions s
+	LEFT JOIN users u ON u.telegram_user_id = s.user_id
+	LEFT JOIN (SELECT user_id, MAX(day) AS last_visit FROM visits GROUP BY user_id) v ON v.user_id = s.user_id
+	LEFT JOIN (SELECT telegram_user_id, COUNT(*) AS delivered FROM orders
+		WHERE delivered_at IS NOT NULL GROUP BY telegram_user_id) o ON o.telegram_user_id = s.user_id
+	LEFT JOIN (SELECT telegram_user_id, COUNT(*) AS payments, SUM(amount) AS paid_sum FROM payments
+		WHERE status = ? GROUP BY telegram_user_id) p ON p.telegram_user_id = s.user_id`
+	args := []any{PaymentApproved}
+	if since != nil {
+		q += "\n\tWHERE s.created_at >= ?"
+		args = append(args, *since)
+	}
+	q += "\n\tORDER BY s.created_at DESC, s.user_id DESC"
+
+	var out []UserSummary
+	if err := r.db.WithContext(ctx).Raw(q, args...).Scan(&out).Error; err != nil {
+		return nil, fmt.Errorf("storage: foydalanuvchilar ro'yxatini o'qib bo'lmadi: %w", err)
 	}
 	return out, nil
 }

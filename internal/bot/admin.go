@@ -2,7 +2,8 @@ package bot
 
 // Admin imkoniyatlari: parol orqali admin bo'lish, to'lovlar hisoboti
 // (davr filtri bilan, matn yoki CSV ko'rinishida), chek rasmini ko'rish,
-// tashrif buyuruvchilar statistikasi (stats.go) va baza nusxasi (backup.go).
+// tashrif buyuruvchilar statistikasi (stats.go), foydalanuvchilar ro'yxati
+// (users.go) va baza nusxasi (backup.go).
 
 import (
 	"bytes"
@@ -31,6 +32,7 @@ const (
 		"/chek ID — chek rasmini ko'rish (masalan: /chek 12)\n" +
 		"/tekshiruv — tekshiruvdagi barcha cheklarni ✅/❌ tugmalari bilan qayta olish\n" +
 		"/statistika — tashrif buyuruvchilar soni (bugun, 7 va 30 kun, kunlar bo'yicha)\n" +
+		"/foydalanuvchilar — foydalanuvchilar ro'yxati (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
 		"/backup — bazaning zaxira nusxasini hozir olish (har kuni avtomatik ham keladi)\n\n" +
 		"Har bir chek va har bir xarid haqida to'liq ma'lumot shu chatga keladi; " +
 		"shubhali cheklar — ✅/❌ tugmalari bilan."
@@ -132,6 +134,7 @@ func (h *Handler) setAdminCommands(chatID int64) {
 		{Text: "chek", Description: "Chekni ko'rish: /chek ID"},
 		{Text: "tekshiruv", Description: "Tekshiruvdagi cheklarni qayta olish"},
 		{Text: "statistika", Description: "Tashrif buyuruvchilar statistikasi"},
+		{Text: "foydalanuvchilar", Description: "Foydalanuvchilar ro'yxati"},
 		{Text: "backup", Description: "Bazaning zaxira nusxasi"},
 	}
 	if err := h.bot.SetCommands(cmds, tele.CommandScope{Type: tele.CommandScopeChat, ChatID: chatID}); err != nil {
@@ -260,21 +263,28 @@ func (h *Handler) onReportFormat(c tele.Context) error {
 	})
 }
 
-func reportPeriodKeyboard() *tele.ReplyMarkup {
+func reportPeriodKeyboard() *tele.ReplyMarkup { return periodKeyboard(cbReportPeriod) }
+func reportFormatKeyboard(period string) *tele.ReplyMarkup {
+	return formatKeyboard(cbReportFormat, period)
+}
+
+// periodKeyboard davr tanlash tugmalari (hisobot va foydalanuvchilar ro'yxati uchun).
+func periodKeyboard(unique string) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	var btns []tele.Btn
 	for _, p := range reportPeriods {
-		btns = append(btns, m.Data(p.Button, cbReportPeriod, p.ID))
+		btns = append(btns, m.Data(p.Button, unique, p.ID))
 	}
 	m.Inline(m.Row(btns[:2]...), m.Row(btns[2:]...))
 	return m
 }
 
-func reportFormatKeyboard(period string) *tele.ReplyMarkup {
+// formatKeyboard format tanlash tugmalari: matn yoki CSV.
+func formatKeyboard(unique, period string) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	m.Inline(m.Row(
-		m.Data("💬 Matn", cbReportFormat, period, reportText),
-		m.Data("📄 CSV", cbReportFormat, period, reportCSV),
+		m.Data("💬 Matn", unique, period, reportText),
+		m.Data("📄 CSV", unique, period, reportCSV),
 	))
 	return m
 }

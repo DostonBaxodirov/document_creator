@@ -26,6 +26,7 @@ type StatsStore interface {
 	TotalUsers(ctx context.Context) (int64, error)
 	PeriodStats(ctx context.Context, since *time.Time) (storage.PeriodStats, error)
 	DailyStats(ctx context.Context, from time.Time, days int) ([]storage.DayStats, error)
+	ListUsers(ctx context.Context, since *time.Time) ([]storage.UserSummary, error)
 }
 
 const (
