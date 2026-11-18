@@ -1,8 +1,9 @@
 package bot
 
 // Adminlarga xabarlar: har bir chek (to'lov) — rasmi va tekshiruv natijasi
-// bilan, har bir xarid — fayl yetkazilganda yoki buyurtma tayyorlanmay
-// qolganda buyurtmaning to'liq tafsilotlari va to'lov ma'lumoti bilan.
+// bilan, har bir xarid — fayl yetkazilganda (tayyor faylning o'zi bilan) yoki
+// buyurtma tayyorlanmay qolganda buyurtmaning to'liq tafsilotlari va to'lov
+// ma'lumoti bilan.
 
 import (
 	"context"
@@ -24,6 +25,37 @@ const maxNoticeErrRunes = 500
 // toAdmins xabarni barcha adminlarga yuboradi va nechta adminga yetkazilganini
 // qaytaradi. Xatolar logga yoziladi — foydalanuvchi oqimi to'xtamaydi.
 func (h *Handler) toAdmins(what any, opts ...any) int {
+	return h.eachAdmin(func(chat *tele.Chat) error {
+		_, err := h.bot.Send(chat, what, opts...)
+		return err
+	})
+}
+
+// purchaseToAdmins xarid xabarini va unga javob sifatida foydalanuvchiga
+// yuborilgan faylni barcha adminlarga yuboradi. Fayl copyMessage bilan
+// foydalanuvchi chatidagi xabardan nusxalanadi — qayta yuklanmaydi va
+// saqlanmaydi. Faylni nusxalab bo'lmasa, xabarning o'zi baribir yetkaziladi.
+func (h *Handler) purchaseToAdmins(notice string, file *tele.StoredMessage, log *zap.Logger) int {
+	return h.eachAdmin(func(chat *tele.Chat) error {
+		msg, err := h.bot.Send(chat, notice)
+		if err != nil {
+			return err
+		}
+		if file == nil {
+			return nil
+		}
+		// Ovozsiz: xabarning o'zi allaqachon bildirishnoma berdi.
+		opts := &tele.SendOptions{ReplyTo: msg, AllowWithoutReply: true, DisableNotification: true}
+		if _, err := h.bot.Copy(chat, file, opts); err != nil {
+			log.Warn("failed to copy delivered file to admin", zap.Int64("admin_id", chat.ID), zap.Error(err))
+		}
+		return nil
+	})
+}
+
+// eachAdmin send ni har bir admin chati uchun chaqiradi va muvaffaqiyatlilar
+// sonini qaytaradi. Xatolar logga yoziladi.
+func (h *Handler) eachAdmin(send func(chat *tele.Chat) error) int {
 	if h.billing == nil || h.bot == nil {
 		return 0
 	}
@@ -36,7 +68,7 @@ func (h *Handler) toAdmins(what any, opts ...any) int {
 	}
 	sent := 0
 	for _, a := range admins {
-		if _, err := h.bot.Send(&tele.Chat{ID: a.TelegramUserID}, what, opts...); err != nil {
+		if err := send(&tele.Chat{ID: a.TelegramUserID}); err != nil {
 			h.log.Warn("failed to notify admin", zap.Int64("admin_id", a.TelegramUserID), zap.Error(err))
 			continue
 		}

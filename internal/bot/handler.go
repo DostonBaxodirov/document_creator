@@ -889,8 +889,12 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		MIME:     out.mime,
 		Caption:  out.caption,
 	}
-	if _, err := h.bot.Send(chat, doc); err != nil {
+	sent, err := h.bot.Send(chat, doc)
+	if err != nil {
 		return out, fmt.Errorf("telegram: hujjatni yuborib bo'lmadi: %w", err)
+	}
+	if sent != nil {
+		out.delivered = &tele.StoredMessage{MessageID: strconv.Itoa(sent.ID), ChatID: chat.ID}
 	}
 	log.Info("document sent", append([]zap.Field{zap.String("file_name", doc.FileName)}, out.logFields...)...)
 	return out, nil
@@ -904,6 +908,9 @@ type output struct {
 	caption   string
 	summary   string // admin uchun natija: "20 ta slayd · 🖼 19/19 rasm (...)"
 	logFields []zap.Field
+	// delivered — foydalanuvchiga yuborilgan fayl xabari (faqat ID lari):
+	// fayl adminlarga shu xabardan nusxalanadi, qayta yuklanmaydi va saqlanmaydi.
+	delivered *tele.StoredMessage
 }
 
 // buildSlides taqdimotni yaratadi: titul va yakuniy slaydlarni generator
@@ -1312,7 +1319,7 @@ func progressText(done, total int, st progressStage) string {
 }
 
 // finishWithSuccess sessiyani yakunlaydi, statistikani yangilaydi va xarid
-// haqida adminlarga xabar beradi.
+// haqida adminlarga xabar (tayyor fayl bilan) beradi.
 func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *zap.Logger, out *output, took time.Duration) {
 	ctx, cancel := requestContext()
 	defer cancel()
@@ -1337,7 +1344,11 @@ func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *za
 		log.Warn("failed to send done message", zap.Error(err))
 	}
 	if notice != "" {
-		h.toAdmins(notice)
+		var file *tele.StoredMessage
+		if out != nil {
+			file = out.delivered
+		}
+		h.purchaseToAdmins(notice, file, log)
 	}
 }
 
