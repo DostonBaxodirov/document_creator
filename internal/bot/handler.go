@@ -788,23 +788,24 @@ func (h *Handler) runJob(s *storage.Session) {
 	started := time.Now()
 	log.Info("generation started")
 
-	path, err := h.generate(ctx, chat, s, log)
-	if path != "" {
-		defer removeFile(path, log) // vaqtinchalik fayl har qanday holatda o'chiriladi
+	out, err := h.generate(ctx, chat, s, log)
+	if out != nil {
+		defer removeFile(out.path, log) // vaqtinchalik fayl har qanday holatda o'chiriladi
 	}
 	if err != nil {
 		h.finishWithError(s, chat, log, err, j.byUser.Load())
 		return
 	}
 
-	log.Info("generation finished", zap.Duration("took", time.Since(started)))
-	h.finishWithSuccess(s, chat, log)
+	took := time.Since(started)
+	log.Info("generation finished", zap.Duration("took", took))
+	h.finishWithSuccess(s, chat, log, out, took)
 }
 
 // generate navbatni kutadi, AI dan matn oladi, faylni (PPTX yoki DOCX) yaratadi
 // va foydalanuvchiga yuboradi. Fayl yaratilgan bo'lsa, xato bo'lganda ham
-// uning yo'li qaytariladi (o'chirish uchun).
-func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Session, log *zap.Logger) (string, error) {
+// u qaytariladi (o'chirish uchun).
+func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Session, log *zap.Logger) (*output, error) {
 	// 1. Navbat: bo'sh joy bo'lmasa, foydalanuvchini ogohlantirib kutamiz.
 	select {
 	case h.slots <- struct{}{}:
@@ -813,7 +814,7 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		select {
 		case h.slots <- struct{}{}:
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 	defer func() { <-h.slots }()
@@ -823,7 +824,7 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 
 	opt, ok := findWorkType(ai.WorkType(s.WorkType))
 	if !ok {
-		return "", fmt.Errorf("noma'lum ish turi: %q", s.WorkType)
+		return nil, fmt.Errorf("noma'lum ish turi: %q", s.WorkType)
 	}
 
 	// 2. AI + fayl: ish turiga qarab taqdimot yoki hujjat.
@@ -837,10 +838,10 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		out, err = h.buildSlides(ctx, chat, s, opt, log)
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return out.path, err
+		return out, err
 	}
 
 	// 3. Telegram'ga hujjat sifatida yuborish.
@@ -851,10 +852,10 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		Caption:  out.caption,
 	}
 	if _, err := h.bot.Send(chat, doc); err != nil {
-		return out.path, fmt.Errorf("telegram: hujjatni yuborib bo'lmadi: %w", err)
+		return out, fmt.Errorf("telegram: hujjatni yuborib bo'lmadi: %w", err)
 	}
 	log.Info("document sent", append([]zap.Field{zap.String("file_name", doc.FileName)}, out.logFields...)...)
-	return out.path, nil
+	return out, nil
 }
 
 // output — tayyor fayl va uni Telegram'ga yuborish uchun ma'lumotlar.
@@ -863,6 +864,7 @@ type output struct {
 	fileName  string
 	mime      string
 	caption   string
+	summary   string // admin uchun natija: "20 ta slayd · 🖼 19/19 rasm (...)"
 	logFields []zap.Field
 }
 
@@ -934,8 +936,11 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	if pics.placed > 0 {
 		caption += fmt.Sprintf(" · 🖼 %d ta rasm", pics.placed)
 	}
+	summary := fmt.Sprintf("%d ta slayd · %s", total, designName)
 	fields := []zap.Field{zap.Int("slides", total), zap.String("design", s.Design)}
 	if photos {
+		summary += fmt.Sprintf(" · 🖼 %d/%d rasm (%s, %s)", pics.placed, pics.requested,
+			pics.tier, orDash(pics.provider != "", pics.provider))
 		fields = append(fields,
 			zap.Int("images", pics.placed),
 			zap.Int("images_requested", pics.requested),
@@ -947,6 +952,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 		fileName:  documentFileName(s.Topic, ".pptx"),
 		mime:      pptxMIME,
 		caption:   caption,
+		summary:   summary,
 		logFields: fields,
 	}, nil
 }
@@ -1088,6 +1094,7 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		mime:     docxMIME,
 		caption: fmt.Sprintf("📎 <b>%s</b>\n%s · %d sahifa",
 			html.EscapeString(s.Topic), html.EscapeString(opt.Name), s.Volume),
+		summary: fmt.Sprintf("%d sahifa · %d bob · %d manba", s.Volume, len(paper.Chapters), len(paper.References)),
 		logFields: []zap.Field{
 			zap.Int("pages_requested", s.Volume),
 			zap.Int("chapters", len(paper.Chapters)),
@@ -1217,8 +1224,9 @@ func progressText(done, total int, st progressStage) string {
 	return fmt.Sprintf("%s <b>%s</b>\n%s %d/%d", st.icon, stage, bar, done, total)
 }
 
-// finishWithSuccess sessiyani yakunlaydi va statistikani yangilaydi.
-func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *zap.Logger) {
+// finishWithSuccess sessiyani yakunlaydi, statistikani yangilaydi va xarid
+// haqida adminlarga xabar beradi.
+func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *zap.Logger, out *output, took time.Duration) {
 	ctx, cancel := requestContext()
 	defer cancel()
 
@@ -1227,6 +1235,8 @@ func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *za
 			log.Error("failed to mark order delivered", zap.Uint("order_id", *s.OrderID), zap.Error(err))
 		}
 	}
+	// Xabar sessiya tozalanishidan oldin tayyorlanadi (buyurtma ma'lumotlari kerak).
+	notice := h.purchaseNotice(ctx, s, out, took, log)
 
 	now := time.Now().UTC()
 	resetDraft(s)
@@ -1238,6 +1248,9 @@ func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *za
 	}
 	if _, err := h.bot.Send(chat, msgDone); err != nil {
 		log.Warn("failed to send done message", zap.Error(err))
+	}
+	if notice != "" {
+		h.toAdmins(notice)
 	}
 }
 
@@ -1279,6 +1292,13 @@ func (h *Handler) finishWithError(s *storage.Session, chat *tele.Chat, log *zap.
 	}
 	if _, err := h.bot.Send(chat, msg, retryKeyboard()); err != nil {
 		log.Warn("failed to send error message", zap.Error(err))
+	}
+	// Buyurtma (to'langan yoki bepul) tayyorlanmay qolgani haqida adminlarga.
+	// Bot to'xtatilayotganda yubormaymiz — qayta ishga tushgach tiklanadi.
+	if h.jobsCtx.Err() == nil {
+		if notice := h.failureNotice(ctx, s, err, log); notice != "" {
+			h.toAdmins(notice)
+		}
 	}
 }
 
@@ -1395,6 +1415,13 @@ func (h *Handler) removeButtons(c tele.Context) {
 
 // summaryText buyurtma ma'lumotlarini HTML ko'rinishida qaytaradi.
 func summaryText(s *storage.Session) string {
+	return "📋 <b>Ma'lumotlarni tekshiring</b>\n\n" + orderDetails(s, maxSummaryRequirements)
+}
+
+// orderDetails buyurtma tafsilotlari (ish turi, til, mavzu, hajm, fayl,
+// talaba ma'lumotlari va talablar) — foydalanuvchi xulosasi va admin xabari
+// uchun. Talablar maxRequirements belgigacha qisqartiriladi.
+func orderDetails(s *storage.Session, maxRequirements int) string {
 	name := s.WorkType
 	if opt, ok := findWorkType(ai.WorkType(s.WorkType)); ok {
 		name = opt.Name
@@ -1412,8 +1439,7 @@ func summaryText(s *storage.Session) string {
 			}
 		}
 	}
-	text := fmt.Sprintf("📋 <b>Ma'lumotlarni tekshiring</b>\n\n"+
-		"📌 <b>Ish turi:</b> %s\n"+
+	text := fmt.Sprintf("📌 <b>Ish turi:</b> %s\n"+
 		"🌐 <b>Til:</b> %s\n"+
 		"📝 <b>Mavzu:</b> %s\n"+
 		"%s %d\n"+
@@ -1424,7 +1450,7 @@ func summaryText(s *storage.Session) string {
 		e(name), e(lang.Get(s.Language).Name), e(s.Topic), volume, s.Volume, format,
 		e(s.StudentName), e(s.University), e(s.TeacherName))
 	if s.Requirements != "" {
-		text += "\n✍️ <b>Qo'shimcha talablar:</b> " + e(truncateRunes(s.Requirements, maxSummaryRequirements))
+		text += "\n✍️ <b>Qo'shimcha talablar:</b> " + e(truncateRunes(s.Requirements, maxRequirements))
 	}
 	return text
 }

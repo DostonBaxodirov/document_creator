@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
@@ -42,6 +43,7 @@ type BillingStore interface {
 	SubmitPayment(ctx context.Context, p *storage.Payment) error
 	ReviewPayment(ctx context.Context, paymentID uint, approve bool, adminID int64) (*storage.Payment, *storage.Order, error)
 	GetPayment(ctx context.Context, id uint) (*storage.Payment, error)
+	OrderPayment(ctx context.Context, orderID uint) (*storage.Payment, error)
 	ReceiptSeen(ctx context.Context, transactionID, fileUniqueID string) (bool, error)
 	ListPayments(ctx context.Context, since *time.Time) ([]storage.Payment, error)
 	ListPaymentsByStatus(ctx context.Context, status string, limit int) ([]storage.Payment, int, error)
@@ -648,13 +650,15 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 			log.Error("failed to start paid job", zap.Error(err))
 		}
 	case payment.Suspicious:
-		h.notifyAdmins(ctx, p, j.order)
 		if _, err := h.bot.Send(chat, msgReceiptToAdmin); err != nil {
 			log.Warn("failed to notify user about review", zap.Error(err))
 		}
 	default:
 		h.returnToPayment(j.order, msgReceiptInvalid)
 	}
+	// Har bir chek (tasdiqlangan, shubhali yoki rad etilgan) adminlarga
+	// yuboriladi; shubhalisi — ✅/❌ tugmalari bilan.
+	h.notifyPayment(p, j.order)
 }
 
 func paymentStatus(v payment.Verdict) string {
@@ -756,25 +760,6 @@ func (h *Handler) returnToPayment(o *storage.Order, text string) {
 // Admin tekshiruvi
 // ---------------------------------------------------------------------------
 
-// notifyAdmins shubhali chekni barcha adminlarga tasdiqlash tugmalari bilan yuboradi.
-func (h *Handler) notifyAdmins(ctx context.Context, p *storage.Payment, o *storage.Order) {
-	admins, err := h.billing.ListAdmins(ctx)
-	if err != nil {
-		h.log.Error("failed to list admins", zap.Error(err))
-		return
-	}
-	if len(admins) == 0 {
-		h.log.Warn("no admins registered to review payment", zap.Uint("payment_id", p.ID))
-		return
-	}
-	caption := reviewCaption(p, o)
-	for _, a := range admins {
-		if _, err := h.bot.Send(&tele.Chat{ID: a.TelegramUserID}, checkMedia(p, caption), reviewKeyboard(p.ID)); err != nil {
-			h.log.Warn("failed to notify admin", zap.Int64("admin_id", a.TelegramUserID), zap.Error(err))
-		}
-	}
-}
-
 func (h *Handler) onPayApprove(c tele.Context) error { return h.onPayDecision(c, true) }
 func (h *Handler) onPayReject(c tele.Context) error  { return h.onPayDecision(c, false) }
 
@@ -862,7 +847,8 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 	}
 	fmt.Fprintf(&b, "👤 %s\n", user)
 	if o != nil {
-		fmt.Fprintf(&b, "📌 Buyurtma #%d: %s\n📝 %s\n", o.ID, e(orderLabel(o.WorkType, o.Kind)), e(truncateRunes(o.Topic, 80)))
+		fmt.Fprintf(&b, "📌 Buyurtma #%d: %s%s\n📝 %s\n", o.ID, e(orderLabel(o.WorkType, o.Kind)),
+			volumeSuffix(o.WorkType, o.Volume), e(truncateRunes(o.Topic, 80)))
 	}
 	fmt.Fprintf(&b, "💰 Kutilgan summa: <b>%s</b>\n", formatSum(p.Amount))
 
@@ -872,19 +858,100 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 		detected = append(detected, p.DetectedPaidAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
 	}
 	fmt.Fprintf(&b, "🔎 Chekda: %s\n", strings.Join(detected, " · "))
+	if p.TransactionID != "" {
+		fmt.Fprintf(&b, "🔖 Tranzaksiya: <code>%s</code>\n", e(truncateRunes(p.TransactionID, 40)))
+	}
 	fmt.Fprintf(&b, "🕒 Yuborilgan: %s\n", p.CreatedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
 
+	var tail string
+	switch {
+	case p.ReviewedAt != nil && p.ReviewedBy != nil:
+		tail = fmt.Sprintf("\n%s — admin %d, %s", paymentStatusLabel(p.Status), *p.ReviewedBy,
+			p.ReviewedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
+	case p.Status == storage.PaymentApproved:
+		tail = "\n🤖 AI avtomatik tasdiqladi — ish tayyorlanmoqda."
+	case p.Status == storage.PaymentRejected:
+		tail = "\n🤖 AI rad etdi — foydalanuvchidan boshqa chek so'raldi."
+	case p.Status == storage.PaymentReview:
+		tail = "\n👇 Tasdiqlang yoki rad eting."
+	}
+
+	// Sabablar izohning qolgan joyiga sig'adigan qilib qisqartiriladi: izoh
+	// chegaradan oshsa, Telegram uni rad etadi va chek adminga umuman bormaydi.
 	if p.Reason != "" {
-		b.WriteString("\n⚠️ <b>Sabablar:</b>\n")
-		for _, r := range strings.Split(truncateRunes(p.Reason, 450), "\n") {
-			b.WriteString("• " + e(r) + "\n")
+		const header = "\n⚠️ <b>Sabablar:</b>\n"
+		left := maxCaptionUnits - visibleLen(b.String()+header+tail)
+		if left > 3 {
+			b.WriteString(header)
+			for _, r := range strings.Split(p.Reason, "\n") {
+				if left <= 3 {
+					break
+				}
+				r = truncateUnits(r, left-3) // "• " va qator oxiri uchun 3 birlik
+				b.WriteString("• " + e(r) + "\n")
+				left -= utf16Len(r) + 3
+			}
 		}
 	}
-	if p.ReviewedAt != nil && p.ReviewedBy != nil {
-		fmt.Fprintf(&b, "\n%s — admin %d, %s", paymentStatusLabel(p.Status), *p.ReviewedBy,
-			p.ReviewedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
-	}
+	b.WriteString(tail)
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// maxCaptionUnits — rasm izohi uzunligi chegarasi (Telegram'da 1024),
+// zaxira bilan.
+const maxCaptionUnits = 1000
+
+// visibleLen HTML matn Telegram'da ko'rinadigan uzunligi: teglar olib
+// tashlanadi, HTML belgilari (&amp; ...) ochiladi va UTF-16 birliklarida
+// sanaladi (Telegram chegaralari shu birliklarda; emoji — 2 birlik).
+func visibleLen(s string) int {
+	var plain strings.Builder
+	inTag := false
+	for _, r := range s {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>' && inTag:
+			inTag = false
+		case !inTag:
+			plain.WriteRune(r)
+		}
+	}
+	return utf16Len(html.UnescapeString(plain.String()))
+}
+
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
+// truncateUnits oddiy matnni (HTML emas) n ta UTF-16 birligigacha qisqartiradi.
+func truncateUnits(s string, n int) string {
+	if utf16Len(s) <= n {
+		return s
+	}
+	used := 1 // "…"
+	for i, r := range s {
+		if used+utf16.RuneLen(r) > n {
+			return s[:i] + "…"
+		}
+		used += utf16.RuneLen(r)
+	}
+	return s
+}
+
+// volumeSuffix buyurtma hajmi: " · 20 slayd" yoki " · 12 sahifa" (hajm noma'lum bo'lsa — bo'sh).
+func volumeSuffix(workType string, volume int) string {
+	switch {
+	case volume <= 0:
+		return ""
+	case ai.WorkType(workType).IsDocument():
+		return fmt.Sprintf(" · %d sahifa", volume)
+	}
+	return fmt.Sprintf(" · %d slayd", volume)
 }
 
 func paymentStatusLabel(status string) string {

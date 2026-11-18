@@ -158,6 +158,13 @@ func TestBillingFlow(t *testing.T) {
 	if got, _ := r.GetOrder(ctx, o2.ID); got.Status != OrderPaid || !got.IsPaid {
 		t.Errorf("avtomatik tasdiqdan keyin: %+v", got)
 	}
+	// Buyurtma to'lovi: rad etilgan chek (p2) emas, tasdiqlangani (p3) qaytadi.
+	if got, err := r.OrderPayment(ctx, o2.ID); err != nil || got == nil || got.ID != p3.ID {
+		t.Errorf("OrderPayment(o2) = %+v, %v; kutilgan chek #%d", got, err, p3.ID)
+	}
+	if got, err := r.OrderPayment(ctx, o2.ID+1000); err != nil || got != nil {
+		t.Errorf("to'lovsiz buyurtma uchun nil kutilgan: %+v, %v", got, err)
+	}
 
 	// Hisobot.
 	all, err := r.ListPayments(ctx, nil)

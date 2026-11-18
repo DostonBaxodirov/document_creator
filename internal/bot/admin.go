@@ -29,7 +29,8 @@ const (
 		"/report — to'lovlar hisoboti (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
 		"/chek ID — chek rasmini ko'rish (masalan: /chek 12)\n" +
 		"/tekshiruv — tekshiruvdagi barcha cheklarni ✅/❌ tugmalari bilan qayta olish\n\n" +
-		"Shubhali cheklar shu chatga ✅/❌ tugmalari bilan keladi."
+		"Har bir chek va har bir xarid haqida to'liq ma'lumot shu chatga keladi; " +
+		"shubhali cheklar — ✅/❌ tugmalari bilan."
 	msgAdminWelcome = "👑 <b>Siz admin sifatida saqlandingiz.</b>\n\n" + msgAdminCommands
 	msgAdminAlready = "👑 Siz allaqachon adminsiz.\n\n" + msgAdminCommands
 	msgChekUsage    = "Foydalanish: /chek ID (masalan: /chek 12)"

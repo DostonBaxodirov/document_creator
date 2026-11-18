@@ -269,9 +269,55 @@ func TestReviewCaption(t *testing.T) {
 	if n := utf8.RuneCountInString(got); n > 1024 {
 		t.Errorf("izoh Telegram chegarasidan uzun: %d belgi", n)
 	}
-	for _, want := range []string{"Chek #1", "tekshiruvda", "ID 333", "userId 3", "Buyurtma #7", "rasmli dizayn", "7 000 so'm", "5 000 so'm"} {
+	for _, want := range []string{"Chek #1", "tekshiruvda", "ID 333", "userId 3", "Buyurtma #7", "rasmli dizayn", "7 000 so'm", "5 000 so'm", "Tasdiqlang yoki rad eting"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("izohda %q yo'q:\n%s", want, got)
+		}
+	}
+}
+
+// Har qanday holatdagi chek izohi eng uzun qiymatlarda ham Telegram
+// chegarasiga (1024) sig'ishi va kim qaror qilgani ko'rinishi kerak.
+func TestReviewCaptionAllStatuses(t *testing.T) {
+	at := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	admin := int64(777)
+	o := &storage.Order{ID: 7, WorkType: string(ai.WorkPresentation), Kind: storage.KindPhoto, Volume: 50,
+		Topic: strings.Repeat("Mavzu & <b> ", 60)}
+	base := storage.Payment{ID: 5, UserID: 3, TelegramUserID: 333, Username: strings.Repeat("u", 64), OrderID: 7,
+		Amount: 15000, DetectedAmount: 15000, DetectedLast4: "1234", DetectedPaidAt: &at, CreatedAt: at,
+		TransactionID: strings.Repeat("9", 128), Reason: strings.Repeat("Juda uzun sabab & matni\n", 60)}
+	cases := []struct {
+		name   string
+		status string
+		admin  *int64
+		want   string
+	}{
+		{"AI tasdiqlagan", storage.PaymentApproved, nil, "AI avtomatik tasdiqladi"},
+		{"AI rad etgan", storage.PaymentRejected, nil, "AI rad etdi"},
+		{"shubhali", storage.PaymentReview, nil, "Tasdiqlang yoki rad eting"},
+		{"admin tasdiqlagan", storage.PaymentApproved, &admin, "admin 777"},
+		{"admin rad etgan", storage.PaymentRejected, &admin, "admin 777"},
+	}
+	for _, tc := range cases {
+		p := base
+		p.Status, p.ReviewedBy = tc.status, tc.admin
+		if tc.admin != nil {
+			p.ReviewedAt = &at
+		}
+		got := reviewCaption(&p, o)
+		if n := visibleLen(got); n > 1024 {
+			t.Errorf("%s: izoh %d birlik (chegara 1024)", tc.name, n)
+		}
+		if !strings.Contains(got, "Sabablar") || !strings.Contains(got, "• Juda uzun sabab") {
+			t.Errorf("%s: sabablar ko'rinmayapti:\n%s", tc.name, got)
+		}
+		for _, want := range []string{tc.want, "50 slayd", "Tranzaksiya", "****1234", "&amp;"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: izohda %q yo'q:\n%s", tc.name, want, got)
+			}
+		}
+		if strings.Contains(got, "<b> ") {
+			t.Errorf("%s: mavzudagi HTML ekranlanmagan", tc.name)
 		}
 	}
 }

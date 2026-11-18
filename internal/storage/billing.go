@@ -358,6 +358,22 @@ func (r *BillingRepository) GetPayment(ctx context.Context, id uint) (*Payment, 
 	return &p, nil
 }
 
+// OrderPayment buyurtma uchun tasdiqlangan to'lovni (eng so'nggisini)
+// qaytaradi. Bepul buyurtmada yoki tasdiqlangan chek bo'lmasa nil qaytaradi.
+func (r *BillingRepository) OrderPayment(ctx context.Context, orderID uint) (*Payment, error) {
+	var p Payment
+	err := r.db.WithContext(ctx).
+		Where("order_id = ? AND status = ?", orderID, PaymentApproved).
+		Order("id DESC").First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: buyurtma to'lovini o'qib bo'lmadi: %w", err)
+	}
+	return &p, nil
+}
+
 // ReceiptSeen shu chek (bir xil rasm fayli yoki tranzaksiya raqami) oldin
 // yuborilganini bildiradi — bitta chek bilan bir necha marta to'lamaslik uchun.
 func (r *BillingRepository) ReceiptSeen(ctx context.Context, transactionID, fileUniqueID string) (bool, error) {
