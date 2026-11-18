@@ -107,12 +107,33 @@ func customDocImageCount(contentWords, percent int) int {
 	return min(chapters, max(1, int(math.Round(float64(chapters)*float64(percent)/100))))
 }
 
+// docPlan maxsus dizayndagi Word ish uchun matn hajmi (so'zlarda) va rasmlar
+// soni. Rasmlar matn o'rnini egallaydi, shuning uchun matn qisqartiriladi;
+// qisqargan matnda boblar kamroq bo'lishi mumkin — rasmlar soni boblar
+// sonidan oshmaydi (tarif matnida ko'rsatilgan son hujjatdagiga teng bo'lsin).
+func docPlan(contentWords, figureWords, percent int) (words, figures int) {
+	figures = customDocImageCount(contentWords, percent)
+	if figures == 0 {
+		return contentWords, 0
+	}
+	shrink := func(n int) int { return max(contentWords/2, contentWords-n*figureWords) }
+	figures = min(figures, ai.PlanChapters(shrink(figures)))
+	return shrink(figures), figures
+}
+
+// docImagesOn maxsus dizayndagi Word ishga rasm chizish mumkinligini bildiradi.
+func (h *Handler) docImagesOn(t CustomTariff) bool {
+	return t.Images != nil && t.Images.Available() && h.builders.Papers != nil
+}
+
 // customDocImages Word ish uchun rasmlar soni (rasm xizmati ulanmagan bo'lsa — 0).
 func (h *Handler) customDocImages(s *storage.Session, t CustomTariff) int {
-	if t.Images == nil || !t.Images.Available() || h.builders.Papers == nil {
+	if !h.docImagesOn(t) {
 		return 0
 	}
-	return customDocImageCount(h.builders.Papers.ContentWords(s.Volume), t.ImagePercent)
+	b := h.builders.Papers
+	_, n := docPlan(b.ContentWords(s.Volume), b.FigureWords(), t.ImagePercent)
+	return n
 }
 
 // customPrice maxsus dizayndagi buyurtma narxi (tarif tugmalari va matni uchun).

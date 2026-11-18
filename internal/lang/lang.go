@@ -42,6 +42,11 @@ type Labels struct {
 
 	// FigureFormat — hujjatdagi rasm raqami (fmt formati, %d — raqam): "%d-rasm.".
 	FigureFormat string
+
+	// Ministry — hujjat titulining yuqori qatori (vazirlik nomi) shu tilda.
+	// O'zbekcha (lotin) qiymati DOCUMENT_HEADER ning standart qiymati bilan bir
+	// xil: sozlamada standart nom turgan bo'lsa, boshqa tillarda tarjimasi chiqadi.
+	Ministry string
 }
 
 // Info — bitta til haqida ma'lumot.
@@ -65,6 +70,7 @@ var all = []Info{
 			References: "Foydalanilgan adabiyotlar", YearFormat: "%s-yil",
 			TitlePresentation: "TAQDIMOT", TitleIndependent: "MUSTAQIL ISH", TitlePractical: "AMALIY TOPSHIRIQ",
 			TitleReferat: "REFERAT", FigureFormat: "%d-rasm.",
+			Ministry: "O'ZBEKISTON RESPUBLIKASI OLIY TA'LIM, FAN VA INNOVATSIYALAR VAZIRLIGI",
 		},
 	},
 	{
@@ -77,6 +83,7 @@ var all = []Info{
 			References: "Фойдаланилган адабиётлар", YearFormat: "%s йил",
 			TitlePresentation: "ТАҚДИМОТ", TitleIndependent: "МУСТАҚИЛ ИШ", TitlePractical: "АМАЛИЙ ТОПШИРИҚ",
 			TitleReferat: "РЕФЕРАТ", FigureFormat: "%d-расм.",
+			Ministry: "ЎЗБЕКИСТОН РЕСПУБЛИКАСИ ОЛИЙ ТАЪЛИМ, ФАН ВА ИННОВАЦИЯЛАР ВАЗИРЛИГИ",
 		},
 	},
 	{
@@ -89,6 +96,7 @@ var all = []Info{
 			References: "Список использованной литературы", YearFormat: "%s г.",
 			TitlePresentation: "ПРЕЗЕНТАЦИЯ", TitleIndependent: "САМОСТОЯТЕЛЬНАЯ РАБОТА", TitlePractical: "ПРАКТИЧЕСКОЕ ЗАДАНИЕ",
 			TitleReferat: "РЕФЕРАТ", FigureFormat: "Рис. %d.",
+			Ministry: "МИНИСТЕРСТВО ВЫСШЕГО ОБРАЗОВАНИЯ, НАУКИ И ИННОВАЦИЙ РЕСПУБЛИКИ УЗБЕКИСТАН",
 		},
 	},
 	{
@@ -101,6 +109,7 @@ var all = []Info{
 			References: "References", YearFormat: "%s",
 			TitlePresentation: "PRESENTATION", TitleIndependent: "INDEPENDENT STUDY", TitlePractical: "PRACTICAL ASSIGNMENT",
 			TitleReferat: "ESSAY", FigureFormat: "Figure %d.",
+			Ministry: "MINISTRY OF HIGHER EDUCATION, SCIENCE AND INNOVATIONS OF THE REPUBLIC OF UZBEKISTAN",
 		},
 	},
 }

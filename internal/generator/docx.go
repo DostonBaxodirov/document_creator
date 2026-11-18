@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/jpeg" // rasm o'lchamini aniqlash uchun
 	_ "image/png"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,8 @@ import (
 //   - A4, hoshiyalar: chap 3 sm, o'ng 1,5 sm, yuqori va past 2 sm;
 //   - Times New Roman 14 pt, qatorlar oralig'i 1,5, xatboshi 1,25 sm, ikki tomonga tekislash;
 //   - sahifa raqami pastda markazda, titul varaqda raqam ko'rsatilmaydi;
+//   - titul varaq doim bitta sahifada, yil sahifa tagida: oraliqlar va mavzu
+//     shrifti matnlar uzunligiga qarab hisoblanadi (doclayout.go);
 //   - reja, kirish va adabiyotlar ro'yxati yangi sahifadan boshlanadi; boblar va
 //     xulosa matn ketidan davom etadi (sahifalar soni oldindan aytilganiga yaqin
 //     chiqishi uchun — har bir bobni yangi sahifadan boshlash chala sahifalar beradi).
@@ -123,6 +126,27 @@ func (g *DOCX) ContentWords(pages int) int {
 // hujjatda matn hajmi shuncha kamaytiriladi.
 func (g *DOCX) FigureWords() int { return docFigureWords }
 
+// EstimatePages tayyor hujjatning taxminiy sahifalar soni (ContentWords ning
+// teskarisi): matn hajmi, rasmlar va xizmat sahifalari bo'yicha.
+func (g *DOCX) EstimatePages(p Paper) int {
+	words, figures := 0, 0
+	count := func(ps []Paragraph) {
+		for _, x := range ps {
+			words += len(strings.Fields(x.Text))
+		}
+	}
+	count(p.Introduction)
+	count(p.Conclusion)
+	for _, ch := range p.Chapters {
+		count(ch.Paragraphs)
+		if ch.Figure != nil && len(ch.Figure.Data) > 0 {
+			figures++
+		}
+	}
+	content := float64(words+figures*docFigureWords+docSlackWords) / docWordsPerPage
+	return docServicePages + int(math.Round(content))
+}
+
 // OOXML ichki yo'llari.
 const (
 	docRelsPath       = "_rels/.rels"
@@ -130,6 +154,7 @@ const (
 	docDocumentRels   = "word/_rels/document.xml.rels"
 	docStylesPath     = "word/styles.xml"
 	docSettingsPath   = "word/settings.xml"
+	docFontTablePath  = "word/fontTable.xml"
 	docFooterPath     = "word/footer1.xml" // sahifa raqami
 	docFooterTitle    = "word/footer2.xml" // titul varaq uchun bo'sh kolontitul
 	docCorePropsPath  = corePropsPath
@@ -174,6 +199,7 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 		docDocumentRels:  []byte(docxDocumentRels(figures)),
 		docStylesPath:    []byte(docxStyles(st, lang.Get(p.Lang).OOXML)),
 		docSettingsPath:  []byte(docxSettings),
+		docFontTablePath: []byte(docxFontTable(st)),
 		docFooterPath:    []byte(docxPageNumberFooter(st)),
 		docFooterTitle:   []byte(docxEmptyFooter),
 		docAppPropsPath:  []byte(docxAppProps),
@@ -183,7 +209,7 @@ func (g *DOCX) Build(ctx context.Context, p Paper) (string, error) {
 	order := []string{
 		docContentTypes, docRelsPath, docCorePropsPath, docAppPropsPath,
 		docDocumentPath, docDocumentRels, docStylesPath, docSettingsPath,
-		docFooterPath, docFooterTitle,
+		docFontTablePath, docFooterPath, docFooterTitle,
 	}
 	placed := 0
 	for _, f := range figures {
@@ -271,8 +297,11 @@ func (g *DOCX) renderDocument(p Paper, st docStyle, figures []*docImage) string 
 	// Bo'lim sarlavhalari hujjat tilida: rejada — oddiy, matnda — katta harflar bilan.
 	w.heading(strings.ToUpper(l.Plan), true)
 	w.para("PlanItem", "", textRun(l.Introduction, ""))
-	for _, t := range chapterTitles {
-		w.para("PlanItem", `<w:ind w:left="284" w:firstLine="0"/>`, textRun(t, ""))
+	for i, ch := range p.Chapters {
+		// Raqam + tab, osilgan xatboshi: uzun nomning keyingi qatorlari
+		// birinchi qatordagi nom bilan bir chiziqda tekislanadi.
+		w.para("PlanItem", `<w:ind w:left="709" w:hanging="425"/>`,
+			textRun(strconv.Itoa(i+1)+".", "")+`<w:r><w:tab/></w:r>`+textRun(strings.TrimSpace(ch.Title), ""))
 	}
 	w.para("PlanItem", "", textRun(l.Conclusion, ""))
 	if len(p.References) > 0 {
@@ -312,20 +341,27 @@ func (g *DOCX) renderDocument(p Paper, st docStyle, figures []*docImage) string 
 	return w.String()
 }
 
-// Titul varaq elementlari orasidagi vertikal masofalar (twip: 1 sm ≈ 567).
-const (
-	titleGapAfterUniversity = 3400 // universitet → ish turi
-	titleGapBeforeTopic     = 360
-	titleGapBeforeSign      = 2600 // mavzu → "Bajardi"
-	titleGapBeforeYear      = 2600 // "Tekshirdi" → yil
-	titleOrnamentHeight     = 500  // bezak qatori egallaydigan joy (masofalardan ayriladi)
-)
-
-// renderTitlePage titul varaqni dizayn kompozitsiyasiga qarab chizadi. Uzun
-// universitet nomi yoki mavzu bo'lsa ham hammasi bitta sahifaga sig'adigan
-// qilib masofalar tanlangan.
+// renderTitlePage titul varaqni dizayn kompozitsiyasiga qarab chizadi.
+// Oraliqlar va mavzu shrifti matnlar uzunligiga qarab tanlanadi (doclayout.go):
+// titul doim bitta sahifaga sig'adi, yil esa sahifa tagida turadi.
 func (g *DOCX) renderTitlePage(w *docBuilder, p Paper, st docStyle) {
 	l := p.labels()
+	t := titleTexts{
+		header:     g.titleHeader(p),
+		university: p.University,
+		workType:   p.WorkType,
+		ornament:   ornamentText(st.ornament),
+		topic:      l.Topic + ": " + p.Topic,
+		student:    l.Student + ": ",
+		teacher:    l.Teacher + ": ",
+		year:       fmt.Sprintf(l.YearFormat, p.Year),
+	}
+	// O'lchash uchun to'liq qatorlar; chizishda yozuv qalin, ism oddiy.
+	measured := t
+	measured.student += p.StudentName
+	measured.teacher += p.TeacherName
+	lay := planTitle(measured, st)
+
 	color := func(c string) string {
 		if c == "" || c == "000000" {
 			return ""
@@ -336,16 +372,25 @@ func (g *DOCX) renderTitlePage(w *docBuilder, p Paper, st docStyle) {
 	if st.headingFont != "" {
 		headFont = `<w:rFonts w:ascii="` + st.headingFont + `" w:hAnsi="` + st.headingFont + `" w:cs="` + st.headingFont + `"/>`
 	}
+	topicSize := strconv.Itoa(lay.topicSize)
 	var (
 		bold      = `<w:rPr><w:b/><w:bCs/></w:rPr>`
 		boldCaps  = `<w:rPr><w:b/><w:bCs/><w:caps/></w:rPr>`
 		workColor = color(st.primary)
-		topicRPr  = `<w:rPr>` + headFont + `<w:b/><w:bCs/>` + color(st.primary) + `<w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>`
+		workShd   = ""
+		topicRPr  = `<w:rPr>` + headFont + `<w:b/><w:bCs/>` + color(st.primary) +
+			`<w:sz w:val="` + topicSize + `"/><w:szCs w:val="` + topicSize + `"/></w:rPr>`
 	)
 	if st.title == docTitleBand {
+		// Oq matn rangli lenta ustida. Lenta paragraf fonida, lekin matnning
+		// o'ziga ham shu fon beriladi: paragraf fonini chizmaydigan
+		// ko'ruvchilarda (iPhone/Mac Quick Look, Telegram ichida) oq matn oq
+		// qog'ozda yo'qolib qolmasin.
 		workColor = `<w:color w:val="FFFFFF"/>`
+		workShd = shading(st.primary)
 	}
-	workRPr := `<w:rPr>` + headFont + `<w:b/><w:bCs/><w:caps/>` + workColor + `<w:spacing w:val="20"/><w:sz w:val="44"/><w:szCs w:val="44"/></w:rPr>`
+	workRPr := `<w:rPr>` + headFont + `<w:b/><w:bCs/><w:caps/>` + workColor +
+		`<w:spacing w:val="20"/><w:sz w:val="44"/><w:szCs w:val="44"/>` + workShd + `</w:rPr>`
 
 	// Kompozitsiyaga qarab paragraf uslubi va qo'shimcha xususiyatlar.
 	center, sign := "TitleCenter", "TitleSign"
@@ -362,41 +407,30 @@ func (g *DOCX) renderTitlePage(w *docBuilder, p Paper, st docStyle) {
 		pPr = func(extra string) string { return sidebar + extra }
 	}
 
-	gapUni, gapSign := titleGapAfterUniversity, titleGapBeforeSign
-	ornament := ""
-	switch st.ornament {
-	case docOrnamentDiamond:
-		ornament = "◆   ◆   ◆"
-	case docOrnamentDots:
-		ornament = "•   •   •   •   •"
+	if t.header != "" {
+		w.para(center, pPr(""), textRun(t.header, boldCaps))
 	}
-	if ornament != "" {
-		gapSign -= titleOrnamentHeight
-	}
-
-	if g.header != "" {
-		w.para(center, pPr(""), textRun(g.header, boldCaps))
-	}
-	uniPPr := spacingBefore(240)
+	uniPPr := spacingBefore(titleGapBeforeUniversity)
 	if st.ornament == docOrnamentLine && sidebar == "" {
 		// Universitet ostida ingichka chiziq.
 		uniPPr = `<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="8" w:color="` + st.accent + `"/></w:pBdr>` + uniPPr
 	}
-	w.para(center, pPr(uniPPr), textRun(p.University, boldCaps))
+	w.para(center, pPr(uniPPr), textRun(t.university, boldCaps))
 
 	// Ish turi va mavzu.
-	workPPr := spacingBefore(gapUni)
+	workPPr := spacingBefore(lay.gapWork)
 	topicPPr := spacingBefore(titleGapBeforeTopic)
-	ornPPr := spacingBefore(200)
+	ornPPr := spacingBefore(titleGapBeforeOrnament)
 	switch st.title {
 	case docTitleBand:
 		// Rangli lenta: fon rangidagi chegaralar lentaga ichki bo'shliq beradi.
 		band := `<w:pBdr>` +
 			`<w:top w:val="single" w:sz="4" w:space="10" w:color="` + st.primary + `"/>` +
 			`<w:bottom w:val="single" w:sz="4" w:space="10" w:color="` + st.primary + `"/>` +
-			`</w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="` + st.primary + `"/>`
-		workPPr = band + spacingBefore(gapUni)
-		topicPPr = `<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="10" w:color="` + st.accent + `"/></w:pBdr>` + spacingBefore(480)
+			`</w:pBdr>` + shading(st.primary)
+		workPPr = band + spacingBefore(lay.gapWork)
+		topicPPr = `<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="10" w:color="` + st.accent + `"/></w:pBdr>` +
+			spacingBefore(titleGapBeforeTopicBand)
 	case docTitleFrame:
 		// Ish turi va mavzu bitta chiziqli blok ichida (bir xil chegaralar birlashadi).
 		box := `<w:pBdr>` +
@@ -405,20 +439,53 @@ func (g *DOCX) renderTitlePage(w *docBuilder, p Paper, st docStyle) {
 			`<w:bottom w:val="double" w:sz="6" w:space="14" w:color="` + st.accent + `"/>` +
 			`<w:right w:val="double" w:sz="6" w:space="14" w:color="` + st.accent + `"/>` +
 			`</w:pBdr>`
-		ind := `<w:ind w:left="567" w:right="567" w:firstLine="0"/>`
-		workPPr = box + spacingBefore(gapUni) + ind
+		ind := `<w:ind w:left="` + strconv.Itoa(titleFrameIndent) + `" w:right="` + strconv.Itoa(titleFrameIndent) + `" w:firstLine="0"/>`
+		workPPr = box + spacingBefore(lay.gapWork) + ind
 		topicPPr = box + spacingBefore(titleGapBeforeTopic) + ind
-		ornPPr = box + spacingBefore(200) + ind // bezak ham blok ichida (blok bo'linmasin)
+		ornPPr = box + spacingBefore(titleGapBeforeOrnament) + ind // bezak ham blok ichida (blok bo'linmasin)
 	}
-	w.para(center, pPr(workPPr), textRun(p.WorkType, workRPr))
-	if ornament != "" {
-		w.para(center, pPr(ornPPr), textRun(ornament, `<w:rPr>`+color(st.accent)+`<w:sz w:val="24"/></w:rPr>`))
+	w.para(center, pPr(workPPr), textRun(t.workType, workRPr))
+	if t.ornament != "" {
+		w.para(center, pPr(ornPPr), textRun(t.ornament, `<w:rPr>`+color(st.accent)+`<w:sz w:val="24"/></w:rPr>`))
 	}
-	w.para(center, pPr(topicPPr), textRun(l.Topic+": ", topicRPr)+textRun(p.Topic, topicRPr))
+	w.para(center, pPr(topicPPr), textRun(t.topic, topicRPr))
 
-	w.para(sign, pPr(spacingBefore(gapSign)), textRun(l.Student+": ", bold)+textRun(p.StudentName, ""))
-	w.para(sign, pPr(spacingBefore(120)), textRun(l.Teacher+": ", bold)+textRun(p.TeacherName, ""))
-	w.para(center, pPr(spacingBefore(titleGapBeforeYear)), textRun(fmt.Sprintf(l.YearFormat, p.Year), bold))
+	w.para(sign, pPr(spacingBefore(lay.gapSign)), textRun(t.student, bold)+textRun(p.StudentName, ""))
+	w.para(sign, pPr(spacingBefore(titleGapBeforeTeacher)), textRun(t.teacher, bold)+textRun(p.TeacherName, ""))
+	w.para(center, pPr(spacingBefore(lay.gapYear)), textRun(t.year, bold))
+}
+
+// ornamentText titul varaqdagi bezak qatori (bo'sh — bezaksiz yoki chiziq).
+func ornamentText(ornament string) string {
+	switch ornament {
+	case docOrnamentDiamond:
+		return "◆   ◆   ◆"
+	case docOrnamentDots:
+		return "•   •   •   •   •"
+	}
+	return ""
+}
+
+// shading — paragraf yoki matn foni (w:shd).
+func shading(fill string) string {
+	return `<w:shd w:val="clear" w:color="auto" w:fill="` + fill + `"/>`
+}
+
+// apostrophes — apostrof variantlari (solishtirish uchun bittasiga keltiriladi).
+var apostrophes = strings.NewReplacer("’", "'", "ʻ", "'", "ʼ", "'", "‘", "'", "`", "'")
+
+// titleHeader titul varaqning yuqori qatori (vazirlik nomi) hujjat tilida.
+// Sozlamada standart nom (o'zbekcha) turgan bo'lsa, hujjat tilidagi tarjimasi
+// olinadi; boshqa, qo'lda yozilgan nom o'zgarishsiz chiqadi.
+func (g *DOCX) titleHeader(p Paper) string {
+	if g.header == "" {
+		return ""
+	}
+	norm := func(s string) string { return strings.Join(strings.Fields(apostrophes.Replace(s)), " ") }
+	if def := lang.Get(string(lang.UzLatn)).Labels.Ministry; strings.EqualFold(norm(g.header), norm(def)) {
+		return p.labels().Ministry
+	}
+	return g.header
 }
 
 // docBuilder — document.xml ni bo'lakma-bo'lak yig'uvchi yordamchi.
@@ -516,11 +583,13 @@ func spacingBefore(twips int) string {
 // kolontitul. Raqamlash titul varaqdan boshlanadi, shuning uchun reja
 // 2-sahifa bo'ladi.
 func docxSectionProperties(st docStyle) string {
+	itoa := strconv.Itoa
 	return `<w:sectPr>` +
 		`<w:footerReference w:type="default" r:id="rId3"/>` +
 		`<w:footerReference w:type="first" r:id="rId4"/>` +
-		`<w:pgSz w:w="11906" w:h="16838"/>` +
-		`<w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1701" w:header="709" w:footer="567" w:gutter="0"/>` +
+		`<w:pgSz w:w="` + itoa(docPageW) + `" w:h="` + itoa(docPageH) + `"/>` +
+		`<w:pgMar w:top="` + itoa(docMarginTop) + `" w:right="` + itoa(docMarginRight) + `" w:bottom="` + itoa(docMarginBottom) +
+		`" w:left="` + itoa(docMarginLeft) + `" w:header="709" w:footer="567" w:gutter="0"/>` +
 		pageBorders(st) +
 		`<w:pgNumType w:start="1"/>` +
 		`<w:titlePg/>` +
@@ -565,6 +634,7 @@ const docxContentTypes = xmlHeader +
 	`<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
 	`<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>` +
 	`<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>` +
+	`<Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/>` +
 	`<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>` +
 	`<Override PartName="/word/footer2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>` +
 	`<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
@@ -587,7 +657,8 @@ func docxDocumentRels(figures []*docImage) string {
 		`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
 		`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>` +
 		`<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>` +
-		`<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer2.xml"/>`)
+		`<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer2.xml"/>` +
+		`<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/>`)
 	for _, f := range figures {
 		if f == nil {
 			continue
@@ -596,6 +667,58 @@ func docxDocumentRels(figures []*docImage) string {
 			strings.TrimPrefix(f.path, "word/") + `"/>`)
 	}
 	b.WriteString(`</Relationships>`)
+	return b.String()
+}
+
+// docFontInfo — shriftlar jadvali uchun ma'lumot: oilasi, PANOSE kodi va
+// boshqa tizimlardagi o'xshash shrift. Shrift o'rnatilmagan qurilmada (Mac,
+// telefon) dastur shular bo'yicha mos o'rinbosarni tanlaydi: serifli
+// sarlavha serifli, serifsiz — serifsiz shrift bilan almashadi.
+type docFontInfo struct{ family, panose, alt string }
+
+var docFonts = map[string]docFontInfo{
+	"Times New Roman":   {"roman", "02020603050405020304", ""},
+	"Courier New":       {"modern", "02070309020205020404", ""},
+	"Cambria":           {"roman", "02040503050406030204", ""},
+	"Georgia":           {"roman", "02040502050405020303", ""},
+	"Palatino Linotype": {"roman", "02040502050505030304", "Palatino"},
+	"Book Antiqua":      {"roman", "02040602050305030304", "Palatino"},
+	"Garamond":          {"roman", "02020404030301010803", ""},
+	"Calibri":           {"swiss", "020F0502020204030204", ""},
+	"Arial":             {"swiss", "020B0604020202020204", ""},
+	"Century Gothic":    {"swiss", "020B0502020202020204", "Avenir Next"},
+	"Trebuchet MS":      {"swiss", "020B0603020202020204", ""},
+	"Segoe UI":          {"swiss", "020B0502040204020203", "Helvetica Neue"},
+}
+
+// docxFontTable — hujjatdagi shriftlar jadvali (word/fontTable.xml).
+func docxFontTable(st docStyle) string {
+	names := []string{"Times New Roman", "Courier New"}
+	if st.headingFont != "" && st.headingFont != "Times New Roman" {
+		names = append(names, st.headingFont)
+	}
+	var b strings.Builder
+	b.WriteString(xmlHeader + `<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">`)
+	for _, name := range names {
+		f, ok := docFonts[name]
+		if !ok {
+			f.family = "auto"
+		}
+		pitch := "variable"
+		if f.family == "modern" {
+			pitch = "fixed"
+		}
+		// Elementlar tartibi sxema bo'yicha: altName → panose1 → family → pitch.
+		b.WriteString(`<w:font w:name="` + xmlEscape(name) + `">`)
+		if f.alt != "" {
+			b.WriteString(`<w:altName w:val="` + f.alt + `"/>`)
+		}
+		if f.panose != "" {
+			b.WriteString(`<w:panose1 w:val="` + f.panose + `"/>`)
+		}
+		b.WriteString(`<w:family w:val="` + f.family + `"/><w:pitch w:val="` + pitch + `"/></w:font>`)
+	}
+	b.WriteString(`</w:fonts>`)
 	return b.String()
 }
 
@@ -640,6 +763,11 @@ func docxStyles(st docStyle, ooxmlLang string) string {
 	if headColor != "" && headColor != "000000" {
 		headRPr += `<w:color w:val="` + headColor + `"/>`
 	}
+	if st.heading == docHeadingBand {
+		// Matnning o'ziga ham lenta foni: paragraf fonini chizmaydigan
+		// ko'ruvchilarda (Quick Look) oq sarlavha yo'qolib qolmasin.
+		headRPr += shading(st.primary)
+	}
 
 	return xmlHeader +
 		`<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
@@ -674,13 +802,13 @@ func docxStyles(st docStyle, ooxmlLang string) string {
 		// Titul varaq: chapga tekislangan (yon chiziqli kompozitsiya).
 		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleLeft">` +
 		`<w:name w:val="Title Left"/><w:basedOn w:val="Normal"/>` +
-		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="284" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
+		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="` + strconv.Itoa(titleSidebarIndent) + `" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
 		`</w:style>` +
 
 		// Titul varaq: "Bajardi / Tekshirdi" bloki (o'ng tomonda).
 		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="TitleSign">` +
 		`<w:name w:val="Title Signature"/><w:basedOn w:val="Normal"/>` +
-		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="4820" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
+		`<w:pPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="` + strconv.Itoa(titleSignIndent) + `" w:firstLine="0"/><w:jc w:val="left"/></w:pPr>` +
 		`</w:style>` +
 
 		// Reja bandlari.
@@ -702,10 +830,11 @@ func docxStyles(st docStyle, ooxmlLang string) string {
 		`<w:rPr><w:i/><w:iCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>` +
 		`</w:style>` +
 
-		// Adabiyotlar: osilgan xatboshi.
+		// Adabiyotlar: osilgan xatboshi, chapga tekislangan (ikki tomonga
+		// tekislashda uzun havolali qatorlarda so'zlar orasi cho'zilib ketadi).
 		`<w:style w:type="paragraph" w:customStyle="1" w:styleId="Reference">` +
 		`<w:name w:val="Reference"/><w:basedOn w:val="Normal"/>` +
-		`<w:pPr><w:ind w:left="567" w:hanging="567"/></w:pPr>` +
+		`<w:pPr><w:ind w:left="567" w:hanging="567"/><w:jc w:val="left"/></w:pPr>` +
 		`</w:style>` +
 
 		// Dastur kodi: monoshirift, kulrang fon, bitta interval.

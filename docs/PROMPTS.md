@@ -717,6 +717,49 @@ Rules:
 Style: applied and hands-on: methods, step-by-step procedures, worked examples, formulas and calculations with clear explanations of every step and of the results. If the topic involves programming, you may add short code listings as separate paragraphs that start with ``` and end with ``` (keep the line breaks).
 ~~~
 
+### 6.5. Bo'limni davom ettirish prompti
+
+Model ko'pincha so'ralganidan kamroq yozadi. Bo'lim so'ralgan hajmning 55% idan
+qisqa bo'lsa, u qayta yoziladi; 90% idan qisqa bo'lsa (va kamida 60 so'z
+yetishmasa), barcha bo'limlar yozilgandan keyin shu bo'lim uchun alohida
+"davom ettirish" so'rovi yuboriladi. Model bo'limning hozirgi matnini ko'radi
+va faqat yangi paragraflarni qaytaradi (ular bo'lim oxiriga qo'shiladi). Bu
+so'rov xato bersa, bo'lim avvalgi holicha qoladi va hujjat baribir tayyorlanadi.
+Model rejada kamroq bob qaytarsa, boblar uchun ajratilgan umumiy hajm qolgan
+boblarga bo'linadi.
+
+~~~text
+You are expanding one part of a independent study work (mustaqil ish).
+Topic: "Raqamli iqtisodiyot"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Plan of the whole work:
+- Introduction
+- Chapter 1: Raqamli iqtisodiyot tushunchasi
+- Chapter 2: O'zbekistonda raqamlashtirish
+- Chapter 3: Muammolar va istiqbollar
+- Conclusion
+
+Part to expand: Chapter 2 "O'zbekistonda raqamlashtirish".
+It must cover: davlat dasturlari; elektron xizmatlar; raqamli to'lovlar.
+
+Current text of this part:
+<<<
+(bo'limning hozirgi paragraflari)
+>>>
+
+This part is too short. Write about 260 more words as 2 new paragraph(s) of 4-7 sentences each that continue the text naturally after its last paragraph: deepen the analysis, add explanations, examples and the aspects of this part that are not covered yet.
+Return JSON with the new paragraphs only: {"paragraphs": [string, ...]}
+
+Rules:
+- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
+- Do not repeat, paraphrase or summarise what is already written, and do not start the part again.
+- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
+- Do not write an introduction or a conclusion to the whole work here.
+
+Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
+~~~
+
 ---
 
 ## 7. To'lov chekini tekshirish

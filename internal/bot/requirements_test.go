@@ -45,6 +45,28 @@ func TestRequirementsStep(t *testing.T) {
 	}
 }
 
+// TestPersonNameStep — F.I.Sh. maydoniga ilmiy daraja, bir nechta talaba va
+// guruh raqami yozish mumkin; havola, @username va faqat raqamlar — yo'q.
+func TestPersonNameStep(t *testing.T) {
+	for _, ok := range []string{
+		"Aliyev Vali", "O'tkir G‘ulomov", "i.f.n., dotsent Karimova D.A.",
+		"Aliyev Vali, Karimov Sardor", "Aliyeva M. (301-21 guruh)",
+	} {
+		if v, err := validatePersonName(ok, "F.I.Sh."); err != nil || v == "" {
+			t.Errorf("%q qabul qilinishi kerak: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"https://t.me/x", "@aliyev", "+998 90 123 45 67", "12 345", "Al1"} {
+		if _, err := validatePersonName(bad, "F.I.Sh."); err == nil {
+			t.Errorf("%q rad etilishi kerak", bad)
+		}
+	}
+	s := &storage.Session{}
+	if err := steps[StateTeacher].apply(Limits{}, s, "i.f.n., dotsent Karimova D."); err != nil || s.TeacherName != "i.f.n., dotsent Karimova D." {
+		t.Errorf("tekshiruvchi darajasi bilan saqlanishi kerak: err=%v, got=%q", err, s.TeacherName)
+	}
+}
+
 func TestTopicPromptHintsLanguage(t *testing.T) {
 	p := steps[StateTopic].prompt
 	if strings.Contains(p(Limits{}, &storage.Session{}), "🌐") {

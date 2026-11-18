@@ -358,8 +358,9 @@ func validateText(input, field string, minRunes, maxRunes int) (string, error) {
 	return v, nil
 }
 
-// validatePersonName F.I.Sh. ni tekshiradi: raqam va havolalarsiz, faqat
-// harflar, bo'sh joy, apostrof (O'tkir, G'ulom), nuqta (initsiallar) va chiziqcha.
+// validatePersonName F.I.Sh. ni tekshiradi: havola va @username siz — harflar,
+// bo'sh joy, apostrof (O'tkir, G'ulom), nuqta (initsiallar), chiziqcha, vergul,
+// qavs va raqamlar (ilmiy daraja, guruh raqami); kamida 3 ta harf.
 func validatePersonName(input, field string) (string, error) {
 	v, err := validateText(input, field, 3, 100)
 	if err != nil {
@@ -369,9 +370,15 @@ func validatePersonName(input, field string) (string, error) {
 		switch {
 		case unicode.IsLetter(r), r == ' ', r == '.', r == '-':
 		case r == '\'', r == '`', r == '’', r == 'ʻ', r == 'ʼ', r == '‘':
+		// Ilmiy daraja va lavozim ("i.f.n., dotsent"), bir nechta talaba,
+		// guruh raqami ("301-21 guruh") ham titulda yoziladi.
+		case r == ',', r == '(', r == ')', unicode.IsDigit(r):
 		default:
-			return "", invalid("%s faqat harflardan iborat bo'lishi kerak (raqam va maxsus belgilarsiz).", field)
+			return "", invalid("%s faqat harflar, raqamlar va . , - ( ) belgilaridan iborat bo'lishi kerak.", field)
 		}
+	}
+	if countLetters(v) < 3 {
+		return "", invalid("%s harflardan iborat bo'lishi kerak.", field)
 	}
 	return v, nil
 }

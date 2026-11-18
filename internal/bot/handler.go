@@ -65,6 +65,8 @@ type PaperBuilder interface {
 	ContentWords(pages int) int
 	// FigureWords bitta rasm matn o'rnida egallaydigan joy (so'zlarda).
 	FigureWords() int
+	// EstimatePages tayyor hujjatning taxminiy sahifalar soni.
+	EstimatePages(paper generator.Paper) int
 }
 
 // ImageService — rasmli dizaynlar uchun AI rasm generatsiyasi (internal/images).
@@ -1225,6 +1227,7 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		spec     *generator.DocSpec
 		aiDesign *ai.DocDesign
 		tariff   CustomTariff
+		words    = b.ContentWords(s.Volume)
 		figures  int
 	)
 	custom := isCustom(s)
@@ -1238,11 +1241,9 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		if aiDesign, spec, err = h.customDocDesign(ctx, chat, log, s, tariff, li.Prompt); err != nil {
 			return nil, err
 		}
-		figures = h.customDocImages(s, tariff)
-	}
-	words := b.ContentWords(s.Volume)
-	if figures > 0 {
-		words = max(words/2, words-figures*b.FigureWords())
+		if h.docImagesOn(tariff) {
+			words, figures = docPlan(words, b.FigureWords(), tariff.ImagePercent)
+		}
 	}
 
 	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Bo'limlar yozilmoqda..."))
@@ -1305,8 +1306,11 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 			designName = t.Emoji + " " + t.Name
 		}
 	}
+	// Admin uchun: so'ralgan va taxminan chiqqan sahifalar soni (farq katta
+	// bo'lsa — matn hajmini tekshirish kerak).
+	estimated := b.EstimatePages(paper)
 	caption := fmt.Sprintf("📎 <b>%s</b>\n%s · %d sahifa", html.EscapeString(s.Topic), html.EscapeString(opt.Name), s.Volume)
-	summary := fmt.Sprintf("%d sahifa · %d bob · %d manba", s.Volume, len(paper.Chapters), len(paper.References))
+	summary := fmt.Sprintf("%d sahifa (≈%d chiqdi) · %d bob · %d manba", s.Volume, estimated, len(paper.Chapters), len(paper.References))
 	if designName != "" {
 		caption += " · " + html.EscapeString(designName)
 		summary += " · " + designName
@@ -1326,6 +1330,7 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		summary:  summary,
 		logFields: []zap.Field{
 			zap.Int("pages_requested", s.Volume),
+			zap.Int("pages_estimated", estimated),
 			zap.Int("chapters", len(paper.Chapters)),
 			zap.Int("references", len(paper.References)),
 			zap.String("design", s.Design),

@@ -22,6 +22,8 @@ func TestPromptsIncludeLanguageAndRequirements(t *testing.T) {
 			"doc_outline":  buildOutlinePrompt(dr, 3),
 			"doc_intro":    buildSectionPrompt(dr, ol, section{kind: sectionIntro, words: 200}),
 			"doc_chapter":  buildSectionPrompt(dr, ol, section{kind: sectionChapter, number: 1, title: "Bob", words: 400}),
+			"doc_extend": buildExtendPrompt(dr, ol, section{kind: sectionChapter, number: 1, title: "Bob", words: 400},
+				[]Paragraph{{Text: "Matn."}}, 200),
 		}
 	}
 

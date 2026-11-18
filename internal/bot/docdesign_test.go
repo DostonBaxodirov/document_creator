@@ -115,6 +115,19 @@ func TestCustomDocImageCount(t *testing.T) {
 			t.Errorf("customDocImageCount(%d, %d) = %d, kutilgan %d", c.words, c.percent, got, c.want)
 		}
 	}
+	// Rasmlar soni qisqargan matndagi boblar sonidan oshmaydi.
+	for _, c := range []struct{ words, percent int }{{2690, 100}, {700, 100}, {6365, 100}, {2690, 50}, {1000, 0}} {
+		words, figures := docPlan(c.words, 110, c.percent)
+		if chapters := ai.PlanChapters(words); figures > chapters {
+			t.Errorf("docPlan(%d, %d): %d rasm > %d bob", c.words, c.percent, figures, chapters)
+		}
+		if want := max(c.words/2, c.words-figures*110); words != want {
+			t.Errorf("docPlan(%d, %d): matn %d, kutilgan %d", c.words, c.percent, words, want)
+		}
+		if c.percent == 0 && (figures != 0 || words != c.words) {
+			t.Errorf("rasmsiz tarifda matn qisqarmasligi kerak: %d, %d", words, figures)
+		}
+	}
 	if got := spreadPick([]int{0, 1, 2, 3, 4}, 3); !slices.Equal(got, []int{0, 2, 4}) {
 		t.Errorf("spreadPick: %v", got)
 	}
@@ -236,7 +249,7 @@ func TestBuildPaperCustomReferat(t *testing.T) {
 	if len(imgs.prompts) != 3 || !strings.Contains(imgs.prompts[0], "warm sepia photography") {
 		t.Errorf("3 ta rasm dizayn uslubi bilan chizilishi kerak: %v", imgs.prompts)
 	}
-	for _, want := range []string{"🖼 3/3 rasm", "Ipak yo'li (maxsus dizayn, 🥇 Premium)", "15 sahifa"} {
+	for _, want := range []string{"🖼 3/3 rasm", "Ipak yo'li (maxsus dizayn, 🥇 Premium)", "15 sahifa (≈"} {
 		if !strings.Contains(out.summary, want) {
 			t.Errorf("admin xulosasida %q yo'q: %s", want, out.summary)
 		}

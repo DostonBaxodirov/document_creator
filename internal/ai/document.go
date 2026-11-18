@@ -71,7 +71,9 @@ const (
 	maxChapters        = 6
 	wordsPerChapter    = 450  // bob soni shu hajmdan kelib chiqib tanlanadi
 	wordsPerParagraph  = 110  // paragraflar sonini taklif qilish uchun
-	sectionMinPercent  = 55   // bo'lim so'ralgan hajmning kamida shuncha foizi bo'lishi kerak
+	sectionMinPercent  = 55   // bo'lim shundan qisqa bo'lsa — qayta yoziladi
+	sectionFillPercent = 90   // bo'lim shundan qisqa bo'lsa — davomi yozdiriladi (extendSections)
+	minExtendWords     = 60   // bundan kam yetishmasa — davom ettirilmaydi
 	maxParagraphRunes  = 5000 // bitta paragrafning maksimal uzunligi
 	maxCodeLines       = 80
 	maxPointsPerTopic  = 6
@@ -123,16 +125,24 @@ func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Do
 	progress.setTotal(1 + len(ol.Chapters) + 2)
 	progress.advance()
 
-	// 2. Bo'limlar.
+	// 2. Bo'limlar. Boblar kamroq chiqqan bo'lsa, ularning umumiy hajmi
+	// qolgan boblarga bo'linadi — hujjat baribir so'ralgan hajmda chiqadi.
+	chapterWords := b.chapter * b.chapters / len(ol.Chapters)
 	parts := make([]section, 0, len(ol.Chapters)+2)
 	parts = append(parts, section{kind: sectionIntro, words: b.intro})
 	for i, ch := range ol.Chapters {
-		parts = append(parts, section{kind: sectionChapter, number: i + 1, title: ch.Title, points: ch.Points, words: b.chapter})
+		parts = append(parts, section{kind: sectionChapter, number: i + 1, title: ch.Title, points: ch.Points, words: chapterWords})
 	}
 	parts = append(parts, section{kind: sectionConclusion, words: b.conclusion})
 
 	texts, err := c.writeSections(ctx, req, ol, parts, progress)
 	if err != nil {
+		return nil, err
+	}
+	// 3. Model ko'pincha so'ralganidan kamroq yozadi: sezilarli qisqa
+	// bo'limlarning davomi yozdiriladi (sahifalar soni so'ralganiga yaqin bo'lsin).
+	c.extendSections(ctx, req, ol, parts, texts, progress)
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -225,6 +235,91 @@ func (c *client) writeSections(ctx context.Context, req DocumentRequest, ol *out
 	return results, nil
 }
 
+// shortSections hajmi so'ralganning sectionFillPercent foizidan kam va
+// kamida minExtendWords so'z yetishmaydigan bo'limlar indekslari.
+func shortSections(parts []section, texts [][]Paragraph) []int {
+	var out []int
+	for i, p := range parts {
+		have := wordCount(texts[i])
+		if have*100 < p.words*sectionFillPercent && p.words-have >= minExtendWords {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// extendSections qisqa chiqqan bo'limlarning davomini yozdiradi: model
+// bo'limning hozirgi matnini ko'radi va yetishmayotgan hajmda yangi
+// paragraflar qo'shadi. Bu qo'shimcha bosqich — xato bo'lsa, bo'lim avvalgi
+// holicha qoladi va hujjat baribir tayyorlanadi.
+func (c *client) extendSections(ctx context.Context, req DocumentRequest, ol *outline,
+	parts []section, texts [][]Paragraph, progress *progressReporter) {
+	short := shortSections(parts, texts)
+	if len(short) == 0 {
+		return
+	}
+	progress.addTotal(len(short))
+
+	sem := make(chan struct{}, c.parallel)
+	var wg sync.WaitGroup
+	for _, i := range short {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer progress.advance()
+			defer func() {
+				if r := recover(); r != nil {
+					c.log.Error("document extension panicked", zap.String("section", parts[i].label()), zap.Any("panic", r))
+				}
+			}()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			part, have := parts[i], wordCount(texts[i])
+			missing := part.words - have
+			extra, err := generateJSON(ctx, c, "document_extend_"+part.kind.String(), task{
+				system: documentSystemPrompt,
+				user:   buildExtendPrompt(req, ol, part, texts[i], missing),
+				schema: sectionSchema(),
+			}, missing*sectionMinPercent/100, func(raw string) ([]Paragraph, int, error) {
+				return parseSection(raw, part.title)
+			})
+			if err != nil {
+				c.log.Warn("document section not extended", zap.String("section", part.label()), zap.Error(err))
+				return
+			}
+			// Har bir goroutine faqat o'z bo'limiga (texts[i]) yozadi.
+			texts[i] = appendNew(texts[i], extra)
+			c.log.Info("document section extended",
+				zap.String("section", part.label()),
+				zap.Int("words_before", have),
+				zap.Int("words_after", wordCount(texts[i])),
+				zap.Int("requested", part.words))
+		}()
+	}
+	wg.Wait()
+}
+
+// appendNew bo'lim oxiriga yangi paragraflarni qo'shadi; mavjud paragrafni
+// aynan takrorlaganlari tashlab yuboriladi.
+func appendNew(have, extra []Paragraph) []Paragraph {
+	seen := make(map[string]bool, len(have))
+	for _, p := range have {
+		seen[strings.ToLower(p.Text)] = true
+	}
+	for _, p := range extra {
+		if key := strings.ToLower(p.Text); !seen[key] {
+			seen[key] = true
+			have = append(have, p)
+		}
+	}
+	return have
+}
+
 // ---------------------------------------------------------------------------
 // Hajm taqsimoti
 // ---------------------------------------------------------------------------
@@ -274,6 +369,13 @@ func (p *progressReporter) setTotal(total int) {
 	p.mu.Lock()
 	p.total = total
 	p.mu.Unlock()
+}
+
+func (p *progressReporter) addTotal(n int) {
+	p.mu.Lock()
+	p.total += n
+	p.mu.Unlock()
+	p.report()
 }
 
 // ---------------------------------------------------------------------------
@@ -626,36 +728,103 @@ func buildSectionPrompt(req DocumentRequest, ol *outline, s section) string {
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
 	b.WriteString(languageRule(req.Language))
 	b.WriteString("\n")
+	writePlan(&b, ol)
 
-	b.WriteString("Plan of the whole work:\n- Introduction\n")
-	for i, ch := range ol.Chapters {
-		fmt.Fprintf(&b, "- Chapter %d: %s\n", i+1, ch.Title)
-	}
-	b.WriteString("- Conclusion\n\n")
-
-	switch s.kind {
-	case sectionIntro:
-		b.WriteString("Write now: the Introduction.\n")
-		if req.WorkType == WorkPractical {
-			b.WriteString("It must cover: the goal of the practical assignment, its tasks, the methods, tools and initial data used, and the expected result.\n")
-		} else {
-			b.WriteString("It must cover: the relevance of the topic, the aim and the tasks of the work, the object and the subject of the study, and a short overview of the chapters.\n")
-		}
-	case sectionConclusion:
-		b.WriteString("Write now: the Conclusion.\n")
-		b.WriteString("It must summarise the key results of every chapter, their theoretical and practical significance, and give recommendations. Do not introduce new facts.\n")
-	default:
-		fmt.Fprintf(&b, "Write now: Chapter %d %q.\n", s.number, s.title)
-		if len(s.points) > 0 {
-			fmt.Fprintf(&b, "It must cover: %s.\n", strings.Join(s.points, "; "))
-		}
-	}
+	fmt.Fprintf(&b, "Write now: %s.\n", sectionName(s))
+	b.WriteString(sectionBrief(req, s))
 
 	paragraphs := max(2, int(math.Round(float64(s.words)/wordsPerParagraph)))
 	fmt.Fprintf(&b, "\nLength: about %d words in total — this is important. Split the text into %d paragraphs of 4-7 sentences each.\n", s.words, paragraphs)
 	b.WriteString(`Return JSON: {"paragraphs": [string, ...]}` + "\n\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.\n")
+	b.WriteString("- Stay strictly within this part; do not repeat what belongs to other parts of the plan.\n")
+	if s.kind == sectionChapter {
+		b.WriteString("- Do not write an introduction or a conclusion to the whole work here.\n")
+	}
+	b.WriteString("\nStyle: ")
+	b.WriteString(documentStyle(req.WorkType))
+	writeRequirements(&b, req.Requirements)
+	return b.String()
+}
+
+// writePlan butun ish rejasini yozadi (bo'limlar bir-birini takrorlamasligi uchun).
+func writePlan(b *strings.Builder, ol *outline) {
+	b.WriteString("Plan of the whole work:\n- Introduction\n")
+	for i, ch := range ol.Chapters {
+		fmt.Fprintf(b, "- Chapter %d: %s\n", i+1, ch.Title)
+	}
+	b.WriteString("- Conclusion\n\n")
+}
+
+// sectionName bo'limning promptdagi nomi.
+func sectionName(s section) string {
+	switch s.kind {
+	case sectionIntro:
+		return "the Introduction"
+	case sectionConclusion:
+		return "the Conclusion"
+	}
+	return fmt.Sprintf("Chapter %d %q", s.number, s.title)
+}
+
+// sectionBrief bo'lim nimani yoritishi kerakligi (bir yoki bir necha qator).
+func sectionBrief(req DocumentRequest, s section) string {
+	switch s.kind {
+	case sectionIntro:
+		if req.WorkType == WorkPractical {
+			return "It must cover: the goal of the practical assignment, its tasks, the methods, tools and initial data used, and the expected result.\n"
+		}
+		return "It must cover: the relevance of the topic, the aim and the tasks of the work, the object and the subject of the study, and a short overview of the chapters.\n"
+	case sectionConclusion:
+		return "It must summarise the key results of every chapter, their theoretical and practical significance, and give recommendations. Do not introduce new facts.\n"
+	}
+	if len(s.points) > 0 {
+		return fmt.Sprintf("It must cover: %s.\n", strings.Join(s.points, "; "))
+	}
+	return ""
+}
+
+// buildExtendPrompt qisqa chiqqan bo'lim davomini yozish topshirig'i: model
+// bo'limning hozirgi matnini ko'radi va uni takrorlamasdan, yetishmayotgan
+// hajmda yangi paragraflar bilan davom ettiradi.
+func buildExtendPrompt(req DocumentRequest, ol *outline, s section, current []Paragraph, missing int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are expanding one part of a %s.\n", documentTypeName(req.WorkType))
+	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
+	b.WriteString(languageRule(req.Language))
+	b.WriteString("\n")
+	writePlan(&b, ol)
+
+	fmt.Fprintf(&b, "Part to expand: %s.\n", sectionName(s))
+	b.WriteString(sectionBrief(req, s))
+	b.WriteString("\nCurrent text of this part:\n<<<\n")
+	for i, p := range current {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		if p.Code {
+			b.WriteString("```\n" + p.Text + "\n```")
+		} else {
+			b.WriteString(p.Text)
+		}
+	}
+	b.WriteString("\n>>>\n\n")
+
+	paragraphs := max(1, int(math.Round(float64(missing)/wordsPerParagraph)))
+	how := "deepen the analysis, add explanations, examples and the aspects of this part that are not covered yet"
+	switch s.kind {
+	case sectionIntro:
+		how = "cover the points listed above in more detail"
+	case sectionConclusion:
+		how = "deepen the generalisations, the significance of the results and the recommendations, without introducing new facts"
+	}
+	fmt.Fprintf(&b, "This part is too short. Write about %d more words as %d new paragraph(s) of 4-7 sentences each "+
+		"that continue the text naturally after its last paragraph: %s.\n", missing, paragraphs, how)
+	b.WriteString(`Return JSON with the new paragraphs only: {"paragraphs": [string, ...]}` + "\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.\n")
+	b.WriteString("- Do not repeat, paraphrase or summarise what is already written, and do not start the part again.\n")
 	b.WriteString("- Stay strictly within this part; do not repeat what belongs to other parts of the plan.\n")
 	if s.kind == sectionChapter {
 		b.WriteString("- Do not write an introduction or a conclusion to the whole work here.\n")
