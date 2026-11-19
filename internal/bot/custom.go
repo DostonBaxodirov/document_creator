@@ -271,8 +271,8 @@ var designStage = progressStage{icon: "🎨", first: "Mavzuga mos dizayn yaratil
 
 // customDesign AI dan dizayn konsepsiyasini oladi va uni generator
 // spetsifikatsiyasiga aylantiradi.
-func (h *Handler) customDesign(ctx context.Context, chat *tele.Chat, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.Design, *generator.CustomSpec, error) {
-	report, stop := h.startProgress(ctx, chat, log, designStage)
+func (h *Handler) customDesign(ctx context.Context, progress *progressBoard, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.Design, *generator.CustomSpec, error) {
+	report, stop := progress.Stage(designStage)
 	report(0, 1)
 	started := time.Now()
 	d, err := t.AI.GenerateDesign(ctx, ai.DesignRequest{Topic: s.Topic, Language: language, Requirements: s.Requirements})
@@ -377,8 +377,8 @@ func customCaptionName(name, tariff string) string {
 
 // customDocDesign AI dan Word dizayni konsepsiyasini oladi va uni generator
 // spetsifikatsiyasiga aylantiradi.
-func (h *Handler) customDocDesign(ctx context.Context, chat *tele.Chat, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.DocDesign, *generator.DocSpec, error) {
-	report, stop := h.startProgress(ctx, chat, log, designStage)
+func (h *Handler) customDocDesign(ctx context.Context, progress *progressBoard, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.DocDesign, *generator.DocSpec, error) {
+	report, stop := progress.Stage(designStage)
 	report(0, 1)
 	started := time.Now()
 	d, err := t.AI.GenerateDocDesign(ctx, ai.DesignRequest{Topic: s.Topic, Language: language, Requirements: s.Requirements})

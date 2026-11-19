@@ -957,6 +957,11 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 	ctx, cancel := context.WithTimeout(ctx, h.opts.JobTimeout)
 	defer cancel()
 
+	// Barcha bosqichlar (dizayn, matn, rasmlar) holati bitta xabarda
+	// ko'rsatiladi; xato bo'lsa ham xabar o'chiriladi.
+	progress := newProgressBoard(ctx, h.bot, chat, log, progressInterval)
+	defer progress.Close()
+
 	stopAction := h.keepUploadAction(ctx, chat)
 	defer stopAction()
 
@@ -971,9 +976,9 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		err error
 	)
 	if opt.Type.IsDocument() {
-		out, err = h.buildPaper(ctx, chat, s, opt, log)
+		out, err = h.buildPaper(ctx, progress, s, opt, log)
 	} else {
-		out, err = h.buildSlides(ctx, chat, s, opt, log)
+		out, err = h.buildSlides(ctx, progress, s, opt, log)
 	}
 	if err != nil {
 		return nil, err
@@ -982,7 +987,8 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		return out, err
 	}
 
-	// 3. Telegram'ga hujjat sifatida yuborish.
+	// 3. Telegram'ga hujjat sifatida yuborish (jarayon xabari undan oldin o'chiriladi).
+	progress.Close()
 	doc := &tele.Document{
 		File:     tele.FromDisk(out.path),
 		FileName: out.fileName,
@@ -1020,7 +1026,7 @@ type output struct {
 // AI maxsus dizaynda (custom.go) avval tarif modeli mavzuga mos dizayn
 // konsepsiyasini yaratadi, slaydlarni ham shu model yozadi, rasmlar esa
 // tarif sifatida slaydlarning bir qismiga chiziladi.
-func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
+func (h *Handler) buildSlides(ctx context.Context, progress *progressBoard, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Slides
 	content := b.ContentSlides(s.Volume)
 	li := lang.Get(s.Language)
@@ -1040,7 +1046,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 		}
 		gen = tariff.AI
 		var err error
-		if aiDesign, spec, err = h.customDesign(ctx, chat, log, s, tariff, li.Prompt); err != nil {
+		if aiDesign, spec, err = h.customDesign(ctx, progress, log, s, tariff, li.Prompt); err != nil {
 			return nil, err
 		}
 		plan = picturePlan{svc: tariff.Images, tier: images.TierStandard, limit: customImageCount(s.Volume, tariff.ImagePercent)}
@@ -1052,7 +1058,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	// maketlardan tanlaydi, uning imzo maketlarini ishlatadi va matn hajmini
 	// dizayndagi joyga moslaydi.
 	structure := plan.design.Structure()
-	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Slaydlar yozilmoqda..."))
+	report, stopProgress := progress.Stage(textStage("Slaydlar yozilmoqda..."))
 	pres, err := gen.GeneratePresentation(ctx, ai.PresentationRequest{
 		Topic: s.Topic, SlideCount: content, OnProgress: report, Images: photos,
 		Layouts: structure.Layouts, Signature: structure.Signature, Compact: structure.Compact,
@@ -1089,7 +1095,7 @@ func (h *Handler) buildSlides(ctx context.Context, chat *tele.Chat, s *storage.S
 	}
 	var pics picturesInfo
 	if photos {
-		pics = h.addPictures(ctx, chat, log, pres, &deck, plan)
+		pics = h.addPictures(ctx, progress, log, pres, &deck, plan)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -1163,7 +1169,7 @@ func (h *Handler) imageTier(s *storage.Session) images.Tier {
 // barcha slaydlarga (yon panel uchun tik, banner uchun yotiq rasm); AI maxsus
 // dizaynda — plan.limit ta kvadrat rasm, slaydlarga teng taqsimlangan.
 // Chizilmagan rasm o'rnida slayd rasmsiz (titulda — bezakli fon bilan) chiqadi.
-func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Logger, pres *ai.Presentation, deck *generator.Deck, plan picturePlan) picturesInfo {
+func (h *Handler) addPictures(ctx context.Context, progress *progressBoard, log *zap.Logger, pres *ai.Presentation, deck *generator.Deck, plan picturePlan) picturesInfo {
 	info := picturesInfo{tier: plan.tier}
 	design := plan.design
 
@@ -1208,7 +1214,7 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 		return info
 	}
 
-	report, stop := h.startProgress(ctx, chat, log, imageStage)
+	report, stop := progress.Stage(imageStage)
 	report(0, len(reqs))
 	started := time.Now()
 	results := plan.svc.Generate(ctx, info.tier, reqs, report)
@@ -1247,7 +1253,7 @@ func (h *Handler) addPictures(ctx context.Context, chat *tele.Chat, log *zap.Log
 // Maxsus dizaynda (custom.go) avval tarif modeli mavzuga mos uslub yaratadi,
 // matnni ham shu model yozadi, boblarning bir qismiga esa tarif sifatida rasm
 // chiziladi (matn hajmi rasmlar egallaydigan joyga qarab kamaytiriladi).
-func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
+func (h *Handler) buildPaper(ctx context.Context, progress *progressBoard, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Papers
 	li := lang.Get(s.Language)
 
@@ -1267,7 +1273,7 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		}
 		gen = tariff.AI
 		var err error
-		if aiDesign, spec, err = h.customDocDesign(ctx, chat, log, s, tariff, li.Prompt); err != nil {
+		if aiDesign, spec, err = h.customDocDesign(ctx, progress, log, s, tariff, li.Prompt); err != nil {
 			return nil, err
 		}
 		if h.docImagesOn(tariff) {
@@ -1275,7 +1281,7 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		}
 	}
 
-	report, stopProgress := h.startProgress(ctx, chat, log, textStage("Bo'limlar yozilmoqda..."))
+	report, stopProgress := progress.Stage(textStage("Bo'limlar yozilmoqda..."))
 	doc, err := gen.GenerateDocument(ctx, ai.DocumentRequest{
 		WorkType:     opt.Type,
 		Topic:        s.Topic,
@@ -1316,7 +1322,7 @@ func (h *Handler) buildPaper(ctx context.Context, chat *tele.Chat, s *storage.Se
 		if aiDesign != nil {
 			imageStyle = aiDesign.ImageStyle
 		}
-		pics = h.addDocFigures(ctx, chat, log, doc, &paper, tariff.Images, imageStyle, figures)
+		pics = h.addDocFigures(ctx, progress, log, doc, &paper, tariff.Images, imageStyle, figures)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -1373,7 +1379,7 @@ var docImageStage = progressStage{icon: "🖼", first: "Rasmlar chizilmoqda...",
 
 // addDocFigures rasm g'oyasi bor boblardan n tasiga (teng oraliqda) rasm
 // chizadi va ularni hujjatga qo'shadi. Chizilmagan rasm o'rnida bob rasmsiz qoladi.
-func (h *Handler) addDocFigures(ctx context.Context, chat *tele.Chat, log *zap.Logger, doc *ai.Document,
+func (h *Handler) addDocFigures(ctx context.Context, progress *progressBoard, log *zap.Logger, doc *ai.Document,
 	paper *generator.Paper, svc ImageService, imageStyle string, n int) picturesInfo {
 	var cand []int
 	for i, ch := range doc.Chapters {
@@ -1396,7 +1402,7 @@ func (h *Handler) addDocFigures(ctx context.Context, chat *tele.Chat, log *zap.L
 		}
 		reqs[k] = images.Request{Prompt: prompt + ". No text, letters, numbers or logos in the image.", Shape: images.Landscape}
 	}
-	report, stop := h.startProgress(ctx, chat, log, docImageStage)
+	report, stop := progress.Stage(docImageStage)
 	report(0, len(reqs))
 	started := time.Now()
 	results := svc.Generate(ctx, info.tier, reqs, report)
@@ -1439,119 +1445,6 @@ func toParagraphs(in []ai.Paragraph) []generator.Paragraph {
 		out[i] = generator.Paragraph{Text: p.Text, Code: p.Code}
 	}
 	return out
-}
-
-// startProgress hujjat yozilayotganda bosqichlar holatini bitta xabarda
-// ko'rsatib boradi: birinchi holatda xabar yuboriladi, keyin tahrirlanadi,
-// stop chaqirilganda esa o'chiriladi.
-//
-// report AI goroutine'laridan chaqiriladi va hech qachon bloklanmaydi:
-// navbatda faqat eng so'nggi holat saqlanadi, Telegram'ga esa ko'pi bilan
-// 2 soniyada bir marta murojaat qilinadi (API cheklovlariga tushmaslik uchun).
-//
-// stage — jarayon bosqichlari nomlari (textStage, imageStage).
-func (h *Handler) startProgress(ctx context.Context, chat *tele.Chat, log *zap.Logger, stage progressStage) (report func(done, total int), stop func()) {
-	ctx, cancel := context.WithCancel(ctx)
-	updates := make(chan [2]int, 1)
-	finished := make(chan struct{})
-
-	report = func(done, total int) {
-		v := [2]int{done, total}
-		for {
-			select {
-			case updates <- v:
-				return
-			default:
-				// Eski holatni tashlab yuboramiz — faqat oxirgisi muhim.
-				select {
-				case <-updates:
-				default:
-				}
-			}
-		}
-	}
-
-	go func() {
-		defer close(finished)
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error("panic in progress loop", zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
-			}
-		}()
-
-		var msg *tele.Message
-		defer func() {
-			if msg != nil {
-				if err := h.bot.Delete(msg); err != nil {
-					log.Debug("failed to delete progress message", zap.Error(err))
-				}
-			}
-		}()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case v := <-updates:
-				text := progressText(v[0], v[1], stage)
-				var err error
-				if msg == nil {
-					msg, err = h.bot.Send(chat, text)
-				} else {
-					_, err = h.bot.Edit(msg, text)
-				}
-				if err != nil && !errors.Is(err, tele.ErrMessageNotModified) {
-					log.Debug("failed to update progress message", zap.Error(err))
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(2 * time.Second):
-				}
-			}
-		}
-	}()
-
-	stop = func() {
-		cancel()
-		<-finished
-	}
-	return report, stop
-}
-
-// progressStage — jarayon xabaridagi belgi va bosqichlar nomlari.
-type progressStage struct {
-	icon    string
-	first   string // done == 0
-	writing string // 0 < done < total
-	last    string // done == total
-}
-
-// textStage — AI matn yozish bosqichlari (writing — "Bo'limlar yozilmoqda..." kabi).
-func textStage(writing string) progressStage {
-	return progressStage{icon: "✍️", first: "Reja tuzilmoqda...", writing: writing, last: "Fayl tayyorlanmoqda..."}
-}
-
-// imageStage — rasmli dizaynda rasmlarni chizish bosqichi.
-var imageStage = progressStage{icon: "🖼", first: "Rasmlar chizilmoqda...", writing: "Rasmlar chizilmoqda...", last: "Slaydlar tayyorlanmoqda..."}
-
-// progressText jarayon holati matni: "✍️ Bo'limlar yozilmoqda... ▰▰▰▱▱▱▱▱▱▱ 3/8".
-func progressText(done, total int, st progressStage) string {
-	total = max(total, 1)
-	done = min(max(done, 0), total)
-
-	const width = 10
-	filled := done * width / total
-	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", width-filled)
-
-	stage := st.writing
-	switch {
-	case done == 0:
-		stage = st.first
-	case done == total:
-		stage = st.last
-	}
-	return fmt.Sprintf("%s <b>%s</b>\n%s %d/%d", st.icon, stage, bar, done, total)
 }
 
 // finishWithSuccess sessiyani yakunlaydi, statistikani yangilaydi va xarid

@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
-	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
@@ -232,7 +231,7 @@ func TestBuildPaperCustomReferat(t *testing.T) {
 	s := &storage.Session{WorkType: string(ai.WorkReferat), Design: generator.ThemeCustom, Tariff: config.TariffPremium,
 		Topic: "Ipak yo'li tarixi", Volume: 15, Language: "uz", StudentName: "Aliyev Vali", University: "TDU", TeacherName: "Karimova D."}
 	opt, _ := findWorkType(ai.WorkReferat)
-	out, err := h.buildPaper(context.Background(), &tele.Chat{ID: 1}, s, opt, zap.NewNop())
+	out, err := h.buildPaper(context.Background(), testBoard(t, b), s, opt, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +287,7 @@ func TestBuildPaperReadyDesign(t *testing.T) {
 
 	s := &storage.Session{WorkType: string(ai.WorkIndependent), Design: generator.DocThemeFrame, Topic: "Mavzu", Volume: 10}
 	opt, _ := findWorkType(ai.WorkIndependent)
-	out, err := h.buildPaper(context.Background(), &tele.Chat{ID: 1}, s, opt, zap.NewNop())
+	out, err := h.buildPaper(context.Background(), testBoard(t, b), s, opt, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +304,7 @@ func TestBuildPaperReadyDesign(t *testing.T) {
 	// Amaliy topshiriq: sessiyada dizayn qolib ketgan bo'lsa ham — Klassik.
 	s = &storage.Session{WorkType: string(ai.WorkPractical), Design: generator.DocThemeFrame, Topic: "Mavzu", Volume: 10}
 	opt, _ = findWorkType(ai.WorkPractical)
-	if out, err = h.buildPaper(context.Background(), &tele.Chat{ID: 1}, s, opt, zap.NewNop()); err != nil {
+	if out, err = h.buildPaper(context.Background(), testBoard(t, b), s, opt, zap.NewNop()); err != nil {
 		t.Fatal(err)
 	}
 	if doc := docxParts(t, out.path)["word/document.xml"]; strings.Contains(doc, `<w:pgBorders`) {

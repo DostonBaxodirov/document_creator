@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
@@ -28,6 +29,7 @@ func (a adminBilling) ListAdmins(context.Context) ([]storage.User, error) { retu
 type apiCall struct {
 	method string
 	params map[string]any
+	at     time.Time // so'rov serverga kelgan vaqt
 }
 
 // fakeTelegram — Bot API so'rovlarini yozib boradigan soxta server.
@@ -39,6 +41,7 @@ func fakeTelegram(t *testing.T, failCopyFor string) (*tele.Bot, func() []apiCall
 		next  = 100
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		at := time.Now()
 		params := map[string]any{}
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			// Fayl yuborish (sendDocument va h.k.) multipart shaklida keladi.
@@ -54,7 +57,7 @@ func fakeTelegram(t *testing.T, failCopyFor string) (*tele.Bot, func() []apiCall
 		}
 		method := path.Base(r.URL.Path)
 		mu.Lock()
-		calls = append(calls, apiCall{method, params})
+		calls = append(calls, apiCall{method: method, params: params, at: at})
 		next++
 		id := next
 		mu.Unlock()
