@@ -55,15 +55,10 @@ func TestFormatting(t *testing.T) {
 type fakeBilling struct {
 	BillingStore
 	credit *storage.Order
-	used   map[string]int
 }
 
 func (f *fakeBilling) FindCredit(_ context.Context, _ uint, _ string, _ int) (*storage.Order, error) {
 	return f.credit, nil
-}
-
-func (f *fakeBilling) CountFreeUsed(_ context.Context, _ uint, kind string) (int, error) {
-	return f.used[kind], nil
 }
 
 // fakeImages — rasm provayderi ulangan deb hisoblanadigan servis.
@@ -84,25 +79,20 @@ func TestKindWithoutImageProvider(t *testing.T) {
 }
 
 func TestQuote(t *testing.T) {
-	fb := &fakeBilling{used: map[string]int{}}
+	fb := &fakeBilling{}
 	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200, FreePhoto: 1, FreePlain: 1},
+		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
 	})
 	u := &storage.User{ID: 1, TelegramUserID: 42}
 	photo := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeOcean, Volume: 10}
 	plain := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeBento, Volume: 12}
 	doc := &storage.Session{WorkType: string(ai.WorkIndependent), Volume: 15}
 
+	// Bepul urinishlar o'chirilgan: birinchi buyurtma ham pullik.
 	q, _ := h.quote(context.Background(), photo, u)
-	if q.mode != quoteFree || q.kind != storage.KindPhoto || q.price != 3000 {
-		t.Errorf("birinchi rasmli ish bepul bo'lishi kerak: %+v", q)
-	}
-
-	fb.used[storage.KindPhoto] = 1
-	q, _ = h.quote(context.Background(), photo, u)
-	if q.mode != quotePaid || q.price != 3000 || !strings.Contains(q.line(), "3 000 so'm") ||
+	if q.mode != quotePaid || q.kind != storage.KindPhoto || q.price != 3000 || !strings.Contains(q.line(), "3 000 so'm") ||
 		!strings.Contains(q.line(), "10 slayd × 300 so'm") {
 		t.Errorf("10 ta rasmli slayd 3 000 so'm bo'lishi kerak: %+v %q", q, q.line())
 	}
@@ -112,12 +102,6 @@ func TestQuote(t *testing.T) {
 		t.Errorf("50 ta rasmli slayd 15 000 so'm bo'lishi kerak: %+v", q)
 	}
 
-	q, _ = h.quote(context.Background(), doc, u)
-	if q.mode != quoteFree || q.kind != storage.KindPlain {
-		t.Errorf("rasmsiz bepul urinish hali ishlatilmagan: %+v", q)
-	}
-
-	fb.used[storage.KindPlain] = 1
 	q, _ = h.quote(context.Background(), plain, u)
 	if q.mode != quotePaid || q.kind != storage.KindPlain || q.price != 3000 || !strings.Contains(q.line(), "12 slayd × 250 so'm") {
 		t.Errorf("12 ta rasmsiz slayd 3 000 so'm bo'lishi kerak: %+v %q", q, q.line())

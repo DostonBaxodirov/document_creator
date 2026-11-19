@@ -91,11 +91,12 @@ func (h *Handler) notifyPayment(p *storage.Payment, o *storage.Order) {
 
 // purchase — admin xabari uchun xarid ma'lumotlari.
 type purchase struct {
-	session   *storage.Session
-	order     *storage.Order   // nil — to'lov tizimi o'chirilgan yoki buyurtma o'qilmadi
-	payment   *storage.Payment // pullik buyurtmaning tasdiqlangan cheki
-	freeUsed  int              // bepul buyurtmada: ishlatilgan bepul urinishlar (shu buyurtma bilan)
-	freeLimit int
+	session *storage.Session
+	order   *storage.Order   // nil — to'lov tizimi o'chirilgan yoki buyurtma o'qilmadi
+	payment *storage.Payment // pullik buyurtmaning tasdiqlangan cheki
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// freeUsed  int              // bepul buyurtmada: ishlatilgan bepul urinishlar (shu buyurtma bilan)
+	// freeLimit int
 }
 
 // loadPurchase sessiyadagi buyurtmani va uning to'lovini o'qiydi. Xatolar
@@ -111,11 +112,14 @@ func (h *Handler) loadPurchase(ctx context.Context, s *storage.Session, log *zap
 		return pc
 	}
 	pc.order = o
+	// Bepul buyurtmalar endi yaratilmaydi, lekin bazada oldingi (hali
+	// yetkazilmagan) bepul buyurtmalar qolgan bo'lishi mumkin — ularda chek yo'q.
 	if o.IsFree {
-		pc.freeLimit = h.freeLimit(o.Kind)
-		if pc.freeUsed, err = h.billing.CountFreeUsed(ctx, o.UserID, o.Kind); err != nil {
-			log.Warn("failed to count free orders for admin notice", zap.Error(err))
-		}
+		// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+		// pc.freeLimit = h.freeLimit(o.Kind)
+		// if pc.freeUsed, err = h.billing.CountFreeUsed(ctx, o.UserID, o.Kind); err != nil {
+		// 	log.Warn("failed to count free orders for admin notice", zap.Error(err))
+		// }
 		return pc
 	}
 	if pc.payment, err = h.billing.OrderPayment(ctx, o.ID); err != nil {
@@ -203,11 +207,12 @@ func paymentLine(pc purchase) string {
 		return label + fmt.Sprintf("buyurtma #%d ma'lumotini o'qib bo'lmadi", *pc.session.OrderID)
 	case o == nil:
 		return label + "to'lov tizimi o'chirilgan (bepul)"
-	case o.IsFree:
+	case o.IsFree: // bepul urinishlar o'chirilishidan oldin yaratilgan buyurtma
 		line := label + "🎁 bepul sinov"
-		if pc.freeLimit > 0 && pc.freeUsed > 0 {
-			line += fmt.Sprintf(" (%d/%d)", pc.freeUsed, pc.freeLimit)
-		}
+		// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+		// if pc.freeLimit > 0 && pc.freeUsed > 0 {
+		// 	line += fmt.Sprintf(" (%d/%d)", pc.freeUsed, pc.freeLimit)
+		// }
 		return line
 	case p == nil:
 		return label + "<b>" + formatSum(o.Price) + "</b> · to'langan"

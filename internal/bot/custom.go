@@ -193,9 +193,10 @@ func (h *Handler) tariffPrompt(s *storage.Session) string {
 			fmt.Fprintf(&b, "\n     %s\n", v.about)
 		}
 	}
-	if h.paymentsOn() {
-		b.WriteString("\n<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>")
-	}
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// if h.paymentsOn() {
+	// 	b.WriteString("\n<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>")
+	// }
 	return b.String()
 }
 
@@ -440,9 +441,10 @@ func (h *Handler) guideText() string {
 			formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto))
 		fmt.Fprintf(&b, "📚 Mustaqil ish va referat: har bir sahifa — %s\n", formatSum(p.PricePage))
 		fmt.Fprintf(&b, "🛠 Amaliy topshiriq: %s\n", formatSum(p.PriceDocument))
-		if p.FreePhoto > 0 || p.FreePlain > 0 {
-			fmt.Fprintf(&b, "🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>\n", p.FreePhoto, p.FreePlain)
-		}
+		// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+		// if p.FreePhoto > 0 || p.FreePlain > 0 {
+		// 	fmt.Fprintf(&b, "🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>\n", p.FreePhoto, p.FreePlain)
+		// }
 		b.WriteString("\n")
 	}
 
@@ -464,7 +466,7 @@ func (h *Handler) guideText() string {
 		}
 		if len(examples) > 0 {
 			fmt.Fprintf(&b, "<i>Masalan, %d slayd: %s.</i>\n", sample, strings.Join(examples, ", "))
-			b.WriteString("<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>\n")
+			// b.WriteString("<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>\n") — bepul urinishlar hozircha o'chirilgan
 		}
 		b.WriteString("\n")
 	}

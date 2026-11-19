@@ -29,7 +29,7 @@ func customHandler(fb *fakeBilling) *Handler {
 		Limits:  Limits{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30},
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200, FreePhoto: 1, FreePlain: 1},
+		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
 		Custom:  testTariffs(),
 	})
 }
@@ -56,7 +56,7 @@ func TestCustomOptionsMatchGenerator(t *testing.T) {
 }
 
 func TestCustomPricing(t *testing.T) {
-	fb := &fakeBilling{used: map[string]int{}}
+	fb := &fakeBilling{}
 	h := customHandler(fb)
 	u := &storage.User{ID: 1, TelegramUserID: 42}
 	cases := map[string]int{config.TariffStandard: 6000, config.TariffOptimal: 10000, config.TariffPremium: 34000}
@@ -77,9 +77,6 @@ func TestCustomPricing(t *testing.T) {
 			t.Errorf("%s: narx qatori %q", tariff, q.line())
 		}
 	}
-	if h.freeLimit(storage.AIKind(config.TariffPremium)) != 0 {
-		t.Error("Maxsus dizaynda bepul urinish bo'lmasligi kerak")
-	}
 	o := &storage.Order{ID: 7, WorkType: string(ai.WorkPresentation), Kind: storage.AIKind(config.TariffOptimal), Price: 10000, Volume: 20}
 	if txt := h.paymentText(o, true); strings.Contains(txt, "Bepul sinov") || !strings.Contains(txt, "Maxsus dizayn — 🥈 Optimal") {
 		t.Errorf("to'lov matni:\n%s", txt)
@@ -94,7 +91,7 @@ func TestTariffPromptAndKeyboard(t *testing.T) {
 	s := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeCustom, Topic: "Okean ekologiyasi", Volume: 20}
 	p := h.tariffPrompt(s)
 	for _, want := range []string{"Okean ekologiyasi", "Standart", "6 000 so'm", "Optimal", "10 000 so'm", "Premium", "34 000 so'm",
-		"8 ta rasm", "10 ta rasm", "bepul urinishlarga kirmaydi"} {
+		"8 ta rasm", "10 ta rasm"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("tarif matnida %q yo'q:\n%s", want, p)
 		}
@@ -210,7 +207,7 @@ func TestGuideText(t *testing.T) {
 	h := customHandler(&fakeBilling{})
 	g := h.guideText()
 	for _, want := range []string{"qo'llanma", "/start", "/cancel", "5–50 slayd", "5–30 sahifa", "250 so'm", "7 000 so'm",
-		"Birinchi 1 ta rasmli va 1 ta rasmsiz ish — <b>bepul</b>", "Maxsus dizayn bepul urinishlarga kirmaydi", "Maxsus dizayn — tariflar", "Standart</b> — 300 so'm/slayd", "Premium</b> — 1 700 so'm/slayd",
+		"Maxsus dizayn — tariflar", "Standart</b> — 300 so'm/slayd", "Premium</b> — 1 700 so'm/slayd",
 		"20 slayd: Standart — 6 000 so'm, Optimal — 10 000 so'm, Premium — 34 000 so'm", "To'lov", "<b>3. Narxlar</b>", "<b>4. ✨"} {
 		if !strings.Contains(g, want) {
 			t.Errorf("qo'llanmada %q yo'q", want)

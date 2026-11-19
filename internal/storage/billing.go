@@ -206,6 +206,7 @@ func (r *BillingRepository) ListAdmins(ctx context.Context) ([]User, error) {
 
 // CountFreeUsed foydalanuvchi berilgan toifadagi bepul urinishlardan nechtasini
 // ishlatganini qaytaradi (bekor qilinganlar hisobga olinmaydi).
+// Bepul urinishlar hozircha o'chirilgan — bot bu metodni chaqirmaydi.
 func (r *BillingRepository) CountFreeUsed(ctx context.Context, userID uint, kind string) (int, error) {
 	var n int64
 	err := r.db.WithContext(ctx).Model(&Order{}).

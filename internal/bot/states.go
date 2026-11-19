@@ -41,7 +41,7 @@ const (
 //
 // Tariff qadami faqat "✨ Maxsus dizayn" tanlanganda (custom.go).
 //
-// To'lov yoqilgan va bepul urinishlar tugagan bo'lsa, tasdiqlashdan keyin:
+// To'lov yoqilgan bo'lsa (bepul urinishlar hozircha o'chirilgan), tasdiqlashdan keyin:
 //
 //	Confirm → Payment (chek kutiladi) → Review (AI/admin tekshiradi) → Generating
 //

@@ -63,7 +63,7 @@ func TestLimitsValidation(t *testing.T) {
 
 func TestPaymentConfig(t *testing.T) {
 	for _, k := range []string{"PAYMENT_ENABLED", "PAYMENT_CARD_NUMBER", "PAYMENT_CARD_HOLDER", "PRICE_SLIDE_PHOTO", "PRICE_SLIDE_PLAIN", "PRICE_DOCUMENT", "PRICE_PLAIN",
-		"FREE_PHOTO", "FREE_PLAIN", "PAYMENT_VISION_MODEL", "PAYMENT_CHECK_TIMEOUT", "ADMIN_PASSWORD"} {
+		"PAYMENT_VISION_MODEL", "PAYMENT_CHECK_TIMEOUT", "ADMIN_PASSWORD"} {
 		t.Setenv(k, "")
 	}
 	p := &parser{}
@@ -71,7 +71,7 @@ func TestPaymentConfig(t *testing.T) {
 	if len(p.errs) > 0 {
 		t.Fatal(p.errs)
 	}
-	if !c.Enabled || c.PriceSlidePhoto != 300 || c.PriceSlidePlain != 250 || c.PriceDocument != 7000 || c.FreePhoto != 1 || c.FreePlain != 1 || c.VisionModel != "gpt-x" {
+	if !c.Enabled || c.PriceSlidePhoto != 300 || c.PriceSlidePlain != 250 || c.PriceDocument != 7000 || c.VisionModel != "gpt-x" {
 		t.Errorf("standart qiymatlar noto'g'ri: %+v", c)
 	}
 	// Yoqilgan, lekin karta va parol yo'q — xato.
@@ -106,9 +106,8 @@ func TestPaymentConfig(t *testing.T) {
 	}
 
 	t.Setenv("PRICE_SLIDE_PLAIN", "0")
-	t.Setenv("FREE_PHOTO", "-1")
-	if errs := paymentConfig(&parser{}, AIConfig{}).validate(); len(errs) != 2 {
-		t.Errorf("narx va bepul urinish xatolari kutilgan edi: %v", errs)
+	if errs := paymentConfig(&parser{}, AIConfig{}).validate(); len(errs) != 1 {
+		t.Errorf("narx xatosi kutilgan edi: %v", errs)
 	}
 
 	t.Setenv("PAYMENT_ENABLED", "false")

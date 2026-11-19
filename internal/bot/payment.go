@@ -1,7 +1,7 @@
 package bot
 
-// To'lov oqimi: tasdiqlangan buyurtma uchun narxni aniqlash (bepul urinish,
-// oldin to'langan buyurtma yoki pullik), karta ma'lumotlarini yuborish,
+// To'lov oqimi: tasdiqlangan buyurtma uchun narxni aniqlash (oldin to'langan
+// buyurtma yoki pullik), karta ma'lumotlarini yuborish,
 // chek rasmini AI orqali tekshirish va shubhali cheklarni adminga yuborish.
 
 import (
@@ -33,7 +33,8 @@ type BillingStore interface {
 	IsAdmin(ctx context.Context, telegramID int64) (bool, error)
 	ListAdmins(ctx context.Context) ([]storage.User, error)
 
-	CountFreeUsed(ctx context.Context, userID uint, kind string) (int, error)
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// CountFreeUsed(ctx context.Context, userID uint, kind string) (int, error)
 	FindCredit(ctx context.Context, userID uint, kind string, price int) (*storage.Order, error)
 	CreateOrder(ctx context.Context, o *storage.Order) error
 	SaveOrder(ctx context.Context, o *storage.Order) error
@@ -64,8 +65,9 @@ type PaymentOptions struct {
 	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd, so'm
 	PriceDocument   int // amaliy topshiriq (Word), so'm — qat'iy narx
 	PricePage       int // mustaqil ish va referat: bitta sahifa narxi, so'm
-	FreePhoto       int
-	FreePlain       int
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// FreePhoto       int
+	// FreePlain       int
 	// AdminPassword — shu matnni yuborgan foydalanuvchi admin bo'ladi (bo'sh — o'chirilgan).
 	AdminPassword string
 }
@@ -170,16 +172,18 @@ func (h *Handler) price(s *storage.Session, kind string) int {
 	return max(s.Volume, 1) * h.slideRate(kind)
 }
 
-// freeLimit toifa uchun bepul urinishlar soni (AI maxsus dizayn — bepul emas).
-func (h *Handler) freeLimit(kind string) int {
-	if _, ok := storage.KindTariff(kind); ok {
-		return 0
-	}
-	if kind == storage.KindPhoto {
-		return h.opts.Payment.FreePhoto
-	}
-	return h.opts.Payment.FreePlain
-}
+// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+//
+// // freeLimit toifa uchun bepul urinishlar soni (AI maxsus dizayn — bepul emas).
+// func (h *Handler) freeLimit(kind string) int {
+// 	if _, ok := storage.KindTariff(kind); ok {
+// 		return 0
+// 	}
+// 	if kind == storage.KindPhoto {
+// 		return h.opts.Payment.FreePhoto
+// 	}
+// 	return h.opts.Payment.FreePlain
+// }
 
 // pricingText narxlar haqida qisqa matn (xush kelibsiz va yordam xabarlari uchun).
 func (h *Handler) pricingText() string {
@@ -199,9 +203,10 @@ func (h *Handler) pricingText() string {
 		}
 		s += "\n✨ Maxsus dizayn: " + strings.Join(parts, "; ") + "."
 	}
-	if p.FreePhoto > 0 || p.FreePlain > 0 {
-		s += fmt.Sprintf("\n🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>!", p.FreePhoto, p.FreePlain)
-	}
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// if p.FreePhoto > 0 || p.FreePlain > 0 {
+	// 	s += fmt.Sprintf("\n🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>!", p.FreePhoto, p.FreePlain)
+	// }
 	s += "\nℹ️ Batafsil qo'llanma — /help"
 	return s
 }
@@ -214,8 +219,8 @@ type quoteMode int
 
 const (
 	quotePaid   quoteMode = iota // to'lov kerak
-	quoteFree                    // bepul urinish
 	quoteCredit                  // oldin to'langan, lekin yetkazilmagan buyurtma bor
+	// quoteFree — bepul urinish (hozircha o'chirilgan — barcha ishlar pullik)
 )
 
 // quote — buyurtma narxi.
@@ -230,8 +235,9 @@ type quote struct {
 // line tasdiqlash xulosasidagi narx qatori.
 func (q *quote) line() string {
 	switch q.mode {
-	case quoteFree:
-		return "💰 <b>Narx:</b> 🎁 Bepul (sinov imkoniyati)"
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// case quoteFree:
+	// 	return "💰 <b>Narx:</b> 🎁 Bepul (sinov imkoniyati)"
 	case quoteCredit:
 		return "💰 <b>Narx:</b> ✅ Oldin to'langan"
 	}
@@ -260,13 +266,14 @@ func (h *Handler) quote(ctx context.Context, s *storage.Session, u *storage.User
 		q.mode, q.credit = quoteCredit, credit
 		return q, nil
 	}
-	used, err := h.billing.CountFreeUsed(ctx, u.ID, kind)
-	if err != nil {
-		return nil, err
-	}
-	if used < h.freeLimit(kind) {
-		q.mode = quoteFree
-	}
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// used, err := h.billing.CountFreeUsed(ctx, u.ID, kind)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// if used < h.freeLimit(kind) {
+	// 	q.mode = quoteFree
+	// }
 	return q, nil
 }
 
@@ -317,15 +324,16 @@ func (h *Handler) authorize(ctx context.Context, c tele.Context, s *storage.Sess
 		}
 		s.OrderID = &o.ID
 		note = "✅ Oldin to'langan buyurtmangiz hisobidan."
-	case quoteFree:
-		now := time.Now().UTC()
-		o := newOrder(u, s, q.kind, 0)
-		o.IsFree, o.IsPaid, o.Status, o.PaidAt = true, true, storage.OrderPaid, &now
-		if err := h.billing.CreateOrder(ctx, o); err != nil {
-			return false, "", err
-		}
-		s.OrderID = &o.ID
-		note = "🎁 Bepul sinov imkoniyatidan foydalanildi."
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// case quoteFree:
+	// 	now := time.Now().UTC()
+	// 	o := newOrder(u, s, q.kind, 0)
+	// 	o.IsFree, o.IsPaid, o.Status, o.PaidAt = true, true, storage.OrderPaid, &now
+	// 	if err := h.billing.CreateOrder(ctx, o); err != nil {
+	// 		return false, "", err
+	// 	}
+	// 	s.OrderID = &o.ID
+	// 	note = "🎁 Bepul sinov imkoniyatidan foydalanildi."
 	default:
 		o := newOrder(u, s, q.kind, q.price)
 		if err := h.billing.CreateOrder(ctx, o); err != nil {
@@ -396,14 +404,17 @@ func orderLabel(workType, kind string) string {
 }
 
 // paymentText to'lov ko'rsatmasi: buyurtma, summa, karta va chek yuborish tartibi.
+// intro — birinchi marta ko'rsatilmoqda (bepul urinishlar o'chirilgani uchun
+// hozircha matnga ta'sir qilmaydi).
 func (h *Handler) paymentText(o *storage.Order, intro bool) string {
 	p := h.opts.Payment
 	var b strings.Builder
 	b.WriteString("💳 <b>To'lov</b>\n\n")
-	if intro && h.freeLimit(o.Kind) > 0 {
-		fmt.Fprintf(&b, "Bepul sinov imkoniyatidan foydalanib bo'lgansiz (har bir foydalanuvchiga %d ta rasmli va %d ta rasmsiz ish bepul beriladi).\n\n",
-			p.FreePhoto, p.FreePlain)
-	}
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// if intro && h.freeLimit(o.Kind) > 0 {
+	// 	fmt.Fprintf(&b, "Bepul sinov imkoniyatidan foydalanib bo'lgansiz (har bir foydalanuvchiga %d ta rasmli va %d ta rasmsiz ish bepul beriladi).\n\n",
+	// 		p.FreePhoto, p.FreePlain)
+	// }
 	fmt.Fprintf(&b, "🧾 <b>Buyurtma #%d:</b> %s\n", o.ID, html.EscapeString(orderLabel(o.WorkType, o.Kind)))
 	fmt.Fprintf(&b, "💰 <b>Summa:</b> %s", formatSum(o.Price))
 	switch {

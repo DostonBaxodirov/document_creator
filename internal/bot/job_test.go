@@ -143,7 +143,9 @@ func (a gateDocAI) GenerateDocument(ctx context.Context, req ai.DocumentRequest)
 }
 
 // blockingBilling — FindCredit release yopilguncha to'xtab turadigan ombor
-// (onConfirm to'lovni tekshirayotgan payt).
+// (onConfirm to'lovni tekshirayotgan payt). Bepul urinishlar o'chirilgani
+// uchun generatsiya darhol boshlanishi uchun FindCredit oldin to'langan
+// (yetkazilmagan) buyurtmani qaytaradi.
 type blockingBilling struct {
 	BillingStore
 	entered chan struct{}
@@ -157,13 +159,18 @@ func (b *blockingBilling) EnsureUser(_ context.Context, telegramID int64, userna
 	return &storage.User{ID: 1, TelegramUserID: telegramID, Username: username}, nil
 }
 
-func (b *blockingBilling) FindCredit(context.Context, uint, string, int) (*storage.Order, error) {
+func (b *blockingBilling) FindCredit(_ context.Context, userID uint, kind string, price int) (*storage.Order, error) {
 	close(b.entered)
 	<-b.release
-	return nil, nil
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	o := &storage.Order{ID: uint(len(b.orders) + 1), UserID: userID, Kind: kind, Price: price,
+		IsPaid: true, Status: storage.OrderPaid}
+	b.orders = append(b.orders, o)
+	return o, nil
 }
 
-func (b *blockingBilling) CountFreeUsed(context.Context, uint, string) (int, error) { return 0, nil }
+func (b *blockingBilling) SaveOrder(context.Context, *storage.Order) error { return nil }
 
 func (b *blockingBilling) CreateOrder(_ context.Context, o *storage.Order) error {
 	b.mu.Lock()
@@ -295,7 +302,7 @@ func TestCancelDuringConfirmStopsJob(t *testing.T) {
 		MaxConcurrentJobs: 1,
 		JobTimeout:        5 * time.Second,
 		Billing:           billing,
-		Payment:           PaymentOptions{Enabled: true, PricePage: 200, PriceDocument: 7000, FreePhoto: 1, FreePlain: 1},
+		Payment:           PaymentOptions{Enabled: true, PricePage: 200, PriceDocument: 7000},
 	})
 	h.bot = b
 

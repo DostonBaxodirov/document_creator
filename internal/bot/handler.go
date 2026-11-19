@@ -107,7 +107,7 @@ type Options struct {
 	// Verifier — chekni o'qiydigan AI (ixtiyoriy). nil bo'lsa, barcha cheklar
 	// admin tekshiruviga yuboriladi.
 	Verifier ReceiptVerifier
-	// Payment — narxlar, bepul urinishlar, karta va admin paroli.
+	// Payment — narxlar, karta va admin paroli (bepul urinishlar hozircha o'chirilgan).
 	Payment PaymentOptions
 
 	// Custom — AI maxsus dizayn tariflari (config.Tariff* → sozlamalar).
@@ -846,7 +846,8 @@ func (h *Handler) onConfirm(c tele.Context) error {
 		return err
 	}
 
-	// To'lov: bepul urinish, oldin to'langan buyurtma yoki to'lov so'rash.
+	// To'lov: oldin to'langan buyurtma yoki to'lov so'rash (bepul urinishlar
+	// hozircha o'chirilgan — barcha ishlar pullik).
 	note := ""
 	if h.paymentsOn() {
 		proceed, n, err := h.authorize(ctx, c, s)

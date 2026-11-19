@@ -276,8 +276,9 @@ type LimitsConfig struct {
 	MaxPages  int
 }
 
-// PaymentConfig — pullik xizmat sozlamalari: narxlar, bepul urinishlar,
-// to'lov kartasi, chekni AI orqali tekshirish va admin paroli.
+// PaymentConfig — pullik xizmat sozlamalari: narxlar, to'lov kartasi, chekni
+// AI orqali tekshirish va admin paroli. Bepul urinishlar (FREE_PHOTO,
+// FREE_PLAIN) hozircha o'chirilgan — barcha ishlar pullik.
 type PaymentConfig struct {
 	Enabled    bool   // false bo'lsa — barcha ishlar bepul (to'lov so'ralmaydi)
 	CardNumber string // to'lov qabul qilinadigan karta raqami (foydalanuvchiga ko'rsatiladi)
@@ -288,8 +289,9 @@ type PaymentConfig struct {
 	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd narxi, so'mda
 	PriceDocument   int // amaliy topshiriq (Word) narxi, so'mda (qat'iy)
 	PricePage       int // mustaqil ish va referat: bitta sahifa narxi, so'mda
-	FreePhoto       int // har bir foydalanuvchiga beriladigan bepul rasmli urinishlar soni
-	FreePlain       int // bepul rasmsiz urinishlar soni
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// FreePhoto       int // har bir foydalanuvchiga beriladigan bepul rasmli urinishlar soni
+	// FreePlain       int // bepul rasmsiz urinishlar soni
 
 	// Chekni o'qish uchun OpenAI vision modeli. API kaliti va manzili
 	// AIConfig dan (OPENAI_API_KEY, OPENAI_BASE_URL) olinadi.
@@ -332,8 +334,9 @@ func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
 		// Eski .env lar uchun: PRICE_DOCUMENT berilmasa, PRICE_PLAIN olinadi.
 		PriceDocument: p.int("PRICE_DOCUMENT", p.int("PRICE_PLAIN", 7000)),
 		PricePage:     p.int("PRICE_PAGE", 200),
-		FreePhoto:     p.int("FREE_PHOTO", 1),
-		FreePlain:     p.int("FREE_PLAIN", 1),
+		// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+		// FreePhoto:     p.int("FREE_PHOTO", 1),
+		// FreePlain:     p.int("FREE_PLAIN", 1),
 		VisionModel:   p.str("PAYMENT_VISION_MODEL", ai.OpenAIModel),
 		CheckTimeout:  p.duration("PAYMENT_CHECK_TIMEOUT", 60*time.Second),
 		AdminPassword: p.str("ADMIN_PASSWORD", ""),
@@ -353,9 +356,10 @@ func (c PaymentConfig) validate() []error {
 	if c.PriceSlidePhoto <= 0 || c.PriceSlidePlain <= 0 || c.PriceDocument <= 0 || c.PricePage <= 0 {
 		add("PRICE_SLIDE_PHOTO, PRICE_SLIDE_PLAIN, PRICE_DOCUMENT va PRICE_PAGE musbat bo'lishi kerak")
 	}
-	if c.FreePhoto < 0 || c.FreePlain < 0 {
-		add("FREE_PHOTO va FREE_PLAIN manfiy bo'lishi mumkin emas")
-	}
+	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+	// if c.FreePhoto < 0 || c.FreePlain < 0 {
+	// 	add("FREE_PHOTO va FREE_PLAIN manfiy bo'lishi mumkin emas")
+	// }
 	if utf8.RuneCountInString(c.AdminPassword) < 8 {
 		add("PAYMENT_ENABLED=true uchun ADMIN_PASSWORD majburiy (kamida 8 belgi)")
 	}

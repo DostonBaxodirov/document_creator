@@ -69,7 +69,7 @@ Kichik taqdimotda (mazmunli slaydlar ≤ 6) 3–4-bosqichlar bitta so'rovda baja
   slaydlarga teng oraliqda taqsimlanadi — avval rasm yon panelga sig'adigan slaydlar.
 - Rasm modeli ishlamasa boshqa sifatga **o'tilmaydi** (xarajat oldindan ma'lum bo'lishi uchun);
   rasm o'rnida dizaynning bezakli paneli chiziladi.
-- AI maxsus dizayn bepul urinishlarga kirmaydi.
+- Bepul urinishlar hozircha butunlay o'chirilgan — AI maxsus dizayn ham, tayyor dizaynlar ham pullik.
 
 ---
 

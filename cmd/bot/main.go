@@ -169,9 +169,10 @@ func run() error {
 			PriceSlidePlain: cfg.Payment.PriceSlidePlain,
 			PriceDocument:   cfg.Payment.PriceDocument,
 			PricePage:       cfg.Payment.PricePage,
-			FreePhoto:       cfg.Payment.FreePhoto,
-			FreePlain:       cfg.Payment.FreePlain,
-			AdminPassword:   cfg.Payment.AdminPassword,
+			// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
+			// FreePhoto:       cfg.Payment.FreePhoto,
+			// FreePlain:       cfg.Payment.FreePlain,
+			AdminPassword: cfg.Payment.AdminPassword,
 		},
 		Custom: customTariffs,
 		Stats:  stats,

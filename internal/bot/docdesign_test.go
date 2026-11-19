@@ -76,7 +76,7 @@ func TestDocTariffs(t *testing.T) {
 		tariffs[k] = v
 	}
 	h := NewHandler(context.Background(), nil, nil, Builders{Papers: docx}, zap.NewNop(), Options{
-		Billing: &fakeBilling{used: map[string]int{}},
+		Billing: &fakeBilling{},
 		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
 		Custom:  tariffs,
 	})
@@ -101,9 +101,6 @@ func TestDocTariffs(t *testing.T) {
 	}
 	if l := orderLabel(s.WorkType, h.kindOf(s)); l != "Referat, ✨ Maxsus dizayn — 🥇 Premium" {
 		t.Errorf("buyurtma nomi: %q", l)
-	}
-	if h.freeLimit(h.kindOf(s)) != 0 {
-		t.Error("maxsus dizaynga bepul urinish yo'q")
 	}
 }
 
