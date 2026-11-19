@@ -22,9 +22,11 @@ func slidesText(files map[string][]byte) string {
 // TestDeckLabelsFollowLanguage — titul va yakuniy slayd yozuvlari taqdimot
 // tilida chiqadi; til berilmasa — avvalgidek o'zbekcha.
 func TestDeckLabelsFollowLanguage(t *testing.T) {
+	t.Parallel()
 	g := newTestPPTX(t)
 	for _, info := range Themes() {
 		t.Run(info.ID, func(t *testing.T) {
+			t.Parallel()
 			d := SampleDeck(info.ID)
 			d.Lang = "ru"
 			d.WorkType = "ПРЕЗЕНТАЦИЯ"

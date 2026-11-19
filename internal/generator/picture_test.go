@@ -41,12 +41,14 @@ func checkPictures(t *testing.T, files map[string][]byte, slide string) (pics in
 }
 
 func TestPhotoThemes(t *testing.T) {
+	t.Parallel()
 	g := newTestPPTX(t)
 	for _, info := range Themes() {
 		if !info.Photos {
 			continue
 		}
 		t.Run(info.ID, func(t *testing.T) {
+			t.Parallel()
 			d := SampleDeck(info.ID)
 			files := buildAndRead(t, g, d)
 			checkWellFormed(t, files)
@@ -185,6 +187,32 @@ func TestNewPicture(t *testing.T) {
 	}
 }
 
+// TestSamplePictureCache — bir xil argumentlar bilan chaqirilganda JPEG
+// baytlari keshdan olinadi (umumiy), lekin har safar yangi *Picture
+// qaytadi: .pptx da rasmlar ko'rsatkich bo'yicha birlashtiriladi.
+func TestSamplePictureCache(t *testing.T) {
+	a := SamplePicture(64, 48, "0B4F6C", "F4A259")
+	b := SamplePicture(64, 48, "0B4F6C", "F4A259")
+	if a == nil || b == nil {
+		t.Fatal("SamplePicture nil qaytardi")
+	}
+	if a == b {
+		t.Fatal("har chaqiruvda yangi *Picture qaytishi kerak")
+	}
+	if len(a.Data) == 0 || &a.Data[0] != &b.Data[0] {
+		t.Error("bir xil argumentlar uchun JPEG baytlari keshdan olinishi kerak")
+	}
+	if a.Ext != "jpeg" || b.W != 64 || b.H != 48 {
+		t.Errorf("rasm maydonlari noto'g'ri: %+v", b)
+	}
+	if c := SamplePicture(48, 64, "0B4F6C", "F4A259"); &c.Data[0] == &a.Data[0] || c.W != 48 || c.H != 64 {
+		t.Error("boshqa o'lcham uchun alohida rasm kerak")
+	}
+	if got, err := NewPicture(b.Data); err != nil || got.W != 64 || got.H != 48 {
+		t.Errorf("keshdagi baytlar yaroqli JPEG emas: %+v, %v", got, err)
+	}
+}
+
 func TestSlideTakesPhoto(t *testing.T) {
 	items := func(n int) []Item {
 		out := make([]Item, n)
@@ -245,6 +273,7 @@ func TestPhotoPrompt(t *testing.T) {
 // TestBannerPhotoSlides — keng maketli slaydda rasm tepadagi bannerda
 // chiziladi: slaydda bitta rasm bor va u slayd kengligida (yon panel emas).
 func TestBannerPhotoSlides(t *testing.T) {
+	t.Parallel()
 	g := newTestPPTX(t)
 	for _, id := range []string{ThemeJournal, ThemeNature, ThemeOcean, ThemeSunset, ThemePanorama} {
 		d := SampleDeck(id)

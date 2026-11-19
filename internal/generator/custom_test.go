@@ -11,6 +11,7 @@ import (
 // sarlavha, kartochka va motiv varianti) to'g'ri .pptx bo'lib yig'iladi;
 // rasmlar titulda va tanlangan slaydlarda bor.
 func TestCustomDesignsBuild(t *testing.T) {
+	t.Parallel()
 	g := newTestPPTX(t)
 	specs := SampleCustomSpecs()
 	// Har bir variantni kamida bir marta sinash uchun qo'shimcha kombinatsiyalar.
@@ -29,6 +30,7 @@ func TestCustomDesignsBuild(t *testing.T) {
 	}
 	for _, sp := range specs {
 		t.Run(sp.Name, func(t *testing.T) {
+			t.Parallel()
 			d := SampleCustomDeck(sp)
 			files := buildAndRead(t, g, d)
 			checkWellFormed(t, files)

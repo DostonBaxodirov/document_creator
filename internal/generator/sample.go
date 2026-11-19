@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"sync"
 )
 
 // SampleDeck barcha maketlarni o'z ichiga olgan namunaviy taqdimotni
@@ -107,9 +108,39 @@ func SampleCustomDeck(spec CustomSpec) Deck {
 	return d
 }
 
+// samplePictureKey — namunaviy rasm keshi kaliti: o'lcham va ikki rang.
+type samplePictureKey struct {
+	w, h     int
+	from, to string
+}
+
+// samplePictureCache — tayyor JPEG baytlari (samplePictureKey -> []byte).
+// Kalitlar soni kichik (dizaynlar ranglari × bir nechta o'lcham), shuning
+// uchun kesh chegaralanmagan; baytlar faqat o'qiladi.
+var samplePictureCache sync.Map
+
 // SamplePicture namunaviy rasm yaratadi: ikki rang orasidagi diagonal
 // gradient va yumshoq doiralar (JPEG). Faqat preview va testlar uchun.
+// JPEG baytlari (w, h, from, to) bo'yicha keshlanadi, lekin har chaqiruvda
+// YANGI *Picture qaytariladi: .pptx yig'ishda rasmlar ko'rsatkich bo'yicha
+// birlashtiriladi (assemble, countPictures), shuning uchun turli chaqiruvlar
+// natijalari bitta rasm deb hisoblanmasligi kerak. Data umumiy va faqat
+// o'qiladi — uni o'zgartirmang.
 func SamplePicture(w, h int, from, to string) *Picture {
+	key := samplePictureKey{w, h, from, to}
+	data, ok := samplePictureCache.Load(key)
+	if !ok {
+		encoded, err := encodeSamplePicture(w, h, from, to)
+		if err != nil {
+			return nil
+		}
+		data, _ = samplePictureCache.LoadOrStore(key, encoded)
+	}
+	return &Picture{Data: data.([]byte), Ext: "jpeg", W: w, H: h}
+}
+
+// encodeSamplePicture namunaviy rasmni chizadi va JPEG'ga o'giradi.
+func encodeSamplePicture(w, h int, from, to string) ([]byte, error) {
 	c1, c2 := hexColor(from), hexColor(to)
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	cx, cy, r := float64(w)*0.68, float64(h)*0.38, float64(min(w, h))*0.32
@@ -126,9 +157,11 @@ func SamplePicture(w, h int, from, to string) *Picture {
 	}
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
-		return nil
+		return nil, err
 	}
-	return &Picture{Data: buf.Bytes(), Ext: "jpeg", W: w, H: h}
+	// Ortiqcha sig'im kesiladi: kimdir append qilsa, umumiy massivga emas,
+	// yangi nusxaga yozadi.
+	return slices.Clip(buf.Bytes()), nil
 }
 
 func hexColor(s string) color.RGBA {

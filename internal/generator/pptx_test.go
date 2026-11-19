@@ -122,9 +122,11 @@ func buildAndRead(t *testing.T, g *PPTX, d Deck) map[string][]byte {
 }
 
 func TestBuildAllThemes(t *testing.T) {
+	t.Parallel()
 	g := newTestPPTX(t)
 	for _, info := range Themes() {
 		t.Run(info.ID, func(t *testing.T) {
+			t.Parallel()
 			d := SampleDeck(info.ID)
 			files := buildAndRead(t, g, d)
 			checkWellFormed(t, files)
@@ -242,6 +244,7 @@ func make6() []Item {
 // TestThemeStructure — har bir dizaynning o'z tuzilishi bor: imzo maketlari
 // ma'lum, asosiy maketlar doim mavjud va namunaviy taqdimotda ko'rinadi.
 func TestThemeStructure(t *testing.T) {
+	t.Parallel()
 	known := map[string]bool{}
 	for _, l := range append(slices.Clone(coreLayouts), LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement) {
 		known[l] = true
@@ -308,10 +311,12 @@ func TestContentSlides(t *testing.T) {
 // TestLongTopic — 500 belgilik mavzu (bot chegarasi) barcha dizaynlarda
 // titul va yakuniy slaydga yoziladi.
 func TestLongTopic(t *testing.T) {
+	t.Parallel()
 	g := newTestPPTX(t)
 	topic := strings.Repeat("Raqamli iqtisodiyot sharoitida kichik biznes ", 12)[:500]
 	for _, info := range Themes() {
 		t.Run(info.ID, func(t *testing.T) {
+			t.Parallel()
 			d := SampleDeck(info.ID)
 			d.Topic = topic
 			files := buildAndRead(t, g, d)
