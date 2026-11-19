@@ -2,8 +2,12 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 func TestStatsRepository(t *testing.T) {
@@ -149,6 +153,194 @@ func TestStatsRepository(t *testing.T) {
 	}
 	if len(week) != 2 || week[0].UserID != 3 || week[1].UserID != 2 {
 		t.Errorf("7 kunlik ro'yxat: %+v", week)
+	}
+}
+
+// tashkent — bot ishlatadigan mintaqa (payment.Tashkent bilan bir xil: UTC+5).
+var tashkent = time.FixedZone("UZT", 5*60*60)
+
+// mkSession sessiyani berilgan yaratilish vaqti bilan yozadi.
+func mkSession(t *testing.T, db *gorm.DB, userID int64, created time.Time) {
+	t.Helper()
+	s := Session{UserID: userID, ChatID: userID, State: "idle", CreatedAt: created, UpdatedAt: created}
+	if err := db.Create(&s).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecordVisitIdempotent(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	r := NewStatsRepository(db, tashkent)
+
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 11, day, hour, minute, 0, 0, tashkent) }
+	for _, v := range []struct {
+		user int64
+		at   time.Time
+	}{
+		{1, at(18, 0, 0)}, // kun boshi (UTC bo'yicha hali 17-noyabr 19:00)
+		{1, at(18, 10, 0)},
+		{1, at(18, 10, 0)}, // aynan takror
+		{1, at(18, 23, 59)},
+		{1, at(18, 0, 0).UTC()}, // shu payt UTC da berilgan
+		{1, at(17, 23, 59)},     // oldingi kun
+		{1, at(19, 0, 0)},       // keyingi kun
+		{2, at(18, 12, 0)},
+	} {
+		if err := r.RecordVisit(ctx, v.user, v.at); err != nil {
+			t.Fatalf("RecordVisit(%d, %v): %v", v.user, v.at, err)
+		}
+	}
+
+	var visits []Visit
+	if err := db.Order("day, user_id").Find(&visits).Error; err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range visits {
+		got = append(got, fmt.Sprintf("%s/%d", v.Day.Format(time.DateOnly), v.UserID))
+	}
+	want := []string{"2026-11-17/1", "2026-11-18/1", "2026-11-18/2", "2026-11-19/1"}
+	if !slices.Equal(got, want) {
+		t.Errorf("tashriflar: %v, kutilgan %v", got, want)
+	}
+}
+
+func TestPeriodStatsBoundaries(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	r := NewStatsRepository(db, tashkent)
+
+	since := time.Date(2026, 11, 18, 0, 0, 0, 0, tashkent)
+	justBefore := since.Add(-time.Microsecond)
+
+	// Yangi foydalanuvchilar: since dan oldin (1) — davrga kirmaydi, aynan since (2) — kiradi.
+	mkSession(t, db, 1, justBefore)
+	mkSession(t, db, 2, since)
+	mkSession(t, db, 3, since.Add(5*time.Hour))
+
+	// Faol foydalanuvchilar: 1 — ikkala kunda, 2 — davrda ikki kun (bir marta sanaladi),
+	// 4 — faqat davrdan oldin.
+	for _, v := range []struct {
+		user int64
+		at   time.Time
+	}{
+		{1, justBefore}, {1, since.Add(time.Hour)},
+		{2, since}, {2, since.AddDate(0, 0, 1)},
+		{4, justBefore},
+	} {
+		if err := r.RecordVisit(ctx, v.user, v.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Yetkazilgan ishlar: 10 — davrda ikki ish, 11 — davrdan oldin,
+	// 12 — yetkazilmagan, 13 — davrda bitta ish.
+	for _, o := range []struct {
+		tg        int64
+		delivered *time.Time
+	}{
+		{10, ptr(since)}, {10, ptr(since.Add(time.Hour))},
+		{11, ptr(justBefore)},
+		{12, nil},
+		{13, ptr(since.AddDate(0, 0, 2))},
+	} {
+		status := OrderDelivered
+		if o.delivered == nil {
+			status = OrderPaid
+		}
+		ord := Order{UserID: 1, TelegramUserID: o.tg, WorkType: "presentation", Kind: KindPlain,
+			Status: status, DeliveredAt: o.delivered}
+		if err := db.Create(&ord).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	inPeriod := PeriodStats{NewUsers: 2, ActiveUsers: 2, Customers: 2, Delivered: 3}
+	for _, c := range []struct {
+		name  string
+		since *time.Time
+		want  PeriodStats
+	}{
+		{"since Toshkent", ptr(since), inPeriod},
+		{"since UTC", ptr(since.UTC()), inPeriod},
+		{"barcha vaqt", nil, PeriodStats{NewUsers: 3, ActiveUsers: 3, Customers: 3, Delivered: 4}},
+	} {
+		got, err := r.PeriodStats(ctx, c.since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("%s: %+v, kutilgan %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// Kunlar chegarasi Toshkent vaqtida: 18-noyabr = 17-noyabr 19:00 UTC dan
+// 18-noyabr 19:00 UTC gacha.
+func TestDailyStatsTashkentBoundaries(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	r := NewStatsRepository(db, tashkent)
+
+	utc := func(day, hour, minute, sec, usec int) time.Time {
+		return time.Date(2026, 11, day, hour, minute, sec, usec*1000, time.UTC)
+	}
+	for _, s := range []struct {
+		user    int64
+		created time.Time
+	}{
+		{1, utc(17, 18, 59, 59, 0)},      // Toshkent: 17-noyabr 23:59:59 — oynadan tashqari
+		{2, utc(17, 19, 0, 0, 0)},        // 18-noyabr 00:00
+		{3, utc(18, 18, 59, 59, 999999)}, // 18-noyabr 23:59:59.999999
+		{4, utc(18, 19, 0, 0, 0)},        // 19-noyabr 00:00
+		{5, utc(20, 12, 0, 0, 0)},        // 20-noyabr 17:00
+		{6, utc(22, 12, 0, 0, 0)},        // oynadan keyin
+	} {
+		mkSession(t, db, s.user, s.created)
+		if err := r.RecordVisit(ctx, s.user, s.created); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 1-foydalanuvchi 18-noyabr 23:30 da, 2-foydalanuvchi 19-noyabr 10:00 da yana kirgan.
+	for _, v := range []struct {
+		user int64
+		at   time.Time
+	}{{1, utc(18, 18, 30, 0, 0)}, {2, utc(19, 5, 0, 0, 0)}} {
+		if err := r.RecordVisit(ctx, v.user, v.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := []DayStats{
+		{Day: time.Date(2026, 11, 18, 0, 0, 0, 0, tashkent), NewUsers: 2, ActiveUsers: 3},
+		{Day: time.Date(2026, 11, 19, 0, 0, 0, 0, tashkent), NewUsers: 1, ActiveUsers: 2},
+		{Day: time.Date(2026, 11, 20, 0, 0, 0, 0, tashkent), NewUsers: 1, ActiveUsers: 1},
+	}
+	// from kun o'rtasi yoki UTC da berilsa ham Toshkent kuni boshidan hisoblanadi.
+	for name, from := range map[string]time.Time{
+		"Toshkent 15:00":                 time.Date(2026, 11, 18, 15, 0, 0, 0, tashkent),
+		"UTC 17-noyabr 20:00":            utc(17, 20, 0, 0, 0),
+		"Toshkent kun boshi (UTC 19:00)": utc(17, 19, 0, 0, 0),
+	} {
+		days, err := r.DailyStats(ctx, from, len(want))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(days) != len(want) {
+			t.Fatalf("%s: %d kun, kutilgan %d", name, len(days), len(want))
+		}
+		for i, w := range want {
+			g := days[i]
+			if _, off := g.Day.Zone(); !g.Day.Equal(w.Day) || off != 5*60*60 ||
+				g.NewUsers != w.NewUsers || g.ActiveUsers != w.ActiveUsers {
+				t.Errorf("%s, %d-kun: %+v, kutilgan %+v", name, i, g, w)
+			}
+		}
+	}
+
+	if days, err := r.DailyStats(ctx, utc(18, 0, 0, 0, 0), 0); err != nil || days != nil {
+		t.Errorf("days=0: %v %v, kutilgan nil", days, err)
 	}
 }
 

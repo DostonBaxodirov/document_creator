@@ -3,37 +3,12 @@ package storage
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
-
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 )
 
-// Integratsion test: haqiqiy PostgreSQL talab qiladi. Ishga tushirish:
-//
-//	TEST_DATABASE_DSN="postgres://postgres:postgres@localhost:55432/test?sslmode=disable" go test ./internal/storage/
-//
-// Diqqat: test jadvallarni tozalaydi — faqat sinov bazasida ishlating.
-func testDB(t *testing.T) *gorm.DB {
-	dsn := os.Getenv("TEST_DATABASE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_DSN berilmagan")
-	}
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrator().DropTable(&Visit{}, &Payment{}, &Order{}, &User{}, &Session{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(db); err != nil {
-		t.Fatal(err)
-	}
-	return db
-}
+// Integratsion testlar: haqiqiy PostgreSQL talab qiladi (testDB va ishga
+// tushirish tartibi — main_test.go da).
 
 func TestBillingFlow(t *testing.T) {
 	db := testDB(t)

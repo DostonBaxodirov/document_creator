@@ -2,7 +2,7 @@
 
 `main` branchga har bir push'da GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)):
 
-1. **Testlar** — `go vet` va `go test`. Xato bo'lsa, deploy qilinmaydi.
+1. **Testlar** — `go vet` va `go test -race` (PostgreSQL bilan). Xato bo'lsa, deploy qilinmaydi.
 2. **Docker image** — GitHub serverida yig'iladi va `ghcr.io/<owner>/<repo>:<commit>` ga yuklanadi
    (VPS da kod kompilyatsiya qilinmaydi, shuning uchun kichik VPS ham yetadi).
 3. **Deploy** — GitHub environment'dagi sozlamalardan `.env` yig'adi
@@ -11,6 +11,17 @@
    Bot 25 soniya ichida qulasa — **avtomatik oldingi versiyaga qaytariladi** va Actions'da xato ko'rsatiladi.
 
 Pull request'larda faqat testlar ishlaydi.
+
+### Testlarni lokal ishga tushirish
+
+`internal/storage` testlari haqiqiy PostgreSQL talab qiladi; `TEST_DATABASE_URL` berilmasa, ular o'tkazib yuboriladi.
+Har bir ishga tushirishda alohida `test_xxx` sxemasi yaratiladi va oxirida o'chiriladi — boshqa ma'lumotlarga tegilmaydi.
+
+```bash
+docker run --rm -d --name test-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres postgres:17-alpine
+TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable" go test -race ./internal/storage/...
+docker stop test-pg   # tugagach
+```
 
 ---
 
