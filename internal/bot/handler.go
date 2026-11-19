@@ -821,8 +821,13 @@ func (h *Handler) onRestart(c tele.Context) error {
 }
 
 // onConfirm ma'lumotlar tasdiqlanganda (yoki "Qayta urinish" bosilganda) generatsiyani boshlaydi.
+//
+// Butun o'tish (CAS, o'qish, to'lov, saqlash) va vazifani ro'yxatga olish
+// foydalanuvchi qulfi ostida bajariladi: aks holda shu oraliqda kelgan
+// /cancel "generating" holatini ko'radi-yu, vazifani topa olmaydi.
 func (h *Handler) onConfirm(c tele.Context) error {
 	userID := c.Sender().ID
+	defer h.lock(userID)()
 	ctx, cancel := requestContext()
 	defer cancel()
 
@@ -862,8 +867,7 @@ func (h *Handler) onConfirm(c tele.Context) error {
 	}
 	h.edit(c, summaryText(s)+note+"\n\n"+waitMsg)
 
-	h.wg.Add(1)
-	go h.runJob(s)
+	h.startJob(s)
 	return nil
 }
 
@@ -871,22 +875,34 @@ func (h *Handler) onConfirm(c tele.Context) error {
 // Generatsiya vazifasi
 // ---------------------------------------------------------------------------
 
+// startJob vazifani h.running ga yozadi va uni alohida goroutine'da
+// ishga tushiradi. Foydalanuvchi qulfi ostida chaqirilishi shart: qulf
+// ochilganda "generating" holatidagi har bir sessiyaning vazifasi ro'yxatda
+// bo'ladi va /cancel uni albatta topadi.
+func (h *Handler) startJob(s *storage.Session) {
+	// Kontekst faqat bekor qilish uchun: JobTimeout navbatdan joy olingach
+	// (generate ichida) qo'yiladi, navbatda kutilgan vaqt hisobga kirmaydi.
+	ctx, cancel := context.WithCancel(h.jobsCtx)
+	j := &job{cancel: cancel}
+	h.running.Store(s.UserID, j)
+	h.wg.Add(1)
+	go h.runJob(ctx, j, s)
+}
+
 // runJob AI → fayl (PPTX/DOCX) → Telegram zanjirini alohida goroutine'da bajaradi.
-func (h *Handler) runJob(s *storage.Session) {
+// Vazifa (j) startJob da ro'yxatga olingan; tugaganda ro'yxatdan o'chiriladi.
+func (h *Handler) runJob(ctx context.Context, j *job, s *storage.Session) {
 	defer h.wg.Done()
+	defer j.cancel()
+	// Faqat o'z yozuvimizni o'chiramiz: shu orada foydalanuvchi yangi vazifa
+	// boshlagan bo'lsa (masalan, xatodan keyin "Qayta urinish"), u saqlanib qoladi.
+	defer h.running.CompareAndDelete(s.UserID, j)
 
 	chat := &tele.Chat{ID: s.ChatID}
 	log := h.log.With(
 		zap.Int64("user_id", s.UserID),
 		zap.String("work_type", s.WorkType),
 		zap.Int("volume", s.Volume))
-
-	ctx, cancel := context.WithTimeout(h.jobsCtx, h.opts.JobTimeout)
-	defer cancel()
-
-	j := &job{cancel: cancel}
-	h.running.Store(s.UserID, j)
-	defer h.running.Delete(s.UserID)
 
 	// Goroutine ichidagi panic butun dasturni to'xtatmasligi va foydalanuvchi
 	// "generating" holatida qotib qolmasligi uchun.
@@ -919,6 +935,7 @@ func (h *Handler) runJob(s *storage.Session) {
 // u qaytariladi (o'chirish uchun).
 func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Session, log *zap.Logger) (*output, error) {
 	// 1. Navbat: bo'sh joy bo'lmasa, foydalanuvchini ogohlantirib kutamiz.
+	// Kutish vaqti cheklanmaydi — faqat bekor qilish (/cancel yoki to'xtash).
 	select {
 	case h.slots <- struct{}{}:
 	default:
@@ -930,6 +947,14 @@ func (h *Handler) generate(ctx context.Context, chat *tele.Chat, s *storage.Sess
 		}
 	}
 	defer func() { <-h.slots }()
+	// Joy bo'shagan paytda vazifa bekor qilingan bo'lishi mumkin.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// JobTimeout navbatdan joy olingandan keyin hisoblanadi.
+	ctx, cancel := context.WithTimeout(ctx, h.opts.JobTimeout)
+	defer cancel()
 
 	stopAction := h.keepUploadAction(ctx, chat)
 	defer stopAction()

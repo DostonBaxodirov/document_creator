@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 
@@ -39,7 +40,18 @@ func fakeTelegram(t *testing.T, failCopyFor string) (*tele.Bot, func() []apiCall
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		params := map[string]any{}
-		_ = json.NewDecoder(r.Body).Decode(&params)
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			// Fayl yuborish (sendDocument va h.k.) multipart shaklida keladi.
+			if err := r.ParseMultipartForm(32 << 20); err == nil {
+				for k, v := range r.MultipartForm.Value {
+					if len(v) > 0 {
+						params[k] = v[0]
+					}
+				}
+			}
+		} else {
+			_ = json.NewDecoder(r.Body).Decode(&params)
+		}
 		method := path.Base(r.URL.Path)
 		mu.Lock()
 		calls = append(calls, apiCall{method, params})

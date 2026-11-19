@@ -776,8 +776,8 @@ func (h *Handler) startPaidJob(userID int64, orderID uint, notice string) error 
 	if _, err := h.bot.Send(chat, notice+"\n\n"+waitMsg); err != nil {
 		h.log.Warn("failed to send payment approved message", zap.Int64("user_id", userID), zap.Error(err))
 	}
-	h.wg.Add(1)
-	go h.runJob(s)
+	// Vazifa qulf ochilishidan oldin ro'yxatga olinadi (/cancel uni topishi uchun).
+	h.startJob(s)
 	return nil
 }
 
