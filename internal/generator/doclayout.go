@@ -68,7 +68,7 @@ type fontMetrics struct {
 	scale float64 // belgilar kengligi Times New Roman ga nisbatan
 }
 
-// docFontMetrics — sarlavha shriftlari (DocHeadingFonts) o'lchamlari.
+// docFontMetrics — sarlavha shriftlari (design.DocHeadingFonts) o'lchamlari.
 var docFontMetrics = map[string]fontMetrics{
 	"":                  {1.15, 1.00}, // Times New Roman
 	"Times New Roman":   {1.15, 1.00},

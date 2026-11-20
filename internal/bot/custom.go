@@ -291,33 +291,8 @@ func (h *Handler) customDesign(ctx context.Context, progress *progressBoard, log
 		zap.String("background", d.Colors.Background),
 		zap.String("primary", d.Colors.Primary),
 		zap.Duration("took", time.Since(started)))
-	return d, customSpec(d), nil
-}
-
-// customSpec AI dizaynini generator spetsifikatsiyasiga o'giradi (qiymatlarni
-// tekshirish va tuzatish — generator vazifasi).
-func customSpec(d *ai.Design) *generator.CustomSpec {
-	return &generator.CustomSpec{
-		Name:        d.Name,
-		Background:  d.Colors.Background,
-		Surface:     d.Colors.Surface,
-		Primary:     d.Colors.Primary,
-		Secondary:   d.Colors.Secondary,
-		Accent:      d.Colors.Accent,
-		Text:        d.Colors.Text,
-		Muted:       d.Colors.Muted,
-		HeadingFont: d.HeadingFont,
-		BodyFont:    d.BodyFont,
-		Cover:       d.Cover,
-		Header:      d.Header,
-		Cards:       d.Cards,
-		Corners:     d.Corners,
-		Markers:     d.Markers,
-		Motif:       d.Motif,
-		PhotoSide:   d.PhotoSide,
-		PhotoStyle:  d.ImageStyle,
-		Signature:   d.SignatureLayouts,
-	}
+	spec := d.Spec()
+	return d, &spec, nil
 }
 
 // picturePlan — taqdimotga qaysi rasmlar qanday chizilishi.
@@ -404,10 +379,8 @@ func (h *Handler) customDocDesign(ctx context.Context, progress *progressBoard, 
 		zap.String("border", d.Border),
 		zap.String("primary", d.Primary),
 		zap.Duration("took", time.Since(started)))
-	return d, &generator.DocSpec{
-		Name: d.Name, Primary: d.Primary, Accent: d.Accent, HeadingFont: d.HeadingFont,
-		Title: d.Title, Heading: d.Heading, Border: d.Border, Ornament: d.Ornament,
-	}, nil
+	spec := d.Spec()
+	return d, &spec, nil
 }
 
 // customPaper — maxsus dizayndagi Word ish uchun AI natijalari.

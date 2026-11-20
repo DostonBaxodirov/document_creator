@@ -115,7 +115,7 @@ func TestDocFigures(t *testing.T) {
 }
 
 func TestDocSpecNormalization(t *testing.T) {
-	st := (&DocSpec{Primary: "#FFFF00", Accent: "zzz", HeadingFont: "comic sans", Title: "BAND", Heading: "weird", Border: "double", Ornament: ""}).style()
+	st := docSpecStyle(&DocSpec{Primary: "#FFFF00", Accent: "zzz", HeadingFont: "comic sans", Title: "BAND", Heading: "weird", Border: "double", Ornament: ""})
 	if contrast(st.primary, "FFFFFF") < 4.5 {
 		t.Errorf("och sariq rang oq qog'ozda o'qiladigan qilib to'qlashtirilishi kerak: %s", st.primary)
 	}
@@ -125,7 +125,7 @@ func TestDocSpecNormalization(t *testing.T) {
 	if st.title != docTitleBand || st.heading != docHeadingCenter || st.border != docBorderDouble || st.ornament != docOrnamentNone {
 		t.Errorf("variantlar normallashtirilmagan: %+v", st)
 	}
-	if got := (&DocSpec{Primary: "#1F4E79", HeadingFont: "georgia"}).style(); got.primary != "1F4E79" || got.headingFont != "Georgia" {
+	if got := docSpecStyle(&DocSpec{Primary: "#1F4E79", HeadingFont: "georgia"}); got.primary != "1F4E79" || got.headingFont != "Georgia" {
 		t.Errorf("yaroqli qiymatlar saqlanishi kerak: %+v", got)
 	}
 	if !IsDocDesign(DocThemeAcademic) || !IsDocDesign(ThemeCustom) || IsDocDesign("okean") {

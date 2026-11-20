@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 func TestParsePresentation(t *testing.T) {
@@ -138,10 +140,10 @@ func TestImageDescriptions(t *testing.T) {
 		t.Errorf("guruh promptida rasm maydoni yo'q")
 	}
 
-	if s := deckSchema(true, slideLayouts); schemaProp(s, "image") == nil || schemaProp(slideItem(s), "image") == nil {
+	if s := deckSchema(true, design.AllLayouts); schemaProp(s, "image") == nil || schemaProp(slideItem(s), "image") == nil {
 		t.Errorf("rasmli sxemada image maydoni yo'q")
 	}
-	if s := deckSchema(false, slideLayouts); schemaProp(s, "image") != nil || schemaProp(slideItem(s), "image") != nil {
+	if s := deckSchema(false, design.AllLayouts); schemaProp(s, "image") != nil || schemaProp(slideItem(s), "image") != nil {
 		t.Errorf("oddiy sxemada image maydoni bo'lmasligi kerak")
 	}
 }
@@ -240,7 +242,7 @@ func TestConclusionLast(t *testing.T) {
 	if !strings.Contains(buildDeckOutlinePrompt(PresentationRequest{Topic: "T", SlideCount: 10}), `"n" from 1 to 10 without gaps: slide 10 is the conclusion`) {
 		t.Error("reja promptida raqamlash qoidasi yo'q")
 	}
-	if s := slideItem(deckOutlineSchema(false, slideLayouts)); schemaProp(s, "n") == nil {
+	if s := slideItem(deckOutlineSchema(false, design.AllLayouts)); schemaProp(s, "n") == nil {
 		t.Error("reja sxemasida n maydoni yo'q")
 	}
 }

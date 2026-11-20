@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 // Sxemadan qism olish uchun test yordamchilari (topilmasa — nil).
@@ -40,14 +42,14 @@ func slideItem(s map[string]any) map[string]any { return schemaItems(schemaProp(
 // allSchemas — AI'ga yuboriladigan barcha sxemalar (barcha variantlari bilan).
 func allSchemas() map[string]map[string]any {
 	return map[string]map[string]any{
-		"deck":                deckSchema(false, slideLayouts),
-		"deck_images":         deckSchema(true, slideLayouts),
-		"slide":               slideSchema(false, slideLayouts),
-		"slide_images":        slideSchema(true, slideLayouts),
-		"slides_batch":        slidesBatchSchema(false, slideLayouts),
-		"slides_batch_images": slidesBatchSchema(true, slideLayouts),
-		"deck_outline":        deckOutlineSchema(false, slideLayouts),
-		"deck_outline_images": deckOutlineSchema(true, slideLayouts),
+		"deck":                deckSchema(false, design.AllLayouts),
+		"deck_images":         deckSchema(true, design.AllLayouts),
+		"slide":               slideSchema(false, design.AllLayouts),
+		"slide_images":        slideSchema(true, design.AllLayouts),
+		"slides_batch":        slidesBatchSchema(false, design.AllLayouts),
+		"slides_batch_images": slidesBatchSchema(true, design.AllLayouts),
+		"deck_outline":        deckOutlineSchema(false, design.AllLayouts),
+		"deck_outline_images": deckOutlineSchema(true, design.AllLayouts),
 		"outline":             outlineSchema(false),
 		"outline_figures":     outlineSchema(true),
 		"section":             sectionSchema(),
@@ -144,7 +146,7 @@ func TestSchemaPropertyOrder(t *testing.T) {
 	}
 
 	// Ichki obyektlarda ham tartib saqlanadi.
-	raw, err = marshalSchema(deckSchema(true, slideLayouts))
+	raw, err = marshalSchema(deckSchema(true, design.AllLayouts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +160,7 @@ func TestSchemaPropertyOrder(t *testing.T) {
 		}
 	}
 
-	g := geminiSchema(deckOutlineSchema(true, slideLayouts)).(map[string]any)
+	g := geminiSchema(deckOutlineSchema(true, design.AllLayouts)).(map[string]any)
 	if got := g["propertyOrdering"]; !slices.Equal(got.([]string), []string{"title", "subtitle", "slides", "image"}) {
 		t.Errorf("Gemini propertyOrdering = %v", got)
 	}
@@ -169,7 +171,7 @@ func TestSchemaPropertyOrder(t *testing.T) {
 
 // TestGeminiSchemaCopies — Gemini moslamasi asl sxemani o'zgartirmaydi.
 func TestGeminiSchemaCopies(t *testing.T) {
-	s := deckSchema(false, slideLayouts)
+	s := deckSchema(false, design.AllLayouts)
 	g := geminiSchema(s).(map[string]any)
 	if _, ok := s["propertyOrdering"]; ok {
 		t.Error("asl sxemaga propertyOrdering qo'shilmasligi kerak")

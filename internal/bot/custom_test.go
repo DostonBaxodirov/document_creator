@@ -34,27 +34,6 @@ func customHandler(fb *fakeBilling) *Handler {
 	})
 }
 
-// TestCustomOptionsMatchGenerator — AI promptidagi variantlar generator
-// chiza oladigan variantlar bilan bir xil (aks holda AI tanlovi e'tiborsiz qoladi).
-func TestCustomOptionsMatchGenerator(t *testing.T) {
-	pairs := map[string][2][]string{
-		"cover":        {ai.DesignCovers, generator.CustomCovers},
-		"header":       {ai.DesignHeaders, generator.CustomHeaders},
-		"cards":        {ai.DesignCards, generator.CustomCards},
-		"corners":      {ai.DesignCorners, generator.CustomCorners},
-		"markers":      {ai.DesignMarkers, generator.CustomMarkers},
-		"motif":        {ai.DesignMotifs, generator.CustomMotifs},
-		"photo_side":   {ai.DesignSides, generator.CustomSides},
-		"heading_font": {ai.DesignHeadingFonts, generator.CustomHeadingFonts},
-		"body_font":    {ai.DesignBodyFonts, generator.CustomBodyFonts},
-	}
-	for name, p := range pairs {
-		if !slices.Equal(p[0], p[1]) {
-			t.Errorf("%s: ai %v ≠ generator %v", name, p[0], p[1])
-		}
-	}
-}
-
 func TestCustomPricing(t *testing.T) {
 	fb := &fakeBilling{}
 	h := customHandler(fb)
@@ -187,14 +166,8 @@ func TestCustomPhotoTargets(t *testing.T) {
 	}
 }
 
-func TestCustomSpecFromAI(t *testing.T) {
-	d := &ai.Design{Name: "Okean", Colors: ai.DesignColors{Background: "#FFFFFF", Primary: "#123456"},
-		HeadingFont: "Georgia", Cover: "full", ImageStyle: "cool tones", SignatureLayouts: []string{"hub"}}
-	sp := customSpec(d)
-	if sp.Name != "Okean" || sp.Background != "#FFFFFF" || sp.Primary != "#123456" || sp.Cover != "full" ||
-		sp.PhotoStyle != "cool tones" || !slices.Equal(sp.Signature, []string{"hub"}) {
-		t.Errorf("spetsifikatsiya: %+v", sp)
-	}
+func TestCustomCaption(t *testing.T) {
+	d := &ai.Design{Name: "Okean"}
 	if c := customCaption(d, config.TariffOptimal); c != "✨ Okean (maxsus dizayn, 🥈 Optimal)" {
 		t.Errorf("customCaption = %q", c)
 	}

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/design"
 	"telegram-presentation-bot/internal/httpx"
 )
 
@@ -206,7 +207,7 @@ func TestGeminiResponseJSONSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &geminiProvider{client: gc, model: "gemini-test"}
-	raw, err := g.complete(context.Background(), task{system: "s", user: "u", schema: deckOutlineSchema(true, slideLayouts)})
+	raw, err := g.complete(context.Background(), task{system: "s", user: "u", schema: deckOutlineSchema(true, design.AllLayouts)})
 	if err != nil || !strings.Contains(raw, "paragraphs") {
 		t.Fatalf("javob: %q, %v", raw, err)
 	}

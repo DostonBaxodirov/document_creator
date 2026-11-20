@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"telegram-presentation-bot/internal/design"
 	"telegram-presentation-bot/internal/lang"
 )
 
@@ -17,11 +18,11 @@ func allDocStyles() map[string]docStyle {
 		out[t.ID] = t.style
 	}
 	for _, sp := range SampleDocSpecs() {
-		out["custom:"+sp.Name] = sp.style()
+		out["custom:"+sp.Name] = docSpecStyle(&sp)
 	}
 	// Eng "og'ir" kombinatsiya: keng shrift, ramkali blok va bezak.
-	out["custom:wide-frame"] = (&DocSpec{HeadingFont: "Century Gothic", Title: docTitleFrame, Ornament: docOrnamentDiamond}).style()
-	out["custom:wide-band"] = (&DocSpec{HeadingFont: "Segoe UI", Title: docTitleBand, Ornament: docOrnamentDots}).style()
+	out["custom:wide-frame"] = docSpecStyle(&DocSpec{HeadingFont: "Century Gothic", Title: docTitleFrame, Ornament: docOrnamentDiamond})
+	out["custom:wide-band"] = docSpecStyle(&DocSpec{HeadingFont: "Segoe UI", Title: docTitleBand, Ornament: docOrnamentDots})
 	return out
 }
 
@@ -92,7 +93,7 @@ func TestEstimateLines(t *testing.T) {
 	if n := estimateLines(strings.Repeat("x", 400), 14, docTextWidth, 1, 0); n < 2 {
 		t.Errorf("qatorga sig'maydigan so'z bo'linishi kerak, olindi %d", n)
 	}
-	for _, f := range DocHeadingFonts {
+	for _, f := range design.DocHeadingFonts {
 		if _, ok := docFontMetrics[f]; !ok {
 			t.Errorf("%s shriftining o'lchamlari yo'q", f)
 		}

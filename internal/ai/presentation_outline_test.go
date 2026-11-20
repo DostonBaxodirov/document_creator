@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 // TestOutlineImagePrompt — rasmli dizaynda rejadagi har bir slayd uchun rasm
@@ -36,11 +38,11 @@ func TestOutlineImagePrompt(t *testing.T) {
 		t.Errorf("maxsus dizayn reja promptida rasm uslubi talabi yo'q:\n%s", p)
 	}
 
-	s := deckOutlineSchema(true, slideLayouts)
+	s := deckOutlineSchema(true, design.AllLayouts)
 	if schemaProp(slideItem(s), "image") == nil || !slices.Contains(schemaRequired(slideItem(s)), "image") || schemaProp(s, "image") == nil {
 		t.Errorf("rasmli reja sxemasida slayd va titul rasmi bo'lishi kerak: %+v", slideItem(s))
 	}
-	s = deckOutlineSchema(false, slideLayouts)
+	s = deckOutlineSchema(false, design.AllLayouts)
 	if schemaProp(slideItem(s), "image") != nil || schemaProp(s, "image") != nil {
 		t.Errorf("oddiy reja sxemasida rasm maydoni bo'lmasligi kerak")
 	}

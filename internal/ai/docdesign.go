@@ -5,8 +5,8 @@ package ai
 // sarlavha bezagi, sahifa ramkasi va rasmlar uslubi bitta qisqa so'rov bilan
 // yaratiladi. Asosiy matn OTM talablariga mos qoladi (generator o'zgartirmaydi).
 //
-// Variantlar ro'yxatlari generator paketidagi Doc* ro'yxatlar bilan bir xil
-// bo'lishi shart (bot paketidagi test tekshiradi).
+// Variantlar ro'yxatlari design paketidan olinadi — generator ham aynan
+// shularni chizadi.
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"telegram-presentation-bot/internal/design"
 	"telegram-presentation-bot/internal/textutil"
 )
 
@@ -31,15 +32,14 @@ type DocDesign struct {
 	ImageStyle  string `json:"image_style"`
 }
 
-// Word dizayn variantlari (generator.Doc* bilan bir xil).
-var (
-	DocTitles       = []string{"classic", "band", "frame", "sidebar"}
-	DocHeadings     = []string{"center", "underline", "band", "bar"}
-	DocBorders      = []string{"none", "single", "double", "thinthick"}
-	DocOrnaments    = []string{"none", "line", "diamond", "dots"}
-	DocHeadingFonts = []string{"Times New Roman", "Cambria", "Georgia", "Palatino Linotype", "Book Antiqua",
-		"Garamond", "Calibri", "Arial", "Century Gothic", "Trebuchet MS", "Segoe UI"}
-)
+// Spec AI dizaynini generator spetsifikatsiyasiga o'giradi (qiymatlarni
+// tekshirish va tuzatish — generator vazifasi).
+func (d *DocDesign) Spec() design.DocSpec {
+	return design.DocSpec{
+		Name: d.Name, Primary: d.Primary, Accent: d.Accent, HeadingFont: d.HeadingFont,
+		Title: d.Title, Heading: d.Heading, Border: d.Border, Ornament: d.Ornament,
+	}
+}
 
 const docDesignSystemPrompt = `You are an experienced book and document designer. For a given topic you design an elegant, original visual style for a university written work (independent study work or referat) in Uzbekistan, printed on white A4 paper.
 
@@ -91,11 +91,11 @@ func docDesignSchema() map[string]any {
 		"name":         String(),
 		"primary":      String(),
 		"accent":       String(),
-		"heading_font": Enum(DocHeadingFonts),
-		"title":        Enum(DocTitles),
-		"heading":      Enum(DocHeadings),
-		"border":       Enum(DocBorders),
-		"ornament":     Enum(DocOrnaments),
+		"heading_font": Enum(design.DocHeadingFonts),
+		"title":        Enum(design.DocTitles),
+		"heading":      Enum(design.DocHeadings),
+		"border":       Enum(design.DocBorders),
+		"ornament":     Enum(design.DocOrnaments),
 		"image_style":  String(),
 	}, "name", "primary", "accent", "heading_font", "title", "heading", "border", "ornament", "image_style")
 }
@@ -142,14 +142,14 @@ func parseDocDesign(raw string) (*DocDesign, error) {
 func (d *DocDesign) score() int {
 	s := 0
 	for _, c := range []string{d.Primary, d.Accent} {
-		if designHexRe.MatchString(c) {
+		if _, ok := design.ParseHex(c); ok {
 			s++
 		}
 	}
 	for _, v := range []struct {
 		val  string
 		list []string
-	}{{d.Title, DocTitles}, {d.Heading, DocHeadings}, {d.Border, DocBorders}, {d.Ornament, DocOrnaments}} {
+	}{{d.Title, design.DocTitles}, {d.Heading, design.DocHeadings}, {d.Border, design.DocBorders}, {d.Ornament, design.DocOrnaments}} {
 		if slices.Contains(v.list, v.val) {
 			s++
 		}

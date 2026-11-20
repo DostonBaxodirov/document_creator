@@ -168,12 +168,6 @@ type Structure struct {
 	Compact   bool     // matn uchun joy kam — AI qisqaroq yozadi
 }
 
-// coreLayouts — barcha dizaynlarda ishlatiladigan asosiy maketlar.
-var coreLayouts = []string{
-	LayoutAgenda, LayoutBullets, LayoutCards, LayoutComparison,
-	LayoutProcess, LayoutFacts, LayoutDefinition, LayoutConclusion,
-}
-
 // ThemeStructure dizayn tuzilishini qaytaradi: asosiy maketlar va dizaynning
 // imzo maketlari. Noma'lum ID uchun — standart dizayn tuzilishi.
 func ThemeStructure(id string) Structure {

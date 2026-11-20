@@ -20,23 +20,6 @@ import (
 	"telegram-presentation-bot/internal/storage"
 )
 
-// TestDocOptionsMatchGenerator — AI Word dizayni variantlari generator
-// chiza oladigan variantlar bilan bir xil.
-func TestDocOptionsMatchGenerator(t *testing.T) {
-	pairs := map[string][2][]string{
-		"title":        {ai.DocTitles, generator.DocTitles},
-		"heading":      {ai.DocHeadings, generator.DocHeadings},
-		"border":       {ai.DocBorders, generator.DocBorders},
-		"ornament":     {ai.DocOrnaments, generator.DocOrnaments},
-		"heading_font": {ai.DocHeadingFonts, generator.DocHeadingFonts},
-	}
-	for name, p := range pairs {
-		if !slices.Equal(p[0], p[1]) {
-			t.Errorf("%s: ai %v ≠ generator %v", name, p[0], p[1])
-		}
-	}
-}
-
 func TestDocDesignPromptAndKeyboard(t *testing.T) {
 	p := docDesignPrompt(true)
 	if n := len([]rune(p)); n > 1024 {

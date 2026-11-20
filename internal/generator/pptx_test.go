@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 const testTemplate = "../../templates/template.pptx"
@@ -246,7 +248,7 @@ func make6() []Item {
 func TestThemeStructure(t *testing.T) {
 	t.Parallel()
 	known := map[string]bool{}
-	for _, l := range append(slices.Clone(coreLayouts), LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement) {
+	for _, l := range append(slices.Clone(design.CoreLayouts), LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement) {
 		known[l] = true
 	}
 	seen := map[string]string{}
@@ -260,7 +262,7 @@ func TestThemeStructure(t *testing.T) {
 				t.Errorf("%s: noma'lum maket %q", info.ID, l)
 			}
 		}
-		for _, l := range append(slices.Clone(coreLayouts), st.Signature...) {
+		for _, l := range append(slices.Clone(design.CoreLayouts), st.Signature...) {
 			if !slices.Contains(st.Layouts, l) {
 				t.Errorf("%s: %q maketlar ro'yxatida yo'q", info.ID, l)
 			}

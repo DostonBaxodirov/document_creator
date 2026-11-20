@@ -7,17 +7,17 @@ package ai
 // mavzusini yig'adi va ranglar kontrastini o'zi tuzatadi — AI faqat estetik
 // qarorlarni qabul qiladi.
 //
-// Variantlar ro'yxatlari generator paketidagi Custom* ro'yxatlar bilan bir
-// xil bo'lishi shart (bot paketidagi test tekshiradi).
+// Variantlar ro'yxatlari design paketidan olinadi — generator ham aynan
+// shularni chizadi.
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
+	"telegram-presentation-bot/internal/design"
 	"telegram-presentation-bot/internal/textutil"
 )
 
@@ -68,22 +68,31 @@ func (d *Design) Brief() *DesignBrief {
 	return &DesignBrief{Name: d.Name, Mood: d.Mood, ImageStyle: d.ImageStyle}
 }
 
-// Variantlar (generator.Custom* bilan bir xil) va ularning AI uchun tavsifi.
-var (
-	DesignCovers  = []string{"split", "full", "frame"}
-	DesignHeaders = []string{"bar", "band", "underline"}
-	DesignCards   = []string{"shadow", "outline", "tint", "accent", "top"}
-	DesignCorners = []string{"rounded", "square"}
-	DesignMarkers = []string{"circle", "square", "outline"}
-	DesignMotifs  = []string{"circles", "diagonal", "dots", "waves", "none"}
-	DesignSides   = []string{"left", "right"}
-
-	DesignHeadingFonts = []string{"Georgia", "Cambria", "Trebuchet MS", "Century Gothic", "Segoe UI", "Verdana", "Arial", "Arial Black", "Tahoma", "Calibri"}
-	DesignBodyFonts    = []string{"Calibri", "Segoe UI", "Arial", "Tahoma", "Verdana", "Trebuchet MS", "Cambria", "Georgia"}
-
-	// designSignatureLayouts — imzo maketi bo'la oladiganlar.
-	designSignatureLayouts = []string{LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement}
-)
+// Spec AI dizaynini generator spetsifikatsiyasiga o'giradi (qiymatlarni
+// tekshirish va tuzatish — generator vazifasi).
+func (d *Design) Spec() design.CustomSpec {
+	return design.CustomSpec{
+		Name:        d.Name,
+		Background:  d.Colors.Background,
+		Surface:     d.Colors.Surface,
+		Primary:     d.Colors.Primary,
+		Secondary:   d.Colors.Secondary,
+		Accent:      d.Colors.Accent,
+		Text:        d.Colors.Text,
+		Muted:       d.Colors.Muted,
+		HeadingFont: d.HeadingFont,
+		BodyFont:    d.BodyFont,
+		Cover:       d.Cover,
+		Header:      d.Header,
+		Cards:       d.Cards,
+		Corners:     d.Corners,
+		Markers:     d.Markers,
+		Motif:       d.Motif,
+		PhotoSide:   d.PhotoSide,
+		PhotoStyle:  d.ImageStyle,
+		Signature:   d.SignatureLayouts,
+	}
+}
 
 // designSystemPrompt — dizayn konsepsiyasi uchun tizim prompti.
 const designSystemPrompt = `You are an award-winning presentation art director. For a given presentation topic you design a complete, original visual identity for a university presentation in Uzbekistan: colour palette, font pairing, slide composition, decorative motif and photographic art direction.
@@ -155,17 +164,17 @@ func designSchema() map[string]any {
 		"name":              String(),
 		"mood":              String(),
 		"colors":            Object(colorProps, colors...),
-		"heading_font":      Enum(DesignHeadingFonts),
-		"body_font":         Enum(DesignBodyFonts),
-		"cover":             Enum(DesignCovers),
-		"header":            Enum(DesignHeaders),
-		"cards":             Enum(DesignCards),
-		"corners":           Enum(DesignCorners),
-		"markers":           Enum(DesignMarkers),
-		"motif":             Enum(DesignMotifs),
-		"photo_side":        Enum(DesignSides),
+		"heading_font":      Enum(design.HeadingFonts),
+		"body_font":         Enum(design.BodyFonts),
+		"cover":             Enum(design.Covers),
+		"header":            Enum(design.Headers),
+		"cards":             Enum(design.Cards),
+		"corners":           Enum(design.Corners),
+		"markers":           Enum(design.Markers),
+		"motif":             Enum(design.Motifs),
+		"photo_side":        Enum(design.Sides),
 		"image_style":       String(),
-		"signature_layouts": Array(Enum(designSignatureLayouts)),
+		"signature_layouts": Array(Enum(design.SignatureLayouts)),
 	}, "name", "mood", "colors", "heading_font", "body_font", "cover", "header", "cards", "corners", "markers", "motif",
 		"photo_side", "image_style", "signature_layouts")
 }
@@ -178,8 +187,6 @@ const (
 	designColorsWant    = 7 // to'liq javob: barcha 7 ta rang yaroqli
 	designScoreComplete = designColorsWant + 1
 )
-
-var designHexRe = regexp.MustCompile(`^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$`)
 
 // GenerateDesign mavzuga mos dizayn konsepsiyasini yaratadi.
 func (c *client) GenerateDesign(ctx context.Context, req DesignRequest) (*Design, error) {
@@ -215,7 +222,7 @@ func parseDesign(raw string) (*Design, error) {
 	var sig []string
 	for _, l := range d.SignatureLayouts {
 		l = normalizeLayout(l)
-		if slices.Contains(designSignatureLayouts, l) && !slices.Contains(sig, l) {
+		if slices.Contains(design.SignatureLayouts, l) && !slices.Contains(sig, l) {
 			sig = append(sig, l)
 		}
 	}
@@ -231,7 +238,7 @@ func (d *Design) validColors() int {
 	n := 0
 	c := d.Colors
 	for _, v := range []string{c.Background, c.Surface, c.Primary, c.Secondary, c.Accent, c.Text, c.Muted} {
-		if designHexRe.MatchString(strings.TrimSpace(v)) {
+		if _, ok := design.ParseHex(v); ok {
 			n++
 		}
 	}
@@ -241,7 +248,7 @@ func (d *Design) validColors() int {
 // score javob to'liqligi: yaroqli ranglar soni + 1 (variantlar to'g'ri bo'lsa).
 func (d *Design) score() int {
 	s := d.validColors()
-	if slices.Contains(DesignCovers, d.Cover) && slices.Contains(DesignHeaders, d.Header) && slices.Contains(DesignCards, d.Cards) {
+	if slices.Contains(design.Covers, d.Cover) && slices.Contains(design.Headers, d.Header) && slices.Contains(design.Cards, d.Cards) {
 		s++
 	}
 	return s

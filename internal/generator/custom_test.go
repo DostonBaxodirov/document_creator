@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 // TestCustomDesignsBuild — barcha namunaviy maxsus dizaynlar (har bir titul,
@@ -16,15 +18,15 @@ func TestCustomDesignsBuild(t *testing.T) {
 	g := newTestPPTX(t)
 	specs := SampleCustomSpecs()
 	// Har bir variantni kamida bir marta sinash uchun qo'shimcha kombinatsiyalar.
-	for i, cover := range CustomCovers {
-		for j, header := range CustomHeaders {
+	for i, cover := range design.Covers {
+		for j, header := range design.Headers {
 			sp := specs[(i+j)%len(specs)]
 			sp.Cover, sp.Header = cover, header
-			sp.Cards = CustomCards[(i*3+j)%len(CustomCards)]
-			sp.Motif = CustomMotifs[(i+j*2)%len(CustomMotifs)]
-			sp.Markers = CustomMarkers[(i+j)%len(CustomMarkers)]
-			sp.Corners = CustomCorners[(i+j)%len(CustomCorners)]
-			sp.PhotoSide = CustomSides[j%len(CustomSides)]
+			sp.Cards = design.Cards[(i*3+j)%len(design.Cards)]
+			sp.Motif = design.Motifs[(i+j*2)%len(design.Motifs)]
+			sp.Markers = design.Markers[(i+j)%len(design.Markers)]
+			sp.Corners = design.Corners[(i+j)%len(design.Corners)]
+			sp.PhotoSide = design.Sides[j%len(design.Sides)]
 			sp.Name = fmt.Sprintf("%s-%s", cover, header)
 			specs = append(specs, sp)
 		}
@@ -87,7 +89,7 @@ func TestCustomPaletteContrast(t *testing.T) {
 		{Background: "#808080", Text: "#888888", Primary: "#7F7F7F"},
 	}
 	for i, sp := range cases {
-		pal, cc, dark := customPalette(sp.normalized())
+		pal, cc, dark := customPalette(normalizeCustomSpec(&sp))
 		check := func(name, fg, bg string, min float64) {
 			if c := contrast(fg, bg); c < min-0.01 {
 				t.Errorf("holat %d: %s kontrasti %.2f < %.1f (%s / %s)", i, name, c, min, fg, bg)
@@ -106,7 +108,7 @@ func TestCustomPaletteContrast(t *testing.T) {
 			t.Errorf("holat %d: dark=%v, fon %s", i, dark, pal.bg)
 		}
 		for _, c := range append([]string{pal.bg, pal.surface, pal.text, pal.muted, pal.primary, pal.accent, pal.line}, pal.series...) {
-			if _, ok := parseHex(c); !ok || len(c) != 6 {
+			if _, ok := design.ParseHex(c); !ok || len(c) != 6 {
 				t.Errorf("holat %d: noto'g'ri rang %q", i, c)
 			}
 		}
@@ -116,7 +118,7 @@ func TestCustomPaletteContrast(t *testing.T) {
 // TestCustomKeepsGoodColors — yaxshi palitra o'zgarishsiz qoladi (AI tanlovi hurmat qilinadi).
 func TestCustomKeepsGoodColors(t *testing.T) {
 	sp := SampleCustomSpecs()[0]
-	pal, _, dark := customPalette(sp.normalized())
+	pal, _, dark := customPalette(normalizeCustomSpec(&sp))
 	if dark {
 		t.Fatal("och fon to'q deb topildi")
 	}
@@ -130,10 +132,10 @@ func TestCustomKeepsGoodColors(t *testing.T) {
 }
 
 func TestCustomNormalized(t *testing.T) {
-	sp := (&CustomSpec{
+	sp := normalizeCustomSpec(&CustomSpec{
 		Cover: "SPLIT ", Header: "zigzag", HeadingFont: "georgia", BodyFont: "Comic Sans MS",
 		Signature: []string{"timeline", "agenda", "TIMELINE", "matrix", "hub", "cycle"},
-	}).normalized()
+	})
 	if sp.Cover != CoverSplit || sp.Header != HeaderBar {
 		t.Errorf("variantlar: cover=%q header=%q", sp.Cover, sp.Header)
 	}
@@ -143,11 +145,11 @@ func TestCustomNormalized(t *testing.T) {
 	if want := []string{LayoutTimeline, LayoutMatrix, LayoutHub}; !slices.Equal(sp.Signature, want) {
 		t.Errorf("imzo maketlari %v, kutilgan %v", sp.Signature, want)
 	}
-	if def := (*CustomSpec)(nil).normalized(); def.Name == "" || def.Cover == "" || def.Motif == "" {
+	if def := normalizeCustomSpec(nil); def.Name == "" || def.Cover == "" || def.Motif == "" {
 		t.Errorf("nil spetsifikatsiya standart qiymatlarsiz: %+v", def)
 	}
 	// Barcha shriftlar uchun kenglik o'lchangan.
-	for _, f := range append(slices.Clone(CustomHeadingFonts), CustomBodyFonts...) {
+	for _, f := range append(slices.Clone(design.HeadingFonts), design.BodyFonts...) {
 		if _, ok := fontWidths[f]; !ok {
 			t.Errorf("%s shrifti kengligi fontWidths da yo'q", f)
 		}
@@ -161,7 +163,7 @@ func TestCustomDesign(t *testing.T) {
 		t.Fatalf("maxsus dizayn: custom=%v photos=%v name=%q", d.Custom(), d.Photos(), d.Name())
 	}
 	st := d.Structure()
-	for _, l := range append(slices.Clone(coreLayouts), customSignatureLayouts...) {
+	for _, l := range design.AllLayouts {
 		if !slices.Contains(st.Layouts, l) {
 			t.Errorf("maxsus dizayn tuzilishida %q maketi yo'q", l)
 		}
@@ -304,17 +306,7 @@ func TestPhotoSlidesByLayout(t *testing.T) {
 	}
 }
 
-func TestParseHex(t *testing.T) {
-	for in, want := range map[string]string{"#1a2B3c": "1A2B3C", "abc": "AABBCC", " #FFF ": "FFFFFF"} {
-		if got, ok := parseHex(in); !ok || got != want {
-			t.Errorf("parseHex(%q) = %q, %v", in, got, ok)
-		}
-	}
-	for _, in := range []string{"", "#12", "#1234567", "red", "#GGGGGG"} {
-		if _, ok := parseHex(in); ok {
-			t.Errorf("parseHex(%q) xato berishi kerak", in)
-		}
-	}
+func TestContrast(t *testing.T) {
 	if c := contrast("000000", "FFFFFF"); c < 20.9 || c > 21.1 {
 		t.Errorf("qora/oq kontrasti %.2f", c)
 	}

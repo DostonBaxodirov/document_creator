@@ -19,99 +19,55 @@ package generator
 
 import (
 	"math"
-	"regexp"
 	"slices"
 	"strings"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 // ThemeCustom — AI maxsus dizayni identifikatori (Session.Design da saqlanadi).
 const ThemeCustom = "custom"
 
-// Maxsus dizayn variantlari. Qiymatlar AI promptidagi ro'yxatlar bilan bir
-// xil bo'lishi shart (internal/ai/design.go) — bot paketidagi test tekshiradi.
+// Maxsus dizayn variantlari — design paketidagi qiymatlarning taxalluslari.
 const (
-	CoverSplit = "split" // titul: yarmi rasm, yarmi toza fon va matn
-	CoverFull  = "full"  // titul: butun slayd rasm, matn tomonida quyuq qoplama
-	CoverFrame = "frame" // titul: ochiq fon, rasm katta ramkada, bezakli motiv
+	CoverSplit = design.CoverSplit
+	CoverFull  = design.CoverFull
+	CoverFrame = design.CoverFrame
 
-	HeaderBar       = "bar"       // sarlavha chapida vertikal rangli chiziq
-	HeaderBand      = "band"      // sarlavha slayd tepasidagi rangli tasmada
-	HeaderUnderline = "underline" // katta sarlavha, ostida qisqa aksent chiziq
+	HeaderBar       = design.HeaderBar
+	HeaderBand      = design.HeaderBand
+	HeaderUnderline = design.HeaderUnderline
 
-	CardsShadow  = "shadow"  // yumshoq soyali kartochkalar
-	CardsOutline = "outline" // ingichka chegarali kartochkalar
-	CardsTint    = "tint"    // har bir kartochka o'z och rangida
-	CardsAccent  = "accent"  // chap tomonda rangli chiziq
-	CardsTop     = "top"     // yuqorida rangli chiziq
+	CardsShadow  = design.CardsShadow
+	CardsOutline = design.CardsOutline
+	CardsTint    = design.CardsTint
+	CardsAccent  = design.CardsAccent
+	CardsTop     = design.CardsTop
 
-	CornersRounded = "rounded"
-	CornersSquare  = "square"
+	CornersRounded = design.CornersRounded
+	CornersSquare  = design.CornersSquare
 
-	MarkerCircle  = "circle"  // raqamlar to'liq rangli doirada
-	MarkerSquare  = "square"  // raqamlar yumaloq burchakli kvadratda
-	MarkerOutline = "outline" // raqamlar faqat chegarali doirada
+	MarkerCircle  = design.MarkerCircle
+	MarkerSquare  = design.MarkerSquare
+	MarkerOutline = design.MarkerOutline
 
-	MotifCircles  = "circles"  // katta shaffof doiralar
-	MotifDiagonal = "diagonal" // qiya chiziqlar
-	MotifDots     = "dots"     // nuqtalar to'ri
-	MotifWaves    = "waves"    // to'lqinsimon qatlamlar
-	MotifNone     = "none"     // bezaksiz
+	MotifCircles  = design.MotifCircles
+	MotifDiagonal = design.MotifDiagonal
+	MotifDots     = design.MotifDots
+	MotifWaves    = design.MotifWaves
+	MotifNone     = design.MotifNone
 
-	PhotoLeft  = "left"
-	PhotoRight = "right"
+	PhotoLeft  = design.PhotoLeft
+	PhotoRight = design.PhotoRight
 )
 
-// Variantlar ro'yxatlari (AI prompti va JSON sxemasi shular bilan mos).
-var (
-	CustomCovers  = []string{CoverSplit, CoverFull, CoverFrame}
-	CustomHeaders = []string{HeaderBar, HeaderBand, HeaderUnderline}
-	CustomCards   = []string{CardsShadow, CardsOutline, CardsTint, CardsAccent, CardsTop}
-	CustomCorners = []string{CornersRounded, CornersSquare}
-	CustomMarkers = []string{MarkerCircle, MarkerSquare, MarkerOutline}
-	CustomMotifs  = []string{MotifCircles, MotifDiagonal, MotifDots, MotifWaves, MotifNone}
-	CustomSides   = []string{PhotoLeft, PhotoRight}
+// CustomSpec — AI tanlagan dizayn parametrlari (design.CustomSpec).
+type CustomSpec = design.CustomSpec
 
-	// Shriftlar — Windows/macOS PowerPoint'da bor va kengligi o'lchangan
-	// (drawing.go: fontWidths) — matnni maydonga sig'dirish aniq ishlaydi.
-	CustomHeadingFonts = []string{"Georgia", "Cambria", "Trebuchet MS", "Century Gothic", "Segoe UI", "Verdana", "Arial", "Arial Black", "Tahoma", "Calibri"}
-	CustomBodyFonts    = []string{"Calibri", "Segoe UI", "Arial", "Tahoma", "Verdana", "Trebuchet MS", "Cambria", "Georgia"}
-)
-
-// CustomSpec — AI tanlagan dizayn parametrlari. Ranglar "#RRGGBB" (yoki
-// "RRGGBB", "#RGB") ko'rinishida; noto'g'ri yoki bo'sh qiymatlar standart
-// qiymat bilan almashtiriladi.
-type CustomSpec struct {
-	Name string // dizayn nomi (masalan, "Deep Ocean") — izoh va PowerPoint rang sxemasi nomi
-
-	Background string // mazmunli slayd foni
-	Surface    string // kartochka foni
-	Primary    string // asosiy rang (sarlavha elementlari, belgilar, panel)
-	Secondary  string // ikkinchi rang
-	Accent     string // aksent (chiziqlar, raqamlar, urg'u)
-	Text       string // asosiy matn
-	Muted      string // ikkinchi darajali matn
-
-	HeadingFont string
-	BodyFont    string
-
-	Cover     string // CoverSplit | CoverFull | CoverFrame
-	Header    string // HeaderBar | HeaderBand | HeaderUnderline
-	Cards     string // Cards*
-	Corners   string // CornersRounded | CornersSquare
-	Markers   string // Marker*
-	Motif     string // Motif*
-	PhotoSide string // PhotoLeft | PhotoRight — mazmunli slayddagi rasm tomoni
-
-	// PhotoStyle — barcha rasm promptlariga qo'shiladigan uslub (inglizcha):
-	// yorug'lik, ranglar, kompozitsiya. Taqdimotdagi rasmlar bir uslubda chiqadi.
-	PhotoStyle string
-	// Signature — dizaynning imzo maketlari (AI mazmun yozishda ishlatadi).
-	Signature []string
-}
-
-// normalized spetsifikatsiya nusxasini noma'lum variantlarni standart
-// qiymatlarga almashtirgan holda qaytaradi (nil — barcha qiymatlar standart).
-func (sp *CustomSpec) normalized() CustomSpec {
+// normalizeCustomSpec spetsifikatsiya nusxasini noma'lum variantlarni
+// standart qiymatlarga almashtirgan holda qaytaradi (nil — barcha qiymatlar
+// standart).
+func normalizeCustomSpec(sp *CustomSpec) CustomSpec {
 	var out CustomSpec
 	if sp != nil {
 		out = *sp
@@ -135,21 +91,21 @@ func (sp *CustomSpec) normalized() CustomSpec {
 	if out.Name == "" {
 		out.Name = "Custom Design"
 	}
-	out.HeadingFont = font(out.HeadingFont, CustomHeadingFonts, "Segoe UI")
-	out.BodyFont = font(out.BodyFont, CustomBodyFonts, "Calibri")
-	out.Cover = oneOf(out.Cover, CustomCovers, CoverSplit)
-	out.Header = oneOf(out.Header, CustomHeaders, HeaderBar)
-	out.Cards = oneOf(out.Cards, CustomCards, CardsShadow)
-	out.Corners = oneOf(out.Corners, CustomCorners, CornersRounded)
-	out.Markers = oneOf(out.Markers, CustomMarkers, MarkerCircle)
-	out.Motif = oneOf(out.Motif, CustomMotifs, MotifCircles)
-	out.PhotoSide = oneOf(out.PhotoSide, CustomSides, PhotoRight)
+	out.HeadingFont = font(out.HeadingFont, design.HeadingFonts, "Segoe UI")
+	out.BodyFont = font(out.BodyFont, design.BodyFonts, "Calibri")
+	out.Cover = oneOf(out.Cover, design.Covers, CoverSplit)
+	out.Header = oneOf(out.Header, design.Headers, HeaderBar)
+	out.Cards = oneOf(out.Cards, design.Cards, CardsShadow)
+	out.Corners = oneOf(out.Corners, design.Corners, CornersRounded)
+	out.Markers = oneOf(out.Markers, design.Markers, MarkerCircle)
+	out.Motif = oneOf(out.Motif, design.Motifs, MotifCircles)
+	out.PhotoSide = oneOf(out.PhotoSide, design.Sides, PhotoRight)
 	out.PhotoStyle = strings.TrimSpace(out.PhotoStyle)
 
 	var sig []string
 	for _, l := range out.Signature {
 		l = strings.ToLower(strings.TrimSpace(l))
-		if slices.Contains(customSignatureLayouts, l) && !slices.Contains(sig, l) {
+		if slices.Contains(design.SignatureLayouts, l) && !slices.Contains(sig, l) {
 			sig = append(sig, l)
 		}
 		if len(sig) == 3 {
@@ -160,28 +116,9 @@ func (sp *CustomSpec) normalized() CustomSpec {
 	return out
 }
 
-// customSignatureLayouts — maxsus dizaynning imzo maketlari bo'la oladigan
-// maketlar (asosiy maketlar har qanday dizaynda bor).
-var customSignatureLayouts = []string{LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement}
-
 // ---------------------------------------------------------------------------
 // Ranglar va kontrast
 // ---------------------------------------------------------------------------
-
-var hexRe = regexp.MustCompile(`^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$`)
-
-// parseHex "#1A2B3C", "1a2b3c" yoki "#abc" ni "1A2B3C" ko'rinishiga keltiradi.
-func parseHex(s string) (string, bool) {
-	m := hexRe.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
-		return "", false
-	}
-	h := strings.ToUpper(m[1])
-	if len(h) == 3 {
-		h = string([]byte{h[0], h[0], h[1], h[1], h[2], h[2]})
-	}
-	return h, true
-}
 
 // relLum — WCAG nisbiy yorqinligi (0 — qora, 1 — oq).
 func relLum(hex string) float64 {
@@ -238,7 +175,7 @@ type customColors struct {
 // customPalette AI ranglaridan to'liq palitrani yig'adi va kontrastni tuzatadi.
 func customPalette(sp CustomSpec) (palette, customColors, bool) {
 	pick := func(v, def string) string {
-		if h, ok := parseHex(v); ok {
+		if h, ok := design.ParseHex(v); ok {
 			return h
 		}
 		return def
@@ -315,7 +252,7 @@ func customPalette(sp CustomSpec) (palette, customColors, bool) {
 // customTheme spetsifikatsiyadan dizayn mavzusini yaratadi (nil — standart
 // qiymatlar bilan).
 func customTheme(spec *CustomSpec) *theme {
-	sp := spec.normalized()
+	sp := normalizeCustomSpec(spec)
 	pal, colors, dark := customPalette(sp)
 
 	radius := 0.16
@@ -425,7 +362,7 @@ func (d Design) Name() string { return d.t.Name }
 
 // Structure dizayn tuzilishi (AI promptini moslash uchun).
 func (d Design) Structure() Structure {
-	layouts := append([]string(nil), coreLayouts...)
+	layouts := append([]string(nil), design.CoreLayouts...)
 	for _, l := range d.t.signature {
 		if !slices.Contains(layouts, l) {
 			layouts = append(layouts, l)
@@ -434,7 +371,7 @@ func (d Design) Structure() Structure {
 	if d.Custom() {
 		// Maxsus dizayn barcha maketlarni chiza oladi — AI mazmunga eng
 		// mosini tanlaydi, imzo maketlari esa ustuvor.
-		for _, l := range customSignatureLayouts {
+		for _, l := range design.SignatureLayouts {
 			if !slices.Contains(layouts, l) {
 				layouts = append(layouts, l)
 			}

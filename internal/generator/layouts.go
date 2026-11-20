@@ -9,25 +9,28 @@ package generator
 import (
 	"math"
 	"unicode/utf8"
+
+	"telegram-presentation-bot/internal/design"
 )
 
-// Maket nomlari (AI javobidagi "layout" maydoni qiymatlari).
+// Maket nomlari (AI javobidagi "layout" maydoni qiymatlari) — design
+// paketidagi nomlarning taxalluslari.
 const (
-	LayoutAgenda     = "agenda"     // reja: raqamlangan bo'limlar
-	LayoutBullets    = "bullets"    // sarlavha+izohli punktlar (+ asosiy fikr paneli)
-	LayoutCards      = "cards"      // 2-6 ta kartochka
-	LayoutComparison = "comparison" // ikki tomonni taqqoslash
-	LayoutProcess    = "process"    // bosqichlar / jarayon / xronologiya
-	LayoutFacts      = "facts"      // katta raqamlar va faktlar
-	LayoutDefinition = "definition" // tushuncha ta'rifi + xususiyatlari
-	LayoutConclusion = "conclusion" // xulosa: asosiy fikrlar + yakuniy xulosa
+	LayoutAgenda     = design.LayoutAgenda
+	LayoutBullets    = design.LayoutBullets
+	LayoutCards      = design.LayoutCards
+	LayoutComparison = design.LayoutComparison
+	LayoutProcess    = design.LayoutProcess
+	LayoutFacts      = design.LayoutFacts
+	LayoutDefinition = design.LayoutDefinition
+	LayoutConclusion = design.LayoutConclusion
 
-	LayoutTimeline  = "timeline"  // sanalar bilan xronologiya (vaqt chizig'i)
-	LayoutPyramid   = "pyramid"   // ierarxiya darajalari (piramida)
-	LayoutMatrix    = "matrix"    // 2x2 tasnif (masalan, SWOT)
-	LayoutCycle     = "cycle"     // takrorlanuvchi sikl bosqichlari
-	LayoutHub       = "hub"       // markaziy tushuncha va uning tarkibiy qismlari
-	LayoutStatement = "statement" // bitta asosiy tezis (katta matn) + dalillar
+	LayoutTimeline  = design.LayoutTimeline
+	LayoutPyramid   = design.LayoutPyramid
+	LayoutMatrix    = design.LayoutMatrix
+	LayoutCycle     = design.LayoutCycle
+	LayoutHub       = design.LayoutHub
+	LayoutStatement = design.LayoutStatement
 )
 
 // layoutFunc — mazmunli slayd maketini chizuvchi funksiya.

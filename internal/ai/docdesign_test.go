@@ -3,6 +3,8 @@ package ai
 import (
 	"strings"
 	"testing"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 func TestParseDocDesign(t *testing.T) {
@@ -70,5 +72,16 @@ func TestParseOutlineFigures(t *testing.T) {
 	}
 	if n := PlanChapters(2690); n != 5 {
 		t.Errorf("PlanChapters(2690) = %d, kutilgan 5", n)
+	}
+}
+
+// TestDocDesignSpec — AI Word dizayni generator spetsifikatsiyasiga to'liq o'tadi.
+func TestDocDesignSpec(t *testing.T) {
+	d := &DocDesign{Name: "Ipak yo'li", Primary: "#7A2E1D", Accent: "#C08A2E", HeadingFont: "Georgia",
+		Title: "frame", Heading: "underline", Border: "thinthick", Ornament: "diamond", ImageStyle: "warm sepia"}
+	want := design.DocSpec{Name: "Ipak yo'li", Primary: "#7A2E1D", Accent: "#C08A2E", HeadingFont: "Georgia",
+		Title: "frame", Heading: "underline", Border: "thinthick", Ornament: "diamond"}
+	if got := d.Spec(); got != want {
+		t.Errorf("spetsifikatsiya: %+v, kutilgan %+v", got, want)
 	}
 }

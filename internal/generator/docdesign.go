@@ -10,6 +10,8 @@ package generator
 import (
 	"slices"
 	"strings"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 // Tayyor Word dizaynlari identifikatorlari (sessions.design da saqlanadi —
@@ -76,53 +78,32 @@ func FindDocTheme(id string) (DocTheme, bool) {
 	return DocTheme{}, false
 }
 
-// Dizayn variantlari (AI maxsus dizayni shulardan tanlaydi — ai paketidagi
-// ro'yxatlar bilan bir xil bo'lishi shart).
+// Dizayn variantlari (AI maxsus dizayni shulardan tanlaydi) — design
+// paketidagi qiymatlarning taxalluslari.
 const (
-	docTitleClassic = "classic" // markazlashtirilgan, an'anaviy
-	docTitleBand    = "band"    // ish turi rangli lenta ustida
-	docTitleFrame   = "frame"   // ish turi va mavzu chiziqli blok ichida
-	docTitleSidebar = "sidebar" // chapga tekislangan, chap tomonda rangli chiziq
+	docTitleClassic = design.DocTitleClassic
+	docTitleBand    = design.DocTitleBand
+	docTitleFrame   = design.DocTitleFrame
+	docTitleSidebar = design.DocTitleSidebar
 
-	docHeadingCenter    = "center"    // markazda, rangli
-	docHeadingUnderline = "underline" // chapda, ostida rangli chiziq
-	docHeadingBand      = "band"      // rangli lenta ustida oq matn
-	docHeadingBar       = "bar"       // chapda, yonida qalin rangli chiziq
+	docHeadingCenter    = design.DocHeadingCenter
+	docHeadingUnderline = design.DocHeadingUnderline
+	docHeadingBand      = design.DocHeadingBand
+	docHeadingBar       = design.DocHeadingBar
 
-	docBorderNone      = "none"
-	docBorderSingle    = "single"
-	docBorderDouble    = "double"
-	docBorderThinThick = "thinthick"
+	docBorderNone      = design.DocBorderNone
+	docBorderSingle    = design.DocBorderSingle
+	docBorderDouble    = design.DocBorderDouble
+	docBorderThinThick = design.DocBorderThinThick
 
-	docOrnamentNone    = "none"
-	docOrnamentLine    = "line"    // titulda ingichka ajratuvchi chiziqlar
-	docOrnamentDiamond = "diamond" // ◆ ◆ ◆
-	docOrnamentDots    = "dots"    // • • •
+	docOrnamentNone    = design.DocOrnamentNone
+	docOrnamentLine    = design.DocOrnamentLine
+	docOrnamentDiamond = design.DocOrnamentDiamond
+	docOrnamentDots    = design.DocOrnamentDots
 )
 
-// Maxsus dizayn variantlari.
-var (
-	DocTitles    = []string{docTitleClassic, docTitleBand, docTitleFrame, docTitleSidebar}
-	DocHeadings  = []string{docHeadingCenter, docHeadingUnderline, docHeadingBand, docHeadingBar}
-	DocBorders   = []string{docBorderNone, docBorderSingle, docBorderDouble, docBorderThinThick}
-	DocOrnaments = []string{docOrnamentNone, docOrnamentLine, docOrnamentDiamond, docOrnamentDots}
-	// DocHeadingFonts — sarlavhalar shriftlari (Windows/Office'da mavjud).
-	DocHeadingFonts = []string{"Times New Roman", "Cambria", "Georgia", "Palatino Linotype", "Book Antiqua",
-		"Garamond", "Calibri", "Arial", "Century Gothic", "Trebuchet MS", "Segoe UI"}
-)
-
-// DocSpec — AI yaratgan Word dizayni (qiymatlar generator tomonidan
-// tekshiriladi va tuzatiladi).
-type DocSpec struct {
-	Name        string
-	Primary     string // sarlavhalar rangi ("#RRGGBB")
-	Accent      string // chiziqlar va bezaklar rangi
-	HeadingFont string
-	Title       string // DocTitles
-	Heading     string // DocHeadings
-	Border      string // DocBorders
-	Ornament    string // DocOrnaments
-}
+// DocSpec — AI yaratgan Word dizayni (design.DocSpec).
+type DocSpec = design.DocSpec
 
 // docStyle — hujjatni chizish uchun aniq uslub.
 type docStyle struct {
@@ -139,7 +120,7 @@ type docStyle struct {
 // dizayn yoki (noma'lum/bo'sh ID) Klassik.
 func docStyleFor(themeID string, spec *DocSpec) docStyle {
 	if spec != nil {
-		return spec.style()
+		return docSpecStyle(spec)
 	}
 	for _, t := range docThemes {
 		if t.ID == themeID {
@@ -149,9 +130,9 @@ func docStyleFor(themeID string, spec *DocSpec) docStyle {
 	return docThemes[0].style
 }
 
-// style AI qiymatlarini tekshiradi: noma'lum variant — standart qiymat,
-// ranglar oq qog'ozda o'qiladigan darajada to'q qilinadi.
-func (sp *DocSpec) style() docStyle {
+// docSpecStyle AI qiymatlarini tekshiradi: noma'lum variant — standart
+// qiymat, ranglar oq qog'ozda o'qiladigan darajada to'q qilinadi.
+func docSpecStyle(sp *DocSpec) docStyle {
 	oneOf := func(v string, list []string, def string) string {
 		v = strings.ToLower(strings.TrimSpace(v))
 		if slices.Contains(list, v) {
@@ -160,7 +141,7 @@ func (sp *DocSpec) style() docStyle {
 		return def
 	}
 	color := func(v, def string) string {
-		hex, ok := parseHex(v)
+		hex, ok := design.ParseHex(v)
 		if !ok {
 			hex = def
 		}
@@ -168,7 +149,7 @@ func (sp *DocSpec) style() docStyle {
 		return ensureContrast(hex, []string{"FFFFFF"}, 4.5, "000000")
 	}
 	font := ""
-	for _, f := range DocHeadingFonts {
+	for _, f := range design.DocHeadingFonts {
 		if strings.EqualFold(strings.TrimSpace(sp.HeadingFont), f) {
 			font = f
 		}
@@ -180,10 +161,10 @@ func (sp *DocSpec) style() docStyle {
 		headingFont: font,
 		primary:     color(sp.Primary, "1F3864"),
 		accent:      color(sp.Accent, "8C6D1F"),
-		title:       oneOf(sp.Title, DocTitles, docTitleClassic),
-		heading:     oneOf(sp.Heading, DocHeadings, docHeadingCenter),
-		border:      oneOf(sp.Border, DocBorders, docBorderNone),
-		ornament:    oneOf(sp.Ornament, DocOrnaments, docOrnamentNone),
+		title:       oneOf(sp.Title, design.DocTitles, docTitleClassic),
+		heading:     oneOf(sp.Heading, design.DocHeadings, docHeadingCenter),
+		border:      oneOf(sp.Border, design.DocBorders, docBorderNone),
+		ornament:    oneOf(sp.Ornament, design.DocOrnaments, docOrnamentNone),
 	}
 }
 

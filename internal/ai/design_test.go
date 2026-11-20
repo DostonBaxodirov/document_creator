@@ -1,9 +1,12 @@
 package ai
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"telegram-presentation-bot/internal/design"
 )
 
 func TestParseDesign(t *testing.T) {
@@ -67,7 +70,7 @@ func TestDesignPrompt(t *testing.T) {
 	if req, props := schemaRequired(s), schemaProps(s); len(req) != len(props) {
 		t.Errorf("sxemada %d ta maydon, %d tasi majburiy", len(props), len(req))
 	}
-	if !slices.Equal(schemaEnum(schemaProp(s, "cover")), DesignCovers) || !slices.Equal(schemaEnum(schemaProp(s, "heading_font")), DesignHeadingFonts) {
+	if !slices.Equal(schemaEnum(schemaProp(s, "cover")), design.Covers) || !slices.Equal(schemaEnum(schemaProp(s, "heading_font")), design.HeadingFonts) {
 		t.Error("sxema variantlari ro'yxatlar bilan mos emas")
 	}
 }
@@ -75,7 +78,7 @@ func TestDesignPrompt(t *testing.T) {
 func TestCustomDeckPrompts(t *testing.T) {
 	brief := &DesignBrief{Name: "Chuqur okean", Mood: "calm", ImageStyle: "cool blue documentary photography."}
 	req := PresentationRequest{Topic: "Okeanlar", SlideCount: 10, Images: true, Custom: brief,
-		Layouts: slideLayouts, Signature: []string{LayoutHub, LayoutTimeline}}
+		Layouts: design.AllLayouts, Signature: []string{LayoutHub, LayoutTimeline}}
 	plan := &deckOutline{Slides: []plannedSlide{{Title: "Reja", Layout: "agenda", Focus: "f"}, {Title: "B", Layout: "hub", Focus: "g"}}}
 	prompts := map[string]string{
 		"deck":    buildDeckPrompt(req),
@@ -107,7 +110,7 @@ func TestCustomDeckPrompts(t *testing.T) {
 		t.Errorf("4 slayd: %s", r)
 	}
 	// Kichik taqdimot: imzo maketlari talabi qoida va tekshiruvda bir xil; tekshiruv ro'yxati bitta.
-	small := PresentationRequest{Topic: "T", SlideCount: 5, Images: true, Custom: brief, Layouts: slideLayouts,
+	small := PresentationRequest{Topic: "T", SlideCount: 5, Images: true, Custom: brief, Layouts: design.AllLayouts,
 		Signature: []string{LayoutTimeline, LayoutPyramid, LayoutStatement}}
 	p := buildDeckPrompt(small)
 	if !strings.Contains(p, "Use at least 1 of them") || !strings.Contains(p, "at least 1 of the signature layouts") {
@@ -120,7 +123,7 @@ func TestCustomDeckPrompts(t *testing.T) {
 
 func TestCustomChecks(t *testing.T) {
 	brief := &DesignBrief{Name: "X"}
-	req := PresentationRequest{Topic: "T", SlideCount: 10, Custom: brief, Layouts: slideLayouts, Signature: []string{LayoutHub, LayoutTimeline}}
+	req := PresentationRequest{Topic: "T", SlideCount: 10, Custom: brief, Layouts: design.AllLayouts, Signature: []string{LayoutHub, LayoutTimeline}}
 	plan := &deckOutline{Slides: []plannedSlide{{Title: "A", Layout: "agenda"}, {Title: "B", Layout: "hub"}}}
 	outline := buildDeckOutlinePrompt(req)
 	if !strings.Contains(outline, `(1) there are exactly 10 slides; (2) each signature layout ("hub", "timeline")`) ||
@@ -140,5 +143,20 @@ func TestCustomChecks(t *testing.T) {
 	req.Custom = nil
 	if p := buildDeckOutlinePrompt(req) + buildDeckPrompt(req); strings.Contains(p, "Before answering") {
 		t.Error("oddiy dizaynda tekshiruv ro'yxati bo'lmasligi kerak")
+	}
+}
+
+// TestDesignSpec — AI dizayni generator spetsifikatsiyasiga to'liq o'tadi.
+func TestDesignSpec(t *testing.T) {
+	d := &Design{Name: "Okean", Colors: DesignColors{Background: "#FFFFFF", Surface: "#F0F0F0", Primary: "#123456",
+		Secondary: "#234567", Accent: "#FFAA00", Text: "#111111", Muted: "#555555"},
+		HeadingFont: "Georgia", BodyFont: "Calibri", Cover: "full", Header: "band", Cards: "tint", Corners: "square",
+		Markers: "outline", Motif: "dots", PhotoSide: "left", ImageStyle: "cool tones", SignatureLayouts: []string{"hub"}}
+	want := design.CustomSpec{Name: "Okean", Background: "#FFFFFF", Surface: "#F0F0F0", Primary: "#123456",
+		Secondary: "#234567", Accent: "#FFAA00", Text: "#111111", Muted: "#555555",
+		HeadingFont: "Georgia", BodyFont: "Calibri", Cover: "full", Header: "band", Cards: "tint", Corners: "square",
+		Markers: "outline", Motif: "dots", PhotoSide: "left", PhotoStyle: "cool tones", Signature: []string{"hub"}}
+	if got := d.Spec(); !reflect.DeepEqual(got, want) {
+		t.Errorf("spetsifikatsiya:\n%+v\nkutilgan:\n%+v", got, want)
 	}
 }

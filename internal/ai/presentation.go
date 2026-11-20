@@ -34,50 +34,45 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"telegram-presentation-bot/internal/design"
 	"telegram-presentation-bot/internal/textutil"
 )
 
-// Slayd maketlari — generator paketidagi Layout* nomlari bilan bir xil.
+// Slayd maketlari — design paketidagi nomlarning taxalluslari (generator ham
+// shularni chizadi).
 const (
-	LayoutAgenda     = "agenda"
-	LayoutBullets    = "bullets"
-	LayoutCards      = "cards"
-	LayoutComparison = "comparison"
-	LayoutProcess    = "process"
-	LayoutFacts      = "facts"
-	LayoutDefinition = "definition"
-	LayoutConclusion = "conclusion"
-	LayoutTimeline   = "timeline"
-	LayoutPyramid    = "pyramid"
-	LayoutMatrix     = "matrix"
-	LayoutCycle      = "cycle"
-	LayoutHub        = "hub"
-	LayoutStatement  = "statement"
+	LayoutAgenda     = design.LayoutAgenda
+	LayoutBullets    = design.LayoutBullets
+	LayoutCards      = design.LayoutCards
+	LayoutComparison = design.LayoutComparison
+	LayoutProcess    = design.LayoutProcess
+	LayoutFacts      = design.LayoutFacts
+	LayoutDefinition = design.LayoutDefinition
+	LayoutConclusion = design.LayoutConclusion
+	LayoutTimeline   = design.LayoutTimeline
+	LayoutPyramid    = design.LayoutPyramid
+	LayoutMatrix     = design.LayoutMatrix
+	LayoutCycle      = design.LayoutCycle
+	LayoutHub        = design.LayoutHub
+	LayoutStatement  = design.LayoutStatement
 )
-
-// slideLayouts — barcha maketlar (generator ularning hammasini chiza oladi).
-var slideLayouts = []string{
-	LayoutAgenda, LayoutBullets, LayoutCards, LayoutComparison,
-	LayoutProcess, LayoutFacts, LayoutDefinition, LayoutConclusion,
-	LayoutTimeline, LayoutPyramid, LayoutMatrix, LayoutCycle, LayoutHub, LayoutStatement,
-}
 
 // layoutAliases — modellar ba'zan maket nomini o'zgacha yozadi.
 var layoutAliases = map[string]string{
-	"outline": LayoutAgenda, "plan": LayoutAgenda, "reja": LayoutAgenda,
-	"list": LayoutBullets, "bullet": LayoutBullets, "points": LayoutBullets,
-	"grid": LayoutCards, "card": LayoutCards, "columns": LayoutCards,
-	"compare": LayoutComparison, "versus": LayoutComparison, "vs": LayoutComparison,
-	"steps": LayoutProcess, "stages": LayoutProcess,
-	"stats": LayoutFacts, "numbers": LayoutFacts, "figures": LayoutFacts,
-	"term":    LayoutDefinition,
-	"summary": LayoutConclusion, "xulosa": LayoutConclusion,
-	"chronology": LayoutTimeline, "history": LayoutTimeline, "dates": LayoutTimeline,
-	"hierarchy": LayoutPyramid, "levels": LayoutPyramid, "triangle": LayoutPyramid,
-	"swot": LayoutMatrix, "quadrant": LayoutMatrix, "quadrants": LayoutMatrix, "2x2": LayoutMatrix,
-	"loop": LayoutCycle, "circle": LayoutCycle, "circular": LayoutCycle,
-	"mindmap": LayoutHub, "radial": LayoutHub, "spokes": LayoutHub, "center": LayoutHub,
-	"quote": LayoutStatement, "thesis": LayoutStatement, "key-idea": LayoutStatement, "big-idea": LayoutStatement,
+	"outline": design.LayoutAgenda, "plan": design.LayoutAgenda, "reja": design.LayoutAgenda,
+	"list": design.LayoutBullets, "bullet": design.LayoutBullets, "points": design.LayoutBullets,
+	"grid": design.LayoutCards, "card": design.LayoutCards, "columns": design.LayoutCards,
+	"compare": design.LayoutComparison, "versus": design.LayoutComparison, "vs": design.LayoutComparison,
+	"steps": design.LayoutProcess, "stages": design.LayoutProcess,
+	"stats": design.LayoutFacts, "numbers": design.LayoutFacts, "figures": design.LayoutFacts,
+	"term":    design.LayoutDefinition,
+	"summary": design.LayoutConclusion, "xulosa": design.LayoutConclusion,
+	"chronology": design.LayoutTimeline, "history": design.LayoutTimeline, "dates": design.LayoutTimeline,
+	"hierarchy": design.LayoutPyramid, "levels": design.LayoutPyramid, "triangle": design.LayoutPyramid,
+	"swot": design.LayoutMatrix, "quadrant": design.LayoutMatrix, "quadrants": design.LayoutMatrix, "2x2": design.LayoutMatrix,
+	"loop": design.LayoutCycle, "circle": design.LayoutCycle, "circular": design.LayoutCycle,
+	"mindmap": design.LayoutHub, "radial": design.LayoutHub, "spokes": design.LayoutHub, "center": design.LayoutHub,
+	"quote": design.LayoutStatement, "thesis": design.LayoutStatement, "key-idea": design.LayoutStatement, "big-idea": design.LayoutStatement,
 }
 
 // PresentationRequest — taqdimot generatsiyasi uchun kiruvchi ma'lumotlar.
@@ -141,12 +136,12 @@ type PlannedSlide struct {
 func (r PresentationRequest) layouts() []string {
 	var out []string
 	for _, l := range r.Layouts {
-		if slices.Contains(slideLayouts, l) && !slices.Contains(out, l) {
+		if slices.Contains(design.AllLayouts, l) && !slices.Contains(out, l) {
 			out = append(out, l)
 		}
 	}
 	if len(out) == 0 {
-		return slideLayouts
+		return design.AllLayouts
 	}
 	// Reja va xulosa tuzilish uchun doim kerak.
 	for _, l := range []string{LayoutConclusion, LayoutAgenda} {
@@ -512,7 +507,7 @@ func scaleWords(s string, k float64) string {
 func layoutGuide(layouts []string, compact bool) string {
 	var b strings.Builder
 	b.WriteString(`Slide layouts (the "layout" field) — use only these — and the content each one needs:` + "\n")
-	for _, l := range slideLayouts {
+	for _, l := range design.AllLayouts {
 		if slices.Contains(layouts, l) {
 			b.WriteString("- " + layoutGuides[l] + "\n")
 		}
@@ -887,7 +882,7 @@ func (s *Slide) normalize() bool {
 
 func normalizeLayout(l string) string {
 	l = strings.ToLower(strings.TrimSpace(l))
-	for _, known := range slideLayouts {
+	for _, known := range design.AllLayouts {
 		if l == known {
 			return l
 		}
