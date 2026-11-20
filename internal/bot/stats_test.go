@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/tz"
 )
 
 // fakeStats — xotiradagi statistika ombori.
@@ -77,7 +77,7 @@ func TestVisitTracker(t *testing.T) {
 func TestRecordVisitOncePerDay(t *testing.T) {
 	fs := &fakeStats{}
 	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Stats: fs})
-	now := time.Date(2026, 11, 18, 10, 0, 0, 0, payment.Tashkent)
+	now := time.Date(2026, 11, 18, 10, 0, 0, 0, tz.Tashkent)
 
 	h.recordVisit(7, now)
 	h.recordVisit(7, now.Add(time.Hour))
@@ -112,7 +112,7 @@ func TestCollectStatsPeriods(t *testing.T) {
 	if rep.total != 1234 || len(rep.periods) != 3 || len(rep.days) != statsDays {
 		t.Fatalf("hisobot to'liq emas: %+v", rep)
 	}
-	today := time.Date(2026, 11, 19, 0, 0, 0, 0, payment.Tashkent)
+	today := time.Date(2026, 11, 19, 0, 0, 0, 0, tz.Tashkent)
 	want := []time.Time{today, today.AddDate(0, 0, -6), today.AddDate(0, 0, -29)}
 	if fs.sinces[0] != nil {
 		t.Error("barcha vaqt uchun since nil bo'lishi kerak")
@@ -130,7 +130,7 @@ func TestCollectStatsPeriods(t *testing.T) {
 func TestStatsText(t *testing.T) {
 	fs := &fakeStats{}
 	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Stats: fs})
-	rep, err := h.collectStats(context.Background(), time.Date(2026, 11, 18, 13, 26, 0, 0, payment.Tashkent))
+	rep, err := h.collectStats(context.Background(), time.Date(2026, 11, 18, 13, 26, 0, 0, tz.Tashkent))
 	if err != nil {
 		t.Fatal(err)
 	}

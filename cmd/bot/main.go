@@ -27,6 +27,7 @@ import (
 	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/tz"
 )
 
 func main() {
@@ -69,7 +70,7 @@ func run() error {
 	}
 	sessions := storage.NewSessionRepository(db)
 	billing := storage.NewBillingRepository(db)
-	stats := storage.NewStatsRepository(db, payment.Tashkent)
+	stats := storage.NewStatsRepository(db, tz.Tashkent)
 
 	// 4. AI klient va fayl generatorlari: taqdimot — .pptx (shablon asosida),
 	// mustaqil ish, referat va amaliy topshiriq — .docx.

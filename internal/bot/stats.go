@@ -16,8 +16,8 @@ import (
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
 
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/tz"
 )
 
 // StatsStore — tashriflar ombori (internal/storage.StatsRepository).
@@ -97,7 +97,7 @@ func (h *Handler) trackVisits(next tele.HandlerFunc) tele.HandlerFunc {
 }
 
 func (h *Handler) recordVisit(userID int64, now time.Time) {
-	day := now.In(payment.Tashkent).Format(time.DateOnly)
+	day := now.In(tz.Tashkent).Format(time.DateOnly)
 	if !h.visits.mark(userID, day) {
 		return
 	}
@@ -149,8 +149,8 @@ func (h *Handler) onStats(c tele.Context) error {
 // Toshkent vaqti bo'yicha kun boshidan hisoblanadi ("7 kun" — bugun va
 // oldingi 6 kun).
 func (h *Handler) collectStats(ctx context.Context, now time.Time) (statsReport, error) {
-	local := now.In(payment.Tashkent)
-	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, payment.Tashkent)
+	local := now.In(tz.Tashkent)
+	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, tz.Tashkent)
 	rep := statsReport{now: now}
 
 	var err error
@@ -179,7 +179,7 @@ func (h *Handler) collectStats(ctx context.Context, now time.Time) (statsReport,
 func statsText(r statsReport) string {
 	var b strings.Builder
 	b.WriteString("👥 <b>Tashrif buyuruvchilar statistikasi</b>\n")
-	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", r.now.In(payment.Tashkent).Format("02.01.2006 15:04"))
+	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", r.now.In(tz.Tashkent).Format("02.01.2006 15:04"))
 	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.total))
 	fmt.Fprintf(&b, "📦 Jami tayyor ishlar: <b>%s</b> ta (%s kishi)\n\n", formatCount(r.all.Delivered), formatCount(r.all.Customers))
 
@@ -221,7 +221,7 @@ func statsText(r statsReport) string {
 		days := slices.Clone(r.days)
 		slices.Reverse(days)
 		for _, d := range days {
-			day := d.Day.In(payment.Tashkent)
+			day := d.Day.In(tz.Tashkent)
 			fmt.Fprintf(&b, "\n%s (%s) %s %s", day.Format("02.01"), weekdays[day.Weekday()],
 				padLeft(formatCount(d.NewUsers), 6), padLeft(formatCount(d.ActiveUsers), 6))
 		}

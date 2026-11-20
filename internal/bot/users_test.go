@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/tz"
 )
 
 func sampleUsers() []storage.UserSummary {
-	at := func(day, hour int) time.Time { return time.Date(2026, 11, day, hour, 0, 0, 0, payment.Tashkent) }
+	at := func(day, hour int) time.Time { return time.Date(2026, 11, day, hour, 0, 0, 0, tz.Tashkent) }
 	visit := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC) // date ustuni: UTC yarim tun
 	return []storage.UserSummary{
 		{UserID: 1001, Username: "ali", FirstName: "Ali <Vali>", StudentName: "Aliyev Vali", University: "TDIU",
@@ -26,7 +26,7 @@ func sampleUsers() []storage.UserSummary {
 
 func TestUsersText(t *testing.T) {
 	p, _ := findPeriod("week")
-	txt := usersText(sampleUsers(), p, time.Date(2026, 11, 18, 21, 40, 0, 0, payment.Tashkent))
+	txt := usersText(sampleUsers(), p, time.Date(2026, 11, 18, 21, 40, 0, 0, tz.Tashkent))
 	for _, want := range []string{
 		"Foydalanuvchilar — oxirgi 7 kun", "18.11.2026 21:40",
 		"Jami: <b>3</b>", "Ish olgan: <b>2</b>", "To'lov qilgan: <b>1</b> · 25 000 so'm",
@@ -93,7 +93,7 @@ func TestUsersCSV(t *testing.T) {
 }
 
 func TestLastActive(t *testing.T) {
-	loc := payment.Tashkent
+	loc := tz.Tashkent
 	visit := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	u := storage.UserSummary{UpdatedAt: time.Date(2026, 11, 15, 23, 0, 0, 0, time.UTC), LastVisit: &visit}
 	if got := u.LastActive(loc); !got.Equal(time.Date(2026, 11, 18, 0, 0, 0, 0, loc)) {

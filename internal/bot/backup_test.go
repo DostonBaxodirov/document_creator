@@ -6,29 +6,29 @@ import (
 	"time"
 
 	"telegram-presentation-bot/internal/backup"
-	"telegram-presentation-bot/internal/payment"
+	"telegram-presentation-bot/internal/tz"
 )
 
 func TestNextBackup(t *testing.T) {
-	tz := payment.Tashkent
+	loc := tz.Tashkent
 	cases := []struct {
 		name string
 		now  time.Time
 		want time.Time
 	}{
-		{"bugun hali vaqti kelmagan", time.Date(2026, 11, 19, 1, 0, 0, 0, tz), time.Date(2026, 11, 19, 3, 0, 0, 0, tz)},
-		{"vaqti o'tgan — ertaga", time.Date(2026, 11, 19, 10, 0, 0, 0, tz), time.Date(2026, 11, 20, 3, 0, 0, 0, tz)},
-		{"aynan shu daqiqa — ertaga", time.Date(2026, 11, 19, 3, 0, 0, 0, tz), time.Date(2026, 11, 20, 3, 0, 0, 0, tz)},
+		{"bugun hali vaqti kelmagan", time.Date(2026, 11, 19, 1, 0, 0, 0, loc), time.Date(2026, 11, 19, 3, 0, 0, 0, loc)},
+		{"vaqti o'tgan — ertaga", time.Date(2026, 11, 19, 10, 0, 0, 0, loc), time.Date(2026, 11, 20, 3, 0, 0, 0, loc)},
+		{"aynan shu daqiqa — ertaga", time.Date(2026, 11, 19, 3, 0, 0, 0, loc), time.Date(2026, 11, 20, 3, 0, 0, 0, loc)},
 		// UTC 18-noyabr 21:30 = Toshkent 19-noyabr 02:30.
-		{"UTC da kecha", time.Date(2026, 11, 18, 21, 30, 0, 0, time.UTC), time.Date(2026, 11, 19, 3, 0, 0, 0, tz)},
-		{"oy oxiri", time.Date(2026, 11, 30, 23, 0, 0, 0, tz), time.Date(2026, 12, 1, 3, 0, 0, 0, tz)},
+		{"UTC da kecha", time.Date(2026, 11, 18, 21, 30, 0, 0, time.UTC), time.Date(2026, 11, 19, 3, 0, 0, 0, loc)},
+		{"oy oxiri", time.Date(2026, 11, 30, 23, 0, 0, 0, loc), time.Date(2026, 12, 1, 3, 0, 0, 0, loc)},
 	}
 	for _, c := range cases {
 		if got := nextBackup(c.now, 3, 0); !got.Equal(c.want) {
 			t.Errorf("%s: %v, kutilgan %v", c.name, got, c.want)
 		}
 	}
-	if got := nextBackup(time.Date(2026, 11, 19, 23, 50, 0, 0, tz), 23, 59); !got.Equal(time.Date(2026, 11, 19, 23, 59, 0, 0, tz)) {
+	if got := nextBackup(time.Date(2026, 11, 19, 23, 50, 0, 0, loc), 23, 59); !got.Equal(time.Date(2026, 11, 19, 23, 59, 0, 0, loc)) {
 		t.Errorf("23:59: %v", got)
 	}
 }

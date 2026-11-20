@@ -20,9 +20,9 @@ import (
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
 
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/textutil"
+	"telegram-presentation-bot/internal/tz"
 )
 
 const msgNoUserStats = "Foydalanuvchilar ro'yxati hozircha mavjud emas."
@@ -94,7 +94,7 @@ func (h *Handler) onUsersFormat(c tele.Context) error {
 	st := computeUserStats(list)
 	return c.Send(&tele.Document{
 		File:     tele.FromReader(bytes.NewReader(data)),
-		FileName: fmt.Sprintf("foydalanuvchilar_%s_%s.csv", p.ID, now.In(payment.Tashkent).Format("2006-01-02_1504")),
+		FileName: fmt.Sprintf("foydalanuvchilar_%s_%s.csv", p.ID, now.In(tz.Tashkent).Format("2006-01-02_1504")),
 		MIME:     "text/csv",
 		Caption: fmt.Sprintf("👥 Foydalanuvchilar — %s\nJami: %s · ish olgan: %s · to'lov qilgan: %s (%s)",
 			p.Title, formatCount(st.total), formatCount(st.customers), formatCount(st.payers), formatSum(int(st.paidSum))),
@@ -126,7 +126,7 @@ func usersText(list []storage.UserSummary, p reportPeriod, now time.Time) string
 	st := computeUserStats(list)
 	var b strings.Builder
 	fmt.Fprintf(&b, "👥 <b>Foydalanuvchilar — %s</b>\n", p.Title)
-	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(payment.Tashkent).Format("02.01.2006 15:04"))
+	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(tz.Tashkent).Format("02.01.2006 15:04"))
 	fmt.Fprintf(&b, "👤 Jami: <b>%s</b>\n", formatCount(st.total))
 	fmt.Fprintf(&b, "📦 Ish olgan: <b>%s</b>\n", formatCount(st.customers))
 	fmt.Fprintf(&b, "💰 To'lov qilgan: <b>%s</b> · %s\n", formatCount(st.payers), formatSum(int(st.paidSum)))
@@ -162,7 +162,7 @@ func userLine(n int, u storage.UserSummary) string {
 		b.WriteString(" (@" + html.EscapeString(u.Username) + ")")
 	}
 	fmt.Fprintf(&b, " · <code>%d</code> · 📅 %s · 👁 %s", u.UserID,
-		u.CreatedAt.In(payment.Tashkent).Format("02.01.2006"), u.LastActive(payment.Tashkent).Format("02.01.2006"))
+		u.CreatedAt.In(tz.Tashkent).Format("02.01.2006"), u.LastActive(tz.Tashkent).Format("02.01.2006"))
 	if u.Delivered > 0 {
 		fmt.Fprintf(&b, " · 📦 %d", u.Delivered)
 	}
@@ -213,8 +213,8 @@ func usersCSV(list []storage.UserSummary) ([]byte, error) {
 			u.University,
 			language,
 			strconv.FormatBool(u.IsAdmin),
-			u.CreatedAt.In(payment.Tashkent).Format("2006-01-02 15:04:05"),
-			u.LastActive(payment.Tashkent).Format(time.DateOnly),
+			u.CreatedAt.In(tz.Tashkent).Format("2006-01-02 15:04:05"),
+			u.LastActive(tz.Tashkent).Format(time.DateOnly),
 			strconv.FormatInt(u.Delivered, 10),
 			strconv.FormatInt(u.Payments, 10),
 			strconv.FormatInt(u.PaidSum, 10),

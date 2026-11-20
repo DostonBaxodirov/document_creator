@@ -6,11 +6,8 @@ import (
 	"time"
 
 	"telegram-presentation-bot/internal/textutil"
+	"telegram-presentation-bot/internal/tz"
 )
-
-// Tashkent — O'zbekiston vaqti (UTC+5, yozgi vaqt yo'q). Cheklardagi vaqt shu
-// mintaqada yoziladi. FixedZone tizimda tzdata bo'lishini talab qilmaydi.
-var Tashkent = time.FixedZone("UZT", 5*60*60)
 
 // Verdict — chek bo'yicha qaror.
 type Verdict string
@@ -110,14 +107,14 @@ func Decide(in Input) Decision {
 		earliest, latest := in.OrderCreatedAt.Add(-clockSkew), in.Now.Add(clockSkew)
 		if dateOnly {
 			// Faqat sana bo'lsa — kun bo'yicha solishtiramiz.
-			earliest = startOfDay(in.OrderCreatedAt.In(Tashkent))
-			latest = startOfDay(in.Now.In(Tashkent)).Add(24*time.Hour - time.Nanosecond)
+			earliest = startOfDay(in.OrderCreatedAt.In(tz.Tashkent))
+			latest = startOfDay(in.Now.In(tz.Tashkent)).Add(24*time.Hour - time.Nanosecond)
 		}
 		if paidAt.Before(earliest) {
-			add("Chek buyurtmadan oldingi vaqtga tegishli (%s)", paidAt.In(Tashkent).Format("02.01.2006 15:04"))
+			add("Chek buyurtmadan oldingi vaqtga tegishli (%s)", paidAt.In(tz.Tashkent).Format("02.01.2006 15:04"))
 		}
 		if paidAt.After(latest) {
-			add("Chek vaqti kelajakda (%s)", paidAt.In(Tashkent).Format("02.01.2006 15:04"))
+			add("Chek vaqti kelajakda (%s)", paidAt.In(tz.Tashkent).Format("02.01.2006 15:04"))
 		}
 	}
 
@@ -161,12 +158,12 @@ func parsePaidAt(s string) (t time.Time, dateOnly, ok bool) {
 		return time.Time{}, false, false
 	}
 	for _, l := range paidAtLayouts {
-		if t, err := time.ParseInLocation(l, s, Tashkent); err == nil {
+		if t, err := time.ParseInLocation(l, s, tz.Tashkent); err == nil {
 			return t, false, true
 		}
 	}
 	for _, l := range dateOnlyLayouts {
-		if t, err := time.ParseInLocation(l, s, Tashkent); err == nil {
+		if t, err := time.ParseInLocation(l, s, tz.Tashkent); err == nil {
 			return t, true, true
 		}
 	}

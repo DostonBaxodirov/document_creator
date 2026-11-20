@@ -24,6 +24,7 @@ import (
 	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/textutil"
+	"telegram-presentation-bot/internal/tz"
 )
 
 // BillingStore — foydalanuvchilar, buyurtmalar va to'lovlar ombori.
@@ -907,19 +908,19 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 	detected := []string{"summa: " + orDash(p.DetectedAmount > 0, formatSum(p.DetectedAmount))}
 	detected = append(detected, "karta: "+orDash(p.DetectedLast4 != "", "****"+e(p.DetectedLast4)))
 	if p.DetectedPaidAt != nil {
-		detected = append(detected, p.DetectedPaidAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
+		detected = append(detected, p.DetectedPaidAt.In(tz.Tashkent).Format("02.01.2006 15:04"))
 	}
 	fmt.Fprintf(&b, "🔎 Chekda: %s\n", strings.Join(detected, " · "))
 	if p.TransactionID != "" {
 		fmt.Fprintf(&b, "🔖 Tranzaksiya: <code>%s</code>\n", e(textutil.TruncateHard(p.TransactionID, 40)))
 	}
-	fmt.Fprintf(&b, "🕒 Yuborilgan: %s\n", p.CreatedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
+	fmt.Fprintf(&b, "🕒 Yuborilgan: %s\n", p.CreatedAt.In(tz.Tashkent).Format("02.01.2006 15:04"))
 
 	var tail string
 	switch {
 	case p.ReviewedAt != nil && p.ReviewedBy != nil:
 		tail = fmt.Sprintf("\n%s — admin %d, %s", paymentStatusLabel(p.Status), *p.ReviewedBy,
-			p.ReviewedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
+			p.ReviewedAt.In(tz.Tashkent).Format("02.01.2006 15:04"))
 	case p.Status == storage.PaymentApproved:
 		tail = "\n🤖 Avtomatik tasdiqlandi — ish tayyorlanmoqda."
 	case p.Status == storage.PaymentRejected:

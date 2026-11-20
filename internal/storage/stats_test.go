@@ -151,7 +151,7 @@ func TestStatsRepository(t *testing.T) {
 	}
 }
 
-// tashkent — bot ishlatadigan mintaqa (payment.Tashkent bilan bir xil: UTC+5).
+// tashkent — bot ishlatadigan mintaqa (tz.Tashkent bilan bir xil: UTC+5).
 var tashkent = time.FixedZone("UZT", 5*60*60)
 
 // mkSession sessiyani berilgan yaratilish vaqti bilan yozadi.

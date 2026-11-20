@@ -22,8 +22,8 @@ import (
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
 
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/tz"
 )
 
 const (
@@ -256,7 +256,7 @@ func (h *Handler) onReportFormat(c tele.Context) error {
 	st := computeStats(list)
 	return c.Send(&tele.Document{
 		File:     tele.FromReader(bytes.NewReader(data)),
-		FileName: fmt.Sprintf("tolovlar_%s_%s.csv", p.ID, now.In(payment.Tashkent).Format("2006-01-02_1504")),
+		FileName: fmt.Sprintf("tolovlar_%s_%s.csv", p.ID, now.In(tz.Tashkent).Format("2006-01-02_1504")),
 		MIME:     "text/csv",
 		Caption: fmt.Sprintf("📊 To'lovlar — %s\n✅ Tasdiqlangan: %d ta · %s\nJami yozuvlar: %d",
 			p.Title, st.approved.count, formatSum(st.approved.sum), len(list)),
@@ -327,7 +327,7 @@ func textReport(list []storage.Payment, p reportPeriod, now time.Time) string {
 	st := computeStats(list)
 	var b strings.Builder
 	fmt.Fprintf(&b, "📊 <b>To'lovlar hisoboti — %s</b>\n", p.Title)
-	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(payment.Tashkent).Format("02.01.2006 15:04"))
+	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(tz.Tashkent).Format("02.01.2006 15:04"))
 	fmt.Fprintf(&b, "✅ Tasdiqlangan: <b>%d</b> ta · <b>%s</b>\n", st.approved.count, formatSum(st.approved.sum))
 	fmt.Fprintf(&b, "     📷 Rasmli: %d ta · %s\n", st.photo.count, formatSum(st.photo.sum))
 	fmt.Fprintf(&b, "     📄 Rasmsiz: %d ta · %s\n", st.plain.count, formatSum(st.plain.sum))
@@ -370,7 +370,7 @@ func reportLine(p storage.Payment) string {
 		user = "@" + html.EscapeString(p.Username) + " · " + user
 	}
 	return fmt.Sprintf("%s #%d · %s · %s · %s · /chek_%d\n", icon, p.ID, formatSum(p.Amount), user,
-		p.CreatedAt.In(payment.Tashkent).Format("02.01.2006 15:04"), p.ID)
+		p.CreatedAt.In(tz.Tashkent).Format("02.01.2006 15:04"), p.ID)
 }
 
 // csvHeader — CSV hisobot ustunlari.
@@ -396,7 +396,7 @@ func csvReport(list []storage.Payment) ([]byte, error) {
 			reviewedBy = strconv.FormatInt(*p.ReviewedBy, 10)
 		}
 		if p.ReviewedAt != nil {
-			reviewedAt = p.ReviewedAt.In(payment.Tashkent).Format(layout)
+			reviewedAt = p.ReviewedAt.In(tz.Tashkent).Format(layout)
 		}
 		row := []string{
 			strconv.FormatUint(uint64(p.ID), 10),
@@ -408,7 +408,7 @@ func csvReport(list []storage.Payment) ([]byte, error) {
 			strconv.Itoa(p.Amount),
 			strconv.Itoa(p.DetectedAmount),
 			p.Status,
-			p.CreatedAt.In(payment.Tashkent).Format(layout),
+			p.CreatedAt.In(tz.Tashkent).Format(layout),
 			strconv.Itoa(p.CheckMessageID),
 			p.CheckFileID,
 			p.TransactionID,

@@ -15,8 +15,8 @@ import (
 	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/backup"
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/textutil"
+	"telegram-presentation-bot/internal/tz"
 )
 
 // Backuper — bazaning zaxira nusxasini oluvchi (internal/backup.Dumper).
@@ -47,8 +47,8 @@ const (
 // nextBackup now dan keyingi hour:minute vaqti (Toshkent). Aynan shu daqiqada
 // chaqirilsa — ertangi kun.
 func nextBackup(now time.Time, hour, minute int) time.Time {
-	local := now.In(payment.Tashkent)
-	t := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, payment.Tashkent)
+	local := now.In(tz.Tashkent)
+	t := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, tz.Tashkent)
 	if !t.After(now) {
 		t = t.AddDate(0, 0, 1)
 	}
@@ -184,7 +184,7 @@ func backupCaption(title string, f *backup.File, now time.Time) string {
 	return fmt.Sprintf("💾 <b>%s</b> — %s\n📦 %s\n\n"+
 		"<i>Bazaning to'liq nusxasi (foydalanuvchilar, buyurtmalar, to'lovlar). "+
 		"Maxfiy ma'lumot — hech kimga yubormang. Tiklash: docs/DEPLOY.md.</i>",
-		title, now.In(payment.Tashkent).Format("02.01.2006 15:04"), formatBytes(f.Size))
+		title, now.In(tz.Tashkent).Format("02.01.2006 15:04"), formatBytes(f.Size))
 }
 
 // formatBytes: 512 B, 3.4 KB, 12.5 MB.

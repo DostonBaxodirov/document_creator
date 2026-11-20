@@ -15,9 +15,9 @@ import (
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
 
-	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/textutil"
+	"telegram-presentation-bot/internal/tz"
 )
 
 // maxNoticeErrRunes — admin xabaridagi xato matni uzunligi.
@@ -162,7 +162,7 @@ func purchaseText(pc purchase, out *output, took time.Duration, now time.Time) s
 		fmt.Fprintf(&b, "📦 <b>Natija:</b> %s · %s\n", e(out.fileName), e(out.summary))
 	}
 	fmt.Fprintf(&b, "⏱ <b>Tayyorlandi:</b> %s · 🕒 %s", formatDuration(took),
-		now.In(payment.Tashkent).Format("02.01.2006 15:04"))
+		now.In(tz.Tashkent).Format("02.01.2006 15:04"))
 	return b.String()
 }
 
