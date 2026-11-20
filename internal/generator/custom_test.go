@@ -3,6 +3,7 @@ package generator
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -213,6 +214,93 @@ func TestPhotoSlides(t *testing.T) {
 	}
 	if DesignFor(ThemeAcademic, nil).PhotoSlides(slides, 3) != nil {
 		t.Error("rasmsiz dizaynda rasmli slaydlar tanlanmasligi kerak")
+	}
+}
+
+// typicalSlides — AI odatda yozadigan hajmdagi slaydlar (har bir maket uchun
+// layoutGuides dagi elementlar soni).
+func typicalSlides() []Slide {
+	items := func(n int) []Item {
+		out := make([]Item, n)
+		for i := range out {
+			out[i] = Item{Heading: "h", Text: "t"}
+		}
+		return out
+	}
+	values := func(n int) []Item {
+		out := items(n)
+		for i := range out {
+			out[i].Value = "19" + strconv.Itoa(90+i)
+		}
+		return out
+	}
+	return []Slide{
+		{Layout: LayoutAgenda, Items: items(5)},
+		{Layout: LayoutDefinition, Highlight: "d", Items: items(3)},
+		{Layout: LayoutBullets, Items: items(4)},
+		{Layout: LayoutCards, Items: items(4)},
+		{Layout: LayoutProcess, Items: items(4)},
+		{Layout: LayoutStatement, Highlight: "s", Items: items(2)},
+		{Layout: LayoutComparison, Items: items(2)},
+		{Layout: LayoutFacts, Items: values(3)},
+		{Layout: LayoutBullets, Items: items(3), Highlight: "h"},
+		{Layout: LayoutTimeline, Items: values(4)},
+		{Layout: LayoutCards, Items: items(3)},
+		{Layout: LayoutPyramid, Items: items(4)},
+		{Layout: LayoutMatrix, Items: items(4)},
+		{Layout: LayoutCycle, Items: items(4)},
+		{Layout: LayoutHub, Items: items(5)},
+		{Layout: LayoutConclusion, Items: items(4), Highlight: "c"},
+	}
+}
+
+// TestPhotoWideLayout — maket bo'yicha taxmin odatiy slaydlarda PhotoWide
+// bilan bir xil (yon panelli, banner rasmli va maxsus dizaynlarda).
+func TestPhotoWideLayout(t *testing.T) {
+	designs := map[string]Design{"maxsus": DesignFor(ThemeCustom, nil)}
+	for _, th := range Themes() {
+		designs[th.ID] = DesignFor(th.ID, nil)
+	}
+	for name, d := range designs {
+		for _, s := range typicalSlides() {
+			if got, want := d.PhotoWideLayout(s.Layout), d.PhotoWide(s); got != want {
+				t.Errorf("%s, %s: PhotoWideLayout %v, PhotoWide %v", name, s.Layout, got, want)
+			}
+		}
+	}
+	if !DesignFor(ThemePanorama, nil).PhotoWideLayout(LayoutBullets) {
+		t.Error("banner rasmli dizaynda rasm doim yotiq bo'lishi kerak")
+	}
+	if DesignFor(ThemeOcean, nil).PhotoWideLayout(LayoutAgenda) || !DesignFor(ThemeOcean, nil).PhotoWideLayout(LayoutProcess) {
+		t.Error("yon panelli dizaynda reja — tik, jarayon — yotiq rasm bilan bo'lishi kerak")
+	}
+	if DesignFor(ThemeAcademic, nil).PhotoWideLayout(LayoutProcess) {
+		t.Error("rasmsiz dizaynda PhotoWideLayout false bo'lishi kerak")
+	}
+}
+
+// TestPhotoSlidesByLayout — maketlar bo'yicha tanlov odatiy slaydlarda
+// PhotoSlides tanlovi bilan bir xil.
+func TestPhotoSlidesByLayout(t *testing.T) {
+	slides := typicalSlides()
+	layouts := make([]string, len(slides))
+	for i, s := range slides {
+		layouts[i] = s.Layout
+	}
+	for _, id := range []string{ThemeCustom, ThemeOcean, ThemePanorama} {
+		d := DesignFor(id, nil)
+		for n := 0; n <= len(slides)+2; n++ {
+			got, want := d.PhotoSlidesByLayout(layouts, n), d.PhotoSlides(slides, n)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s, n=%d: PhotoSlidesByLayout %v, PhotoSlides %v", id, n, got, want)
+			}
+		}
+	}
+	if DesignFor(ThemeAcademic, nil).PhotoSlidesByLayout(layouts, 3) != nil {
+		t.Error("rasmsiz dizaynda rasmli slaydlar tanlanmasligi kerak")
+	}
+	if DesignFor(ThemeCustom, nil).PhotoSlidesByLayout(nil, 3) != nil {
+		t.Error("slaydlar bo'lmasa tanlov bo'sh bo'lishi kerak")
 	}
 }
 

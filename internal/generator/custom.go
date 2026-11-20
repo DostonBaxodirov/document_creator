@@ -462,16 +462,45 @@ func (d Design) PhotoWide(s Slide) bool {
 	return d.t.photos && d.t.photoAsBanner(normalizeSlide(s))
 }
 
+// PhotoWideLayout — PhotoWide ning faqat maketga qarab taxmini (slayd matni
+// hali yozilmagan, masalan reja bosqichida): banner rasmli dizaynda — doim
+// yotiq, aks holda yon panelga sig'adigan maketlarda tik, qolganlarida yotiq.
+// Rasmsiz dizaynda — false.
+func (d Design) PhotoWideLayout(layout string) bool {
+	return d.t.photos && (d.t.photoBanner || !layoutFitsPhoto(layout))
+}
+
 // PhotoSlides n ta rasm qo'yiladigan slaydlar indekslarini (o'sish tartibida)
 // tanlaydi. Avval rasm yon panelga sig'adigan slaydlar teng oraliqda
 // olinadi, yetmasa — qolganlari (tepadagi banner bilan). Rasmsiz dizaynda — nil.
 func (d Design) PhotoSlides(slides []Slide, n int) []int {
-	if !d.t.photos || n <= 0 || len(slides) == 0 {
+	fits := make([]bool, len(slides))
+	for i, s := range slides {
+		fits[i] = photoFits(normalizeSlide(s))
+	}
+	return d.pickPhotoSlides(fits, n)
+}
+
+// PhotoSlidesByLayout — PhotoSlides ning faqat maketlarga qarab tanlovi
+// (slaydlar matni hali yozilmagan, masalan reja bosqichida): xuddi shunday
+// yon panelga sig'adigan maketlar ustuvor va teng oraliqda.
+func (d Design) PhotoSlidesByLayout(layouts []string, n int) []int {
+	fits := make([]bool, len(layouts))
+	for i, l := range layouts {
+		fits[i] = layoutFitsPhoto(l)
+	}
+	return d.pickPhotoSlides(fits, n)
+}
+
+// pickPhotoSlides n ta rasmli slaydni tanlaydi: fits[i] — i-slayd yonida
+// rasm uchun joy bor (ustuvor), qolganlari faqat ular yetmasa olinadi.
+func (d Design) pickPhotoSlides(fits []bool, n int) []int {
+	if !d.t.photos || n <= 0 || len(fits) == 0 {
 		return nil
 	}
 	var side, wide []int
-	for i, s := range slides {
-		if photoFits(normalizeSlide(s)) {
+	for i, ok := range fits {
+		if ok {
 			side = append(side, i)
 		} else {
 			wide = append(wide, i)

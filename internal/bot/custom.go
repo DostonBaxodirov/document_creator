@@ -330,6 +330,14 @@ type picturePlan struct {
 	limit int
 }
 
+// coverShape titul rasmi shakli: AI maxsus dizaynda — kvadrat, aks holda yotiq.
+func (p picturePlan) coverShape() images.Shape {
+	if p.limit > 0 {
+		return images.Square
+	}
+	return images.Landscape
+}
+
 // customPhotoTargets AI maxsus dizaynda rasm qo'yiladigan slaydlar:
 // rasm tavsifi bor slaydlardan n tasi (dizayn tanlaydi — yon panelga
 // sig'adiganlari ustuvor, teng oraliqda).

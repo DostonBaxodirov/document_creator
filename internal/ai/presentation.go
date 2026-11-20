@@ -14,9 +14,11 @@ package ai
 // joyga moslaydi (katta shriftli dizaynlarda qisqaroq).
 //
 // Slaydlar soni kam bo'lsa (slidesPerRequest gacha) — bitta so'rov. Ko'p
-// bo'lsa — avval reja (har bir slayd sarlavhasi, maketi va mazmuni), so'ng
-// slaydlar guruhlab parallel yoziladi: bu katta taqdimotlarni modelning
-// javob uzunligi chegarasiga sig'diradi.
+// bo'lsa — avval reja (har bir slayd sarlavhasi, maketi va mazmuni; rasmli
+// dizaynda — rasm tavsifi ham), so'ng slaydlar guruhlab parallel yoziladi: bu
+// katta taqdimotlarni modelning javob uzunligi chegarasiga sig'diradi. Reja
+// tayyor bo'lishi bilan OnOutline chaqiriladi — rasmlar matn bilan parallel
+// chizilishi mumkin.
 
 import (
 	"context"
@@ -109,6 +111,28 @@ type PresentationRequest struct {
 	// Custom — AI maxsus dizayni (ixtiyoriy): tuzilish vizualroq va xilma-xil
 	// bo'ladi, rasm tavsiflari dizaynning rasm uslubiga moslanadi.
 	Custom *DesignBrief
+
+	// OnOutline — katta taqdimot rejasi tayyor bo'lishi bilan, slaydlar
+	// yozilishidan oldin bir marta chaqiriladi (ixtiyoriy): rasmlarni matn
+	// bilan parallel chizishni boshlash uchun. Images rejimida rejadagi har
+	// bir slaydda rasm tavsifi bo'ladi; slayd qaysi reja slaydiga tegishli
+	// ekani Slide.PlanIndex da. Kichik taqdimotda (bitta so'rov, rejasiz)
+	// chaqirilmaydi. Chaqiruv sinxron — generatsiya uni kutadi, shuning uchun
+	// funksiya tez qaytishi kerak (uzoq ishni alohida goroutine'da boshlash kerak).
+	OnOutline func(p OutlinePlan)
+}
+
+// OutlinePlan — katta taqdimot rejasi (OnOutline uchun).
+type OutlinePlan struct {
+	CoverImage string // titul slayd rasmi tavsifi (Images rejimida; bo'sh bo'lishi mumkin)
+	Slides     []PlannedSlide
+}
+
+// PlannedSlide — rejadagi bitta slayd.
+type PlannedSlide struct {
+	Title  string
+	Layout string
+	Image  string // rasm tavsifi (inglizcha; faqat Images rejimida, bo'sh bo'lishi mumkin)
 }
 
 // layouts so'rov uchun ruxsat etilgan maketlar (noma'lumlari tashlanadi).
@@ -162,6 +186,9 @@ type Slide struct {
 	Image string `json:"image,omitempty"`
 	// Bullets — model sxemadan chetga chiqib eski formatda javob bersa (zaxira).
 	Bullets []string `json:"bullets,omitempty"`
+	// PlanIndex — slayd mos keladigan reja slaydi indeksi (OutlinePlan.Slides);
+	// kichik taqdimotda (rejasiz) — slaydning o'z tartib raqami.
+	PlanIndex int `json:"-"`
 }
 
 // Presentation — AI qaytargan taqdimot tarkibi.
@@ -213,6 +240,9 @@ func (c *client) generateDeck(ctx context.Context, req PresentationRequest) (*Pr
 			return nil, 0, err
 		}
 		pres.fit(req.SlideCount)
+		for i := range pres.Slides {
+			pres.Slides[i].PlanIndex = i
+		}
 		return pres, len(pres.Slides), nil
 	})
 }
@@ -244,6 +274,14 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 	progress.setTotal(1 + len(batches))
 	progress.advance()
 
+	// Rasm tavsiflari rejada tayyor: chaqiruvchi rasmlarni slaydlar
+	// yozilishini kutmasdan chizishni boshlashi mumkin.
+	if req.OnOutline != nil {
+		req.OnOutline(plan.outlinePlan())
+	}
+	// Rasm tavsiflari rejada bo'lsa, guruhlarda ular qayta yozdirilmaydi.
+	batchImages := req.Images && !plan.hasImages()
+
 	results := make([][]Slide, len(batches))
 	err = forEachParallel(ctx, len(batches), c.parallel, func(ctx context.Context, i int) error {
 		b := batches[i]
@@ -251,7 +289,7 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 		slides, err := generateJSON(ctx, c, "presentation_slides", task{
 			system: presentationSystemPrompt,
 			user:   buildSlidesBatchPrompt(req, plan, b[0], b[1]),
-			schema: slidesBatchSchema(req.Images, req.layouts()),
+			schema: slidesBatchSchema(batchImages, req.layouts()),
 		}, want, func(raw string) ([]Slide, int, error) {
 			s, err := parseSlides(raw)
 			if err != nil {
@@ -260,6 +298,14 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 			s = dropForeignSlides(s, plan, b[0], b[1])
 			if len(s) > want {
 				s = s[:want]
+			}
+			assignPlanIndex(s, plan, b[0], b[1])
+			// Rasm tavsifi guruhda so'ralmagan bo'lsa — rejadagisi olinadi
+			// (Presentation avvalgidek har bir slayd rasm tavsifi bilan qaytadi).
+			for k := range s {
+				if s[k].Image == "" {
+					s[k].Image = plan.Slides[s[k].PlanIndex].Image
+				}
 			}
 			return s, len(s), nil
 		})
@@ -294,7 +340,7 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 // [from, to) dan tashqaridagi reja slaydiga mos keladigan slayd tashlanadi;
 // natija kam bo'lsa, generateJSON qayta so'raydi.
 func dropForeignSlides(slides []Slide, plan *deckOutline, from, to int) []Slide {
-	key := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	key := titleKey
 	inside, outside := map[string]bool{}, map[string]bool{}
 	for i, p := range plan.Slides {
 		if i >= from && i < to {
@@ -311,6 +357,45 @@ func dropForeignSlides(slides []Slide, plan *deckOutline, from, to int) []Slide 
 		out = append(out, s)
 	}
 	return out
+}
+
+// titleKey — sarlavhalarni solishtirish kaliti (katta-kichik harf va
+// bo'shliqlar farqi hisobga olinmaydi).
+func titleKey(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+
+// assignPlanIndex guruh javobidagi slaydlarni rejaning [from, to) slaydlariga
+// moslaydi (Slide.PlanIndex): avval sarlavha bo'yicha (model tartibni
+// o'zgartirgan bo'lishi mumkin), mos kelmaganlari — guruhdagi o'rni bo'yicha
+// (u band bo'lsa — birinchi bo'sh reja slaydiga). Har bir reja slaydi ko'pi
+// bilan bitta slaydga beriladi; slaydlar soni to-from dan oshmasligi kerak.
+func assignPlanIndex(slides []Slide, plan *deckOutline, from, to int) {
+	if to <= from {
+		return
+	}
+	used := make([]bool, to-from) // used[j] — reja slaydi from+j band
+	matched := make([]bool, len(slides))
+	for k := range slides {
+		key := titleKey(slides[k].Title)
+		for j := range used {
+			if !used[j] && titleKey(plan.Slides[from+j].Title) == key {
+				slides[k].PlanIndex, used[j], matched[k] = from+j, true, true
+				break
+			}
+		}
+	}
+	for k := range slides {
+		if matched[k] {
+			continue
+		}
+		j := k
+		if j >= len(used) || used[j] {
+			j = slices.Index(used, false)
+		}
+		if j < 0 {
+			j = min(k, len(used)-1) // slaydlar rejadagidan ko'p (kontrakt buzilgan)
+		}
+		slides[k].PlanIndex, used[j] = from+j, true
+	}
 }
 
 // splitBatches n ta slaydni ko'pi bilan size tadan teng guruhlarga bo'ladi:
@@ -588,11 +673,13 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 	b.WriteString(structureRules(n, req))
 	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n\n")
 	b.WriteString(`For each slide give "title", "layout" and "focus": one sentence (12-25 words) naming exactly what the slide will cover — specific sub-topics, facts or examples — so that slides do not overlap.` + "\n")
-	top := ""
+	// Rasm tavsiflari rejada yoziladi: rasmlar slaydlar matnini kutmasdan chiziladi.
+	writeImageRules(&b, req)
+	top, img := "", ""
 	if req.Images {
-		top = `, "image": string`
+		top, img = `, "image": string`, `, "image": string`
 	}
-	b.WriteString(`JSON shape: {"title": string, "subtitle": string` + top + `, "slides": [{"n": number, "title": string, "layout": string, "focus": string}, ...]}` + "\n")
+	b.WriteString(`JSON shape: {"title": string, "subtitle": string` + top + `, "slides": [{"n": number, "title": string, "layout": string, "focus": string` + img + `}, ...]}` + "\n")
 	// Raqamlash modellarga slaydlarni aniq sanashga yordam beradi (raqamsiz
 	// rejalarda bir slayd ko'pincha tushib qoladi).
 	if n >= 2 {
@@ -611,7 +698,8 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 
 // buildSlidesBatchPrompt — rejadagi [from, to) slaydlar mazmuni.
 func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to int) string {
-	images := req.Images
+	// Rasm tavsiflari rejada bo'lsa, guruhda ular so'ralmaydi (javob qisqaroq).
+	images := req.Images && !plan.hasImages()
 	var b strings.Builder
 	fmt.Fprintf(&b, "Topic: %q\n", strings.TrimSpace(req.Topic))
 	b.WriteString(languageRule(req.Language))
@@ -622,7 +710,9 @@ func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to
 	fmt.Fprintf(&b, "\nWrite the full content of slides %d-%d only (%d slides), exactly as planned: same order, titles and layouts. "+
 		"Stay within each slide's focus and do not repeat what other slides cover.\n\n", from+1, to, to-from)
 	b.WriteString(layoutGuide(req.layouts(), req.Compact) + "\n")
-	writeImageRules(&b, req)
+	if images {
+		writeImageRules(&b, req)
+	}
 	b.WriteString("\n")
 	b.WriteString(`JSON shape: {"slides": [` + slideJSONShape(images) + `, ...]}`)
 	if req.Custom != nil {
@@ -698,28 +788,30 @@ func slidesBatchSchema(images bool, layouts []string) *genai.Schema {
 }
 
 func deckOutlineSchema(images bool, layouts []string) *genai.Schema {
+	slide := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"n":      {Type: genai.TypeInteger},
+			"title":  {Type: genai.TypeString},
+			"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
+			"focus":  {Type: genai.TypeString},
+		},
+		Required:         []string{"n", "title", "layout", "focus"},
+		PropertyOrdering: []string{"n", "title", "layout", "focus"},
+	}
 	s := &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
 			"title":    {Type: genai.TypeString},
 			"subtitle": {Type: genai.TypeString},
-			"slides": {Type: genai.TypeArray, Items: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"n":      {Type: genai.TypeInteger},
-					"title":  {Type: genai.TypeString},
-					"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
-					"focus":  {Type: genai.TypeString},
-				},
-				Required:         []string{"n", "title", "layout", "focus"},
-				PropertyOrdering: []string{"n", "title", "layout", "focus"},
-			}},
+			"slides":   {Type: genai.TypeArray, Items: slide},
 		},
 		Required:         []string{"title", "subtitle", "slides"},
 		PropertyOrdering: []string{"title", "subtitle", "slides"},
 	}
 	if images {
 		addImageProperty(s)
+		addImageProperty(slide)
 	}
 	return s
 }
@@ -872,6 +964,7 @@ type plannedSlide struct {
 	Title  string `json:"title"`
 	Layout string `json:"layout"`
 	Focus  string `json:"focus"`
+	Image  string `json:"image,omitempty"` // slayd rasmi tavsifi (Images rejimida)
 }
 
 type deckOutline struct {
@@ -894,6 +987,7 @@ func parseDeckOutline(raw string) (*deckOutline, error) {
 		s.Title = truncateRunes(cleanText(s.Title), maxTitleRunes)
 		s.Layout = normalizeLayout(s.Layout)
 		s.Focus = truncateRunes(cleanText(s.Focus), maxFocusRunes)
+		s.Image = truncateRunes(cleanText(s.Image), maxImageRunes)
 		if s.Title != "" {
 			slides = append(slides, s)
 		}
@@ -907,4 +1001,19 @@ func parseDeckOutline(raw string) (*deckOutline, error) {
 
 func (o *deckOutline) fit(want int) {
 	o.Slides = fitSlides(conclusionLast(o.Slides, func(s plannedSlide) string { return s.Layout }), want)
+}
+
+// hasImages rejada slaydlar rasm tavsiflari borligini bildiradi (Images
+// rejimida): bunda guruhlarda rasm tavsifi qayta so'ralmaydi.
+func (o *deckOutline) hasImages() bool {
+	return slices.ContainsFunc(o.Slides, func(s plannedSlide) bool { return s.Image != "" })
+}
+
+// outlinePlan — reja OnOutline uchun.
+func (o *deckOutline) outlinePlan() OutlinePlan {
+	p := OutlinePlan{CoverImage: o.Image, Slides: make([]PlannedSlide, len(o.Slides))}
+	for i, s := range o.Slides {
+		p.Slides[i] = PlannedSlide{Title: s.Title, Layout: s.Layout, Image: s.Image}
+	}
+	return p
 }

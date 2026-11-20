@@ -1026,6 +1026,9 @@ type output struct {
 // AI maxsus dizaynda (custom.go) avval tarif modeli mavzuga mos dizayn
 // konsepsiyasini yaratadi, slaydlarni ham shu model yozadi, rasmlar esa
 // tarif sifatida slaydlarning bir qismiga chiziladi.
+//
+// Rasmli dizaynda katta taqdimot rasmlari reja tayyor bo'lishi bilan
+// (OnOutline), slaydlar matni yozilishini kutmasdan chiziladi.
 func (h *Handler) buildSlides(ctx context.Context, progress *progressBoard, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Slides
 	content := b.ContentSlides(s.Volume)
@@ -1059,15 +1062,30 @@ func (h *Handler) buildSlides(ctx context.Context, progress *progressBoard, s *s
 	// dizayndagi joyga moslaydi.
 	structure := plan.design.Structure()
 	report, stopProgress := progress.Stage(textStage("Slaydlar yozilmoqda..."))
-	pres, err := gen.GeneratePresentation(ctx, ai.PresentationRequest{
+	req := ai.PresentationRequest{
 		Topic: s.Topic, SlideCount: content, OnProgress: report, Images: photos,
 		Layouts: structure.Layouts, Signature: structure.Signature, Compact: structure.Compact,
 		Language: li.Prompt, Requirements: s.Requirements,
 		OutlineTitle: li.Labels.Plan, ConclusionTitle: li.Labels.Conclusion,
 		Custom: aiDesign.Brief(),
-	})
+	}
+	// Katta taqdimotda rasm tavsiflari rejada keladi: rasmlar reja tayyor
+	// bo'lishi bilan, slaydlar matni yozilishi bilan parallel chiziladi.
+	var drawn *slidePictures // nil — chizish boshlanmagan (OnOutline chaqirilmagan)
+	if photos {
+		req.OnOutline = func(op ai.OutlinePlan) {
+			if drawn == nil {
+				drawn = planOutlinePictures(op, plan)
+				drawn.start(ctx, progress, log, plan.svc)
+			}
+		}
+	}
+	pres, err := gen.GeneratePresentation(ctx, req)
 	stopProgress()
 	if err != nil {
+		if drawn != nil {
+			drawn.stop() // matnsiz rasmlar kerak emas
+		}
 		return nil, fmt.Errorf("%w: %w", errAI, err)
 	}
 
@@ -1095,7 +1113,13 @@ func (h *Handler) buildSlides(ctx context.Context, progress *progressBoard, s *s
 	}
 	var pics picturesInfo
 	if photos {
-		pics = h.addPictures(ctx, progress, log, pres, &deck, plan)
+		if drawn != nil {
+			pics = drawn.placeByPlan(log, pres, &deck)
+		} else {
+			// OnOutline chaqirilmagan (kichik taqdimot — rejasiz) — rasmlar
+			// matndan keyin, slaydlardagi tavsiflar bo'yicha chiziladi.
+			pics = h.addPictures(ctx, progress, log, pres, &deck, plan)
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -1169,30 +1193,24 @@ func (h *Handler) imageTier(s *storage.Session) images.Tier {
 // barcha slaydlarga (yon panel uchun tik, banner uchun yotiq rasm); AI maxsus
 // dizaynda — plan.limit ta kvadrat rasm, slaydlarga teng taqsimlangan.
 // Chizilmagan rasm o'rnida slayd rasmsiz (titulda — bezakli fon bilan) chiqadi.
+//
+// Matn yozilgandan keyin chaqiriladi — generator OnOutline ni chaqirmagan
+// holat uchun (katta taqdimotda rasmlar reja bo'yicha, matn bilan parallel
+// chiziladi: planOutlinePictures).
 func (h *Handler) addPictures(ctx context.Context, progress *progressBoard, log *zap.Logger, pres *ai.Presentation, deck *generator.Deck, plan picturePlan) picturesInfo {
-	info := picturesInfo{tier: plan.tier}
 	design := plan.design
+	p := &slidePictures{tier: plan.tier}
 
-	var (
-		reqs    []images.Request
-		targets []int // -1 — titul rasmi, aks holda deck.Slides indeksi
-	)
 	cover := pres.Image
 	for i := 0; cover == "" && i < len(pres.Slides); i++ {
 		cover = pres.Slides[i].Image
 	}
-	coverShape := images.Landscape
-	if plan.limit > 0 {
-		coverShape = images.Square
-	}
 	if cover != "" {
-		reqs = append(reqs, images.Request{Prompt: design.PhotoPrompt(cover), Shape: coverShape})
-		targets = append(targets, -1)
+		p.add(design, cover, plan.coverShape(), -1)
 	}
 	if plan.limit > 0 {
-		for _, i := range customPhotoTargets(design, pres, deck, plan.limit-len(reqs)) {
-			reqs = append(reqs, images.Request{Prompt: design.PhotoPrompt(pres.Slides[i].Image), Shape: images.Square})
-			targets = append(targets, i)
+		for _, i := range customPhotoTargets(design, pres, deck, plan.limit-len(p.reqs)) {
+			p.add(design, pres.Slides[i].Image, images.Square, i)
 		}
 	} else {
 		for i, sl := range pres.Slides {
@@ -1204,35 +1222,170 @@ func (h *Handler) addPictures(ctx context.Context, progress *progressBoard, log 
 			if design.PhotoWide(deck.Slides[i]) {
 				slideShape = images.Landscape
 			}
-			reqs = append(reqs, images.Request{Prompt: design.PhotoPrompt(sl.Image), Shape: slideShape})
-			targets = append(targets, i)
+			p.add(design, sl.Image, slideShape, i)
 		}
 	}
-	info.requested = len(reqs)
-	if len(reqs) == 0 {
+	if len(p.reqs) == 0 {
 		log.Warn("AI returned no image descriptions")
-		return info
+		return picturesInfo{tier: plan.tier}
 	}
+	p.draw(ctx, progress, plan.svc)
+	return p.place(log, deck, func(i int) (int, bool) { return i, true })
+}
 
+// slidePictures — taqdimotga chiziladigan rasmlar: so'rovlar, ular
+// qo'yiladigan joylar va natijalar.
+type slidePictures struct {
+	tier    images.Tier
+	reqs    []images.Request
+	targets []int           // reqs tartibida: -1 — titul rasmi, aks holda slayd indeksi
+	results []images.Result // reqs tartibida; chizilmagan rasm o'rnida Data nil
+	took    time.Duration
+
+	// Fonda chizishda (start): cancel chizishni to'xtatadi, done — tugadi.
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// add rasm so'rovini qo'shadi (prompt AI tavsifi va dizayn uslubidan).
+func (p *slidePictures) add(design generator.Design, desc string, shape images.Shape, target int) {
+	p.reqs = append(p.reqs, images.Request{Prompt: design.PhotoPrompt(desc), Shape: shape})
+	p.targets = append(p.targets, target)
+}
+
+// planOutlinePictures katta taqdimot rejasidagi rasm tavsiflaridan rasm
+// so'rovlarini tuzadi (target — reja slaydi indeksi): titul rasmi va tayyor
+// rasmli dizaynda — tavsifi bor barcha reja slaydlari (shakli maket
+// bo'yicha), AI maxsus dizaynda — plan.limit ta kvadrat rasm, slaydlarga
+// teng taqsimlangan. Slaydlar matni hali yozilmagan — rasm shakli va
+// rasmli slaydlar faqat maketga qarab tanlanadi.
+func planOutlinePictures(op ai.OutlinePlan, plan picturePlan) *slidePictures {
+	design := plan.design
+	p := &slidePictures{tier: plan.tier}
+
+	cover := op.CoverImage
+	for i := 0; cover == "" && i < len(op.Slides); i++ {
+		cover = op.Slides[i].Image
+	}
+	if cover != "" {
+		p.add(design, cover, plan.coverShape(), -1)
+	}
+	if plan.limit > 0 {
+		var (
+			index   []int // tavsifi bor reja slaydlari
+			layouts []string
+		)
+		for i, sl := range op.Slides {
+			if sl.Image != "" {
+				index = append(index, i)
+				layouts = append(layouts, sl.Layout)
+			}
+		}
+		for _, k := range design.PhotoSlidesByLayout(layouts, plan.limit-len(p.reqs)) {
+			p.add(design, op.Slides[index[k]].Image, images.Square, index[k])
+		}
+	} else {
+		for i, sl := range op.Slides {
+			if sl.Image == "" {
+				continue
+			}
+			// Tepadagi banner uchun — yotiq rasm, yon panel uchun — tik rasm.
+			slideShape := images.Portrait
+			if design.PhotoWideLayout(sl.Layout) {
+				slideShape = images.Landscape
+			}
+			p.add(design, sl.Image, slideShape, i)
+		}
+	}
+	return p
+}
+
+// start rasmlarni fonda chiza boshlaydi (tez qaytadi — OnOutline ichida
+// chaqiriladi). Natijani placeByPlan kutadi; stop chizishni to'xtatadi.
+func (p *slidePictures) start(ctx context.Context, progress *progressBoard, log *zap.Logger, svc ImageService) {
+	p.done = make(chan struct{})
+	if len(p.reqs) == 0 {
+		log.Warn("AI returned no image descriptions")
+		close(p.done)
+		return
+	}
+	ctx, p.cancel = context.WithCancel(ctx)
+	go func() {
+		defer close(p.done)
+		defer p.cancel()
+		// Goroutine'dagi panic butun botni to'xtatib qo'yardi.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("panic recovered in slide pictures", zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			}
+		}()
+		p.draw(ctx, progress, svc)
+	}()
+}
+
+// stop fondagi chizishni to'xtatadi va tugashini kutadi.
+func (p *slidePictures) stop() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	<-p.done
+}
+
+// draw rasmlarni chizadi (holati jarayon xabarida alohida qatorda ko'rsatiladi).
+func (p *slidePictures) draw(ctx context.Context, progress *progressBoard, svc ImageService) {
 	report, stop := progress.Stage(imageStage)
-	report(0, len(reqs))
+	defer stop()
+	report(0, len(p.reqs))
 	started := time.Now()
-	results := plan.svc.Generate(ctx, info.tier, reqs, report)
-	stop()
+	p.results = svc.Generate(ctx, p.tier, p.reqs, report)
+	p.took = time.Since(started)
+}
 
-	for k, r := range results {
+// placeByPlan fonda chizilgan rasmlar tugashini kutadi va ularni slaydlarga
+// Slide.PlanIndex bo'yicha joylaydi. Generator yozmagan reja slaydining
+// rasmi tashlanadi.
+func (p *slidePictures) placeByPlan(log *zap.Logger, pres *ai.Presentation, deck *generator.Deck) picturesInfo {
+	<-p.done
+	if len(p.reqs) == 0 {
+		return picturesInfo{tier: p.tier} // ogohlantirish start da yozilgan
+	}
+	slideOf := make(map[int]int, len(pres.Slides)) // reja slaydi → deck.Slides indeksi
+	for i, sl := range pres.Slides {
+		if _, ok := slideOf[sl.PlanIndex]; !ok && i < len(deck.Slides) {
+			slideOf[sl.PlanIndex] = i
+		}
+	}
+	return p.place(log, deck, func(j int) (int, bool) {
+		i, ok := slideOf[j]
+		return i, ok
+	})
+}
+
+// place chizilgan rasmlarni taqdimotga joylaydi: slide target ni
+// deck.Slides indeksiga aylantiradi (false — slayd yo'q, rasm tashlanadi).
+// Chizilmagan rasm o'rnida slayd rasmsiz (titulda — bezakli fon bilan) chiqadi.
+func (p *slidePictures) place(log *zap.Logger, deck *generator.Deck, slide func(target int) (int, bool)) picturesInfo {
+	info := picturesInfo{tier: p.tier, requested: len(p.reqs)}
+	for k, r := range p.results {
 		if r.Data == nil {
 			continue
+		}
+		i := -1
+		if p.targets[k] >= 0 {
+			var ok bool
+			if i, ok = slide(p.targets[k]); !ok {
+				continue
+			}
 		}
 		pic, err := generator.NewPicture(r.Data)
 		if err != nil {
 			log.Warn("generated image rejected", zap.Error(err))
 			continue
 		}
-		if targets[k] < 0 {
+		if i < 0 {
 			deck.CoverImage = pic
 		} else {
-			deck.Slides[targets[k]].Image = pic
+			deck.Slides[i].Image = pic
 		}
 		info.placed++
 		info.provider = r.Provider
@@ -1242,7 +1395,7 @@ func (h *Handler) addPictures(ctx context.Context, progress *progressBoard, log 
 		zap.Int("requested", info.requested),
 		zap.String("tier", string(info.tier)),
 		zap.String("provider", info.provider),
-		zap.Duration("took", time.Since(started)))
+		zap.Duration("took", p.took))
 	return info
 }
 

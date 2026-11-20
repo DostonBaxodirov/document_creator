@@ -100,6 +100,16 @@ func photoFits(s Slide) bool {
 	return false
 }
 
+// layoutFitsPhoto — photoFits ning faqat maketga qarab taxmini (elementlar
+// soni hali noma'lum): odatdagi hajmda yon panelga sig'adigan maketlar.
+func layoutFitsPhoto(layout string) bool {
+	switch layout {
+	case LayoutAgenda, LayoutBullets, LayoutCards, LayoutDefinition, LayoutStatement:
+		return true
+	}
+	return false
+}
+
 // photoAsBanner slayd rasmi tepada keng banner bo'lib (sarlavha orqasida)
 // chizilishini bildiradi: banner rasmli dizaynda — doim, yon panelli
 // dizaynda — yon panel matnni siqib qo'yadigan keng maketlarda
