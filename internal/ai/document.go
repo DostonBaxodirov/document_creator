@@ -199,63 +199,26 @@ func figureIdea(req DocumentRequest, ch outlineChapter) *FigureIdea {
 // xato bilan tugasa, qolganlari to'xtatiladi va birinchi xato qaytariladi.
 func (c *client) writeSections(ctx context.Context, req DocumentRequest, ol *outline,
 	parts []section, progress *progressReporter) ([][]Paragraph, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var (
-		results  = make([][]Paragraph, len(parts))
-		sem      = make(chan struct{}, c.parallel)
-		wg       sync.WaitGroup
-		errOnce  sync.Once
-		firstErr error
-	)
-	fail := func(err error) {
-		errOnce.Do(func() {
-			firstErr = err
-			cancel()
+	results := make([][]Paragraph, len(parts))
+	// Har bir goroutine faqat o'z bo'limiga (results[i]) yozadi; panic'ni
+	// forEachParallel xatoga aylantiradi.
+	err := forEachParallel(ctx, len(parts), c.parallel, func(ctx context.Context, i int) error {
+		part := parts[i]
+		paras, err := generateJSON(ctx, c, "document_"+part.kind.String(), task{
+			system: documentSystemPrompt,
+			user:   buildSectionPrompt(req, ol, part),
+			schema: sectionSchema(),
+		}, part.words*sectionMinPercent/100, func(raw string) ([]Paragraph, int, error) {
+			return parseSection(raw, part.title)
 		})
-	}
-
-	for i, part := range parts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// Goroutine ichidagi panic tashqi recover'ga yetib bormaydi —
-			// shu yerda ushlab, oddiy xatoga aylantiramiz.
-			defer func() {
-				if r := recover(); r != nil {
-					fail(fmt.Errorf("ai: %s bo'limida panic: %v", part.label(), r))
-				}
-			}()
-
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-
-			paras, err := generateJSON(ctx, c, "document_"+part.kind.String(), task{
-				system: documentSystemPrompt,
-				user:   buildSectionPrompt(req, ol, part),
-				schema: sectionSchema(),
-			}, part.words*sectionMinPercent/100, func(raw string) ([]Paragraph, int, error) {
-				return parseSection(raw, part.title)
-			})
-			if err != nil {
-				fail(fmt.Errorf("%s: %w", part.label(), err))
-				return
-			}
-			results[i] = paras
-			progress.advance()
-		}()
-	}
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	if err := ctx.Err(); err != nil {
+		if err != nil {
+			return fmt.Errorf("%s: %w", part.label(), err)
+		}
+		results[i] = paras
+		progress.advance()
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return results, nil

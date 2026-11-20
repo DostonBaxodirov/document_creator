@@ -30,9 +30,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // Slayd maketlari — generator paketidagi Layout* nomlari bilan bir xil.
@@ -425,47 +425,34 @@ func splitBatches(n, size int) [][2]int {
 }
 
 // forEachParallel fn ni 0..n-1 uchun ko'pi bilan parallel tadan bajaradi.
-// Birorta xato bo'lsa, qolganlari to'xtatiladi va birinchi xato qaytariladi.
+// Birorta xato bo'lsa, qolganlari to'xtatiladi va birinchi xato qaytariladi;
+// xato bo'lmay kontekst bekor qilingan bo'lsa — kontekst xatosi.
 func forEachParallel(ctx context.Context, n, parallel int, fn func(ctx context.Context, i int) error) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var (
-		sem      = make(chan struct{}, max(1, parallel))
-		wg       sync.WaitGroup
-		errOnce  sync.Once
-		firstErr error
-	)
-	fail := func(err error) {
-		errOnce.Do(func() {
-			firstErr = err
-			cancel()
-		})
-	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(max(1, parallel))
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// Goroutine ichidagi panic tashqi recover'ga yetib bormaydi.
+		// Xato yoki bekor qilishdan keyin yangi vazifalar boshlanmaydi.
+		if gctx.Err() != nil {
+			break
+		}
+		// Go bo'sh joy chiqquncha kutadi (SetLimit).
+		g.Go(func() (err error) {
+			// errgroup panic'ni Wait ga uzatmaydi, goroutine ichidagi panic esa
+			// tashqi recover'ga yetib bormaydi — shu yerda xatoga aylantiramiz.
 			defer func() {
 				if r := recover(); r != nil {
-					fail(fmt.Errorf("ai: panic: %v", r))
+					err = fmt.Errorf("ai: panic: %v", r)
 				}
 			}()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
+			// Navbat kutilayotganda guruh bekor qilingan bo'lishi mumkin.
+			if gctx.Err() != nil {
+				return nil
 			}
-			defer func() { <-sem }()
-			if err := fn(ctx, i); err != nil {
-				fail(err)
-			}
-		}()
+			return fn(gctx, i)
+		})
 	}
-	wg.Wait()
-	if firstErr != nil {
-		return firstErr
+	if err := g.Wait(); err != nil {
+		return err
 	}
 	return ctx.Err()
 }

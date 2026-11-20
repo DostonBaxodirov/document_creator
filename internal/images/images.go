@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/httpx"
@@ -221,26 +222,28 @@ func (s *Service) Generate(ctx context.Context, tier Tier, reqs []Request, onDon
 	}
 
 	var (
-		sem  = make(chan struct{}, s.parallel)
-		wg   sync.WaitGroup
+		// Funksiyalar doim nil qaytaradi (chizilmagan rasm — Data nil), shuning
+		// uchun guruh konteksti kerak emas: bitta rasm xatosi qolganlarini to'xtatmaydi.
+		g    errgroup.Group
 		mu   sync.Mutex
 		done int
 	)
+	g.SetLimit(s.parallel)
 	for i, r := range reqs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		if ctx.Err() != nil {
+			break
+		}
+		// Go bo'sh joy chiqquncha kutadi (SetLimit).
+		g.Go(func() error {
 			defer func() {
 				if p := recover(); p != nil {
 					s.log.Error("panic in image generation", zap.Any("panic", p))
 				}
 			}()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
+			// Navbat kutilayotganda kontekst bekor qilingan bo'lishi mumkin.
+			if ctx.Err() != nil {
+				return nil
 			}
-			defer func() { <-sem }()
 
 			out[i] = s.one(ctx, chain, r)
 			if onDone != nil {
@@ -249,9 +252,10 @@ func (s *Service) Generate(ctx context.Context, tier Tier, reqs []Request, onDon
 				onDone(done, len(reqs))
 				mu.Unlock()
 			}
-		}()
+			return nil
+		})
 	}
-	wg.Wait()
+	_ = g.Wait() // doim nil
 	return out
 }
 

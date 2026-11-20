@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,6 +176,91 @@ func TestServiceParallelLimitAndProgress(t *testing.T) {
 	}
 	if len(dones) != 8 || dones[7] != 8 {
 		t.Errorf("progress = %v", dones)
+	}
+}
+
+// probeGen — bir vaqtda ishlayotgan chaqiruvlarni atomic hisoblagich bilan
+// sanaydigan generator. Birinchi chaqiruvlar limit tasi yig'ilguncha kutadi:
+// shunda test chegaradan oshmaslikni ham, chegaragacha haqiqatan parallel
+// ishlashni ham tekshiradi.
+type probeGen struct {
+	data           []byte
+	limit          int32
+	calls          atomic.Int32
+	inflight, peak atomic.Int32
+	full           chan struct{}
+	once           sync.Once
+}
+
+func (*probeGen) Name() string { return "probe" }
+
+func (g *probeGen) Generate(ctx context.Context, prompt string, shape Shape) ([]byte, error) {
+	g.calls.Add(1)
+	n := g.inflight.Add(1)
+	defer g.inflight.Add(-1)
+	for {
+		p := g.peak.Load()
+		if n <= p || g.peak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	if n >= g.limit {
+		g.once.Do(func() { close(g.full) })
+	}
+	select {
+	case <-g.full:
+	case <-ctx.Done():
+		return nil, permanent(ctx.Err())
+	}
+	// Chegarasiz pool'da chaqiruvlar albatta ustma-ust tushishi uchun.
+	time.Sleep(2 * time.Millisecond)
+	return g.data, nil
+}
+
+func TestServiceGenerateConcurrencyLimit(t *testing.T) {
+	const n, limit = 10, 2
+	g := &probeGen{data: testImage(t, "jpeg"), limit: limit, full: make(chan struct{})}
+	s := NewService(map[Tier]Generator{TierStandard: g}, limit, 2*time.Second, false, zap.NewNop())
+	res := s.Generate(context.Background(), TierStandard, make([]Request, n), nil)
+	for i, r := range res {
+		if r.Data == nil {
+			t.Errorf("rasm %d chizilmadi", i)
+		}
+	}
+	if p := g.peak.Load(); p != limit {
+		t.Errorf("bir vaqtda eng ko'pi %d ta so'rov, %d bo'lishi kerak", p, limit)
+	}
+	if c := g.calls.Load(); c != n {
+		t.Errorf("chaqiruvlar %d ta, %d bo'lishi kerak", c, n)
+	}
+}
+
+func TestServiceGenerateStopsOnCancel(t *testing.T) {
+	jpg := testImage(t, "jpeg")
+
+	// Kontekst oldindan bekor qilingan — birorta ham rasm boshlanmaydi.
+	g := &fakeGen{name: "g", data: jpg}
+	s := newTestService(map[Tier]Generator{TierStandard: g}, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var dones atomic.Int32
+	res := s.Generate(ctx, TierStandard, make([]Request, 4), func(int, int) { dones.Add(1) })
+	if g.calls.Load() != 0 || dones.Load() != 0 || len(res) != 4 || res[0].Data != nil {
+		t.Errorf("bekor qilingan kontekstda: calls=%d, onDone=%d, natijalar=%d", g.calls.Load(), dones.Load(), len(res))
+	}
+
+	// Ish davomida bekor qilinsa — navbatdagi rasmlar boshlanmaydi.
+	g = &fakeGen{name: "g", data: jpg}
+	s = NewService(map[Tier]Generator{TierStandard: g}, 1, time.Second, true, zap.NewNop())
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	res = s.Generate(ctx, TierStandard, make([]Request, 4), func(int, int) { cancel() })
+	drawn := make([]bool, len(res))
+	for i, r := range res {
+		drawn[i] = r.Data != nil
+	}
+	if g.calls.Load() != 1 || !slices.Equal(drawn, []bool{true, false, false, false}) {
+		t.Errorf("ish davomida bekor qilinganda faqat birinchi rasm chizilishi kerak: calls=%d, chizilgan=%v", g.calls.Load(), drawn)
 	}
 }
 
