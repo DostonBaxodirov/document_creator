@@ -108,7 +108,15 @@ type client struct {
 	maxRetries int
 	parallel   int // hujjat bo'limlari uchun bir vaqtdagi so'rovlar soni
 	log        *zap.Logger
+	// sleep — xatodan keyingi kechikish (nil bo'lsa sleepBackoff). Testlar
+	// haqiqatan kutmasligi uchun almashtiriladi.
+	sleep func(ctx context.Context, retry int) error
 }
+
+// maxIncompleteRetries — javob o'qilgan, lekin to'liq emas (ball want dan kam)
+// bo'lganda qayta urinishlar soni. AI_MAX_RETRIES ga bog'liq emas; bunday
+// qayta urinish kechikishsiz, darhol qilinadi.
+const maxIncompleteRetries = 1
 
 // New konfiguratsiyaga ko'ra kerakli provayder bilan Client yaratadi.
 func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, error) {
@@ -167,9 +175,10 @@ func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
 //
 // parse natija bilan birga uning "to'liqlik balli"ni (slaydlar soni, so'zlar
 // soni va h.k.) qaytaradi. Ball want dan kam bo'lmasa — natija darhol
-// qaytariladi; aks holda qayta uriniladi va eng yuqori balli natija saqlab
-// qo'yiladi. Vaqtinchalik xatolar (tarmoq, 429, 5xx, buzilgan JSON) bo'lganda
-// eksponensial kechikish bilan qayta uriniladi, doimiy xatolarda — to'xtaladi.
+// qaytariladi; aks holda kechikishsiz ko'pi bilan maxIncompleteRetries marta
+// qayta uriniladi va eng yuqori balli natija saqlab qo'yiladi. Vaqtinchalik
+// xatolar (tarmoq, 429, 5xx, buzilgan JSON) bo'lganda eksponensial kechikish
+// bilan maxRetries martagacha qayta uriniladi, doimiy xatolarda — to'xtaladi.
 func generateJSON[T any](ctx context.Context, c *client, op string, t task, want int,
 	parse func(raw string) (T, int, error)) (T, error) {
 	var (
@@ -177,12 +186,21 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 		best      T
 		bestScore = -1
 		lastErr   error
+		// errRetries — xato sababli qayta urinishlar, incompleteRetries —
+		// to'liq bo'lmagan natija sababli; har biri o'z chegarasiga ega.
+		errRetries, incompleteRetries int
+		// needBackoff — keyingi urinishdan oldin kutish kerakmi (oldingisi xato bo'lgan).
+		needBackoff bool
 	)
 	log := c.log.With(zap.String("op", op))
 
-	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
-			if err := sleepBackoff(ctx, attempt); err != nil {
+			if needBackoff {
+				if err := c.backoff(ctx, errRetries); err != nil {
+					break
+				}
+			} else if ctx.Err() != nil {
 				break
 			}
 		}
@@ -196,9 +214,11 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 				zap.Duration("took", time.Since(started)),
 				zap.Bool("permanent", isPermanent(err)),
 				zap.Error(err))
-			if isPermanent(err) || ctx.Err() != nil {
+			if isPermanent(err) || ctx.Err() != nil || errRetries >= c.maxRetries {
 				break
 			}
+			errRetries++
+			needBackoff = true
 			continue
 		}
 
@@ -209,6 +229,11 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 				zap.Int("attempt", attempt+1),
 				zap.String("raw_prefix", truncateRunes(raw, 300)),
 				zap.Error(err))
+			if errRetries >= c.maxRetries {
+				break
+			}
+			errRetries++
+			needBackoff = true
 			continue
 		}
 
@@ -225,6 +250,11 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 			best, bestScore = val, score
 		}
 		lastErr = fmt.Errorf("AI natijasi to'liq emas (%d/%d)", score, want)
+		if incompleteRetries >= maxIncompleteRetries {
+			break
+		}
+		incompleteRetries++
+		needBackoff = false
 	}
 
 	if bestScore >= 0 {
@@ -242,6 +272,15 @@ func (c *client) completeWithTimeout(ctx context.Context, t task) (string, error
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.p.complete(ctx, t)
+}
+
+// backoff retry-chi xatodan keyingi qayta urinishdan oldin kutadi (c.sleep
+// berilmagan bo'lsa — sleepBackoff).
+func (c *client) backoff(ctx context.Context, retry int) error {
+	if c.sleep != nil {
+		return c.sleep(ctx, retry)
+	}
+	return sleepBackoff(ctx, retry)
 }
 
 // sleepBackoff 2s, 4s, 8s ... (+ tasodifiy jitter) kutadi; kontekst bekor bo'lsa to'xtaydi.
