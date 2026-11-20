@@ -20,6 +20,8 @@ import (
 type fakeDocProvider struct {
 	chapters int
 	percent  int
+	// figures — rejadagi juft indeksli (0, 2, ...) boblarga rasm g'oyasi ham qo'shilsin.
+	figures bool
 
 	mu      sync.Mutex
 	prompts []string
@@ -53,7 +55,11 @@ func (f *fakeDocProvider) complete(_ context.Context, t task) (string, error) {
 	case strings.HasPrefix(t.user, "Task: plan the structure"):
 		var chs []map[string]any
 		for i := range f.chapters {
-			chs = append(chs, map[string]any{"title": fmt.Sprintf("Bob nomi %d", i+1), "points": []string{"a", "b"}})
+			ch := map[string]any{"title": fmt.Sprintf("Bob nomi %d", i+1), "points": []string{"a", "b"}}
+			if f.figures && i%2 == 0 {
+				ch["figure"] = map[string]string{"caption": fmt.Sprintf("Rasm izohi %d", i+1), "prompt": fmt.Sprintf("Illustration of chapter %d", i+1)}
+			}
+			chs = append(chs, ch)
 		}
 		out, _ := json.Marshal(map[string]any{"chapters": chs, "references": []string{"Muallif A. Kitob. — Toshkent, 2020."}})
 		return string(out), nil
@@ -137,6 +143,71 @@ func TestFewerChaptersGetMoreWords(t *testing.T) {
 	}
 	if found != 2 {
 		t.Errorf("2 ta bobning har biri %q so'rashi kerak edi (topildi %d)", want, found)
+	}
+}
+
+// TestOnOutlineBeforeSections — OnOutline reja tayyor bo'lgach, bo'limlar
+// yozilishidan oldin bir marta chaqiriladi: har bir reja bobiga bitta
+// element, tartibi Document.Chapters bilan bir xil.
+func TestOnOutlineBeforeSections(t *testing.T) {
+	const words = 3000
+	b := planBudget(words)
+	// Model rejadagidan kam bob qaytaradi — element soni haqiqiy reja boblariga teng bo'lishi kerak.
+	f := &fakeDocProvider{chapters: b.chapters - 1, percent: 100, figures: true}
+	var (
+		calls          int
+		figures        []*FigureIdea
+		sectionsBefore int
+	)
+	doc, err := testClient(f).GenerateDocument(context.Background(), DocumentRequest{
+		WorkType: WorkReferat, Topic: "Ipak yo'li", Words: words, Figures: true,
+		OnOutline: func(figs []*FigureIdea) {
+			calls++
+			figures = figs
+			sectionsBefore = f.count("You are writing")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("OnOutline bir marta chaqirilishi kerak, chaqiruvlar: %d", calls)
+	}
+	if sectionsBefore != 0 {
+		t.Errorf("OnOutline bo'limlar yozilishidan oldin chaqirilishi kerak, oldin yozilgan: %d", sectionsBefore)
+	}
+	if len(figures) != b.chapters-1 || len(figures) != len(doc.Chapters) {
+		t.Fatalf("elementlar soni reja boblari soniga (%d) teng bo'lishi kerak: %d (hujjatda %d bob)",
+			b.chapters-1, len(figures), len(doc.Chapters))
+	}
+	for i, fig := range figures {
+		if (fig != nil) != (i%2 == 0) {
+			t.Errorf("%d-bob: rasm g'oyasi faqat juft indeksli boblarda bo'lishi kerak: %+v", i, fig)
+			continue
+		}
+		if fig != nil && (doc.Chapters[i].Figure == nil || *fig != *doc.Chapters[i].Figure) {
+			t.Errorf("%d-bob: OnOutline g'oyasi hujjat bobinikidan farq qiladi: %+v / %+v", i, fig, doc.Chapters[i].Figure)
+		}
+		if fig != nil && fig.Caption != fmt.Sprintf("Rasm izohi %d", i+1) {
+			t.Errorf("%d-bob: boblar tartibi saqlanmagan: %q", i, fig.Caption)
+		}
+	}
+
+	// Rasmlar so'ralmagan — reja g'oya qaytarsa ham barcha elementlar nil.
+	calls, figures = 0, nil
+	if _, err := testClient(f).GenerateDocument(context.Background(), DocumentRequest{
+		WorkType: WorkReferat, Topic: "Ipak yo'li", Words: words,
+		OnOutline: func(figs []*FigureIdea) { calls++; figures = figs },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(figures) != b.chapters-1 {
+		t.Fatalf("OnOutline: %d chaqiruv, %d element", calls, len(figures))
+	}
+	for i, fig := range figures {
+		if fig != nil {
+			t.Errorf("%d-bob: rasmlar so'ralmaganda g'oya nil bo'lishi kerak: %+v", i, fig)
+		}
 	}
 }
 

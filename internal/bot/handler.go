@@ -1250,15 +1250,15 @@ func (h *Handler) addPictures(ctx context.Context, progress *progressBoard, log 
 // ko'rinishida yaratadi. Hujjat bir necha AI so'rovi bilan yoziladi, shuning
 // uchun jarayon holati foydalanuvchiga alohida xabarda ko'rsatib boriladi.
 //
-// Maxsus dizaynda (custom.go) avval tarif modeli mavzuga mos uslub yaratadi,
-// matnni ham shu model yozadi, boblarning bir qismiga esa tarif sifatida rasm
-// chiziladi (matn hajmi rasmlar egallaydigan joyga qarab kamaytiriladi).
+// Maxsus dizaynda (custom.go) tarif modeli mavzuga mos uslub yaratadi va
+// matnni yozadi (ikkalasi parallel), boblarning bir qismiga esa tarif
+// sifatida rasm chiziladi (matn hajmi rasmlar egallaydigan joyga qarab
+// kamaytiriladi) — rasmlar reja tayyor bo'lishi bilan, matn bilan parallel.
 func (h *Handler) buildPaper(ctx context.Context, progress *progressBoard, s *storage.Session, opt workTypeOption, log *zap.Logger) (*output, error) {
 	b := h.builders.Papers
 	li := lang.Get(s.Language)
 
 	var (
-		gen      = h.ai
 		spec     *generator.DocSpec
 		aiDesign *ai.DocDesign
 		tariff   CustomTariff
@@ -1271,29 +1271,38 @@ func (h *Handler) buildPaper(ctx context.Context, progress *progressBoard, s *st
 		if tariff, ok = h.customTariff(s.Tariff); !ok {
 			return nil, fmt.Errorf("maxsus dizayn tarifi topilmadi: %q", s.Tariff)
 		}
-		gen = tariff.AI
-		var err error
-		if aiDesign, spec, err = h.customDocDesign(ctx, progress, log, s, tariff, li.Prompt); err != nil {
-			return nil, err
-		}
 		if h.docImagesOn(tariff) {
 			words, figures = docPlan(words, b.FigureWords(), tariff.ImagePercent)
 		}
 	}
 
-	report, stopProgress := progress.Stage(textStage("Bo'limlar yozilmoqda..."))
-	doc, err := gen.GenerateDocument(ctx, ai.DocumentRequest{
+	req := ai.DocumentRequest{
 		WorkType:     opt.Type,
 		Topic:        s.Topic,
 		Words:        words,
-		OnProgress:   report,
 		Language:     li.Prompt,
 		Requirements: s.Requirements,
 		Figures:      figures > 0,
-	})
-	stopProgress()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errAI, err)
+	}
+	var (
+		doc   *ai.Document
+		drawn *docFigures // matn bilan parallel chizilgan rasmlar (nil — chizish boshlanmagan)
+	)
+	if custom {
+		cp, err := h.writeCustomPaper(ctx, progress, log, s, tariff, req, figures)
+		if err != nil {
+			return nil, err
+		}
+		doc, aiDesign, spec, drawn = cp.doc, cp.design, cp.spec, cp.figures
+	} else {
+		report, stopProgress := progress.Stage(textStage("Bo'limlar yozilmoqda..."))
+		req.OnProgress = report
+		var err error
+		doc, err = h.ai.GenerateDocument(ctx, req)
+		stopProgress()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errAI, err)
+		}
 	}
 
 	paper := generator.Paper{
@@ -1318,11 +1327,17 @@ func (h *Handler) buildPaper(ctx context.Context, progress *progressBoard, s *st
 	}
 	var pics picturesInfo
 	if figures > 0 {
-		imageStyle := ""
-		if aiDesign != nil {
-			imageStyle = aiDesign.ImageStyle
+		if drawn != nil {
+			pics = drawn.place(log, &paper)
+		} else {
+			// Generator OnOutline ni chaqirmagan — rasmlar matndan keyin,
+			// hujjat boblaridagi g'oyalar bo'yicha chiziladi.
+			imageStyle := ""
+			if aiDesign != nil {
+				imageStyle = aiDesign.ImageStyle
+			}
+			pics = h.addDocFigures(ctx, progress, log, doc, &paper, tariff.Images, imageStyle, figures)
 		}
-		pics = h.addDocFigures(ctx, progress, log, doc, &paper, tariff.Images, imageStyle, figures)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -1379,24 +1394,50 @@ var docImageStage = progressStage{icon: "🖼", first: "Rasmlar chizilmoqda...",
 
 // addDocFigures rasm g'oyasi bor boblardan n tasiga (teng oraliqda) rasm
 // chizadi va ularni hujjatga qo'shadi. Chizilmagan rasm o'rnida bob rasmsiz qoladi.
+//
+// Matn yozilgandan keyin chaqiriladi — generator OnOutline ni chaqirmagan
+// holat uchun (odatda rasmlar matn bilan parallel chiziladi: writeCustomPaper).
 func (h *Handler) addDocFigures(ctx context.Context, progress *progressBoard, log *zap.Logger, doc *ai.Document,
 	paper *generator.Paper, svc ImageService, imageStyle string, n int) picturesInfo {
-	var cand []int
+	ideas := make([]*ai.FigureIdea, len(doc.Chapters))
 	for i, ch := range doc.Chapters {
-		if ch.Figure != nil && ch.Figure.Prompt != "" && i < len(paper.Chapters) {
+		ideas[i] = ch.Figure
+	}
+	f := planDocFigures(ideas, len(paper.Chapters), n)
+	if len(f.targets) == 0 || svc == nil {
+		log.Warn("AI returned no figure ideas")
+		return picturesInfo{tier: images.TierStandard, requested: len(f.targets)}
+	}
+	f.draw(ctx, progress, svc, imageStyle)
+	return f.place(log, paper)
+}
+
+// docFigures — Word ish boblariga chiziladigan rasmlar.
+type docFigures struct {
+	ideas   []*ai.FigureIdea // bob indeksi bo'yicha rasm g'oyalari (nil — g'oya yo'q)
+	targets []int            // rasm chiziladigan boblar (ideas indekslari)
+	results []images.Result  // targets tartibida; chizilmagan rasm o'rnida Data nil
+	took    time.Duration
+}
+
+// planDocFigures rasm g'oyasi bor boblardan n tasini teng oraliqda tanlaydi;
+// chapters — hujjatdagi boblar soni (undan tashqaridagi g'oyalar olinmaydi).
+func planDocFigures(ideas []*ai.FigureIdea, chapters, n int) *docFigures {
+	var cand []int
+	for i, f := range ideas {
+		if f != nil && f.Prompt != "" && i < chapters {
 			cand = append(cand, i)
 		}
 	}
-	targets := spreadPick(cand, n)
-	info := picturesInfo{tier: images.TierStandard, requested: len(targets)}
-	if len(targets) == 0 || svc == nil {
-		log.Warn("AI returned no figure ideas")
-		return info
-	}
+	return &docFigures{ideas: ideas, targets: spreadPick(cand, n)}
+}
 
-	reqs := make([]images.Request, len(targets))
-	for k, i := range targets {
-		prompt := doc.Chapters[i].Figure.Prompt
+// draw tanlangan boblar uchun rasmlarni dizayn uslubida chizadi (holati
+// jarayon xabarida alohida qatorda ko'rsatiladi).
+func (f *docFigures) draw(ctx context.Context, progress *progressBoard, svc ImageService, imageStyle string) {
+	reqs := make([]images.Request, len(f.targets))
+	for k, i := range f.targets {
+		prompt := f.ideas[i].Prompt
 		if imageStyle != "" {
 			prompt += ". Style: " + imageStyle
 		}
@@ -1405,22 +1446,34 @@ func (h *Handler) addDocFigures(ctx context.Context, progress *progressBoard, lo
 	report, stop := progress.Stage(docImageStage)
 	report(0, len(reqs))
 	started := time.Now()
-	results := svc.Generate(ctx, info.tier, reqs, report)
+	f.results = svc.Generate(ctx, images.TierStandard, reqs, report)
 	stop()
+	f.took = time.Since(started)
+}
 
-	for k, r := range results {
+// place chizilgan rasmlarni hujjat boblariga (bob indeksi bo'yicha) izohi
+// bilan joylaydi. Chizilmagan rasm o'rnida bob rasmsiz qoladi.
+func (f *docFigures) place(log *zap.Logger, paper *generator.Paper) picturesInfo {
+	info := picturesInfo{tier: images.TierStandard, requested: len(f.targets)}
+	if len(f.targets) == 0 {
+		return info // rasm g'oyalari yo'q (ogohlantirish rasm tanlanganda yozilgan)
+	}
+	for k, r := range f.results {
 		if r.Data == nil {
 			continue
 		}
-		i := targets[k]
-		paper.Chapters[i].Figure = &generator.Figure{Data: r.Data, Caption: doc.Chapters[i].Figure.Caption}
+		i := f.targets[k]
+		if i >= len(paper.Chapters) {
+			continue // generator rejadagidan kam bob qaytargan (OnOutline kontrakti buzilgan)
+		}
+		paper.Chapters[i].Figure = &generator.Figure{Data: r.Data, Caption: f.ideas[i].Caption}
 		info.placed++
 		if info.provider == "" {
 			info.provider = r.Provider
 		}
 	}
 	log.Info("figures generated", zap.Int("requested", info.requested), zap.Int("placed", info.placed),
-		zap.String("provider", info.provider), zap.Duration("took", time.Since(started)))
+		zap.String("provider", info.provider), zap.Duration("took", f.took))
 	return info
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -132,14 +133,19 @@ func TestCustomDocImageCount(t *testing.T) {
 	}
 }
 
-// fakeDocAI — Word ish matni va dizaynini qaytaradigan AI.
+// fakeDocAI — Word ish matni va dizaynini qaytaradigan AI. Haqiqiy client
+// kabi rejadan keyin (bo'limlar "yozilishidan" oldin) OnOutline ni chaqiradi.
 type fakeDocAI struct {
 	ContentGenerator
+	// sections nil bo'lmasa — OnOutline dan keyin bo'limlar shu kanal
+	// yopilguncha "yoziladi" (yoki ctx bekor qilinguncha).
+	sections chan struct{}
+
 	mu     sync.Mutex
 	docReq ai.DocumentRequest
 }
 
-func (f *fakeDocAI) GenerateDocument(_ context.Context, req ai.DocumentRequest) (*ai.Document, error) {
+func (f *fakeDocAI) GenerateDocument(ctx context.Context, req ai.DocumentRequest) (*ai.Document, error) {
 	f.mu.Lock()
 	f.docReq = req
 	f.mu.Unlock()
@@ -154,6 +160,20 @@ func (f *fakeDocAI) GenerateDocument(_ context.Context, req ai.DocumentRequest) 
 			ch.Figure = &ai.FigureIdea{Caption: "Rasm izohi " + string(rune('A'+i)), Prompt: "A caravan on the Silk Road"}
 		}
 		doc.Chapters = append(doc.Chapters, ch)
+	}
+	if req.OnOutline != nil {
+		ideas := make([]*ai.FigureIdea, len(doc.Chapters))
+		for i, ch := range doc.Chapters {
+			ideas[i] = ch.Figure
+		}
+		req.OnOutline(ideas)
+	}
+	if f.sections != nil {
+		select {
+		case <-f.sections:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return doc, nil
 }
@@ -272,6 +292,148 @@ func TestBuildPaperCustomReferat(t *testing.T) {
 	}
 	if !strings.Contains(doc, "thinThickSmallGap") || !strings.Contains(parts["word/styles.xml"], "Georgia") {
 		t.Error("AI dizayni (ramka, sarlavha shrifti) qo'llanmagan")
+	}
+}
+
+// signalImages — Generate birinchi marta chaqirilganda called ni yopadigan sampleImages.
+type signalImages struct {
+	*sampleImages
+	once   sync.Once
+	called chan struct{}
+}
+
+func (s *signalImages) Generate(ctx context.Context, tier images.Tier, reqs []images.Request, onDone func(done, total int)) []images.Result {
+	s.once.Do(func() { close(s.called) })
+	return s.sampleImages.Generate(ctx, tier, reqs, onDone)
+}
+
+// failDesignAI — Word dizaynini yarata olmaydigan AI.
+type failDesignAI struct{ *fakeDocAI }
+
+func (failDesignAI) GenerateDocDesign(context.Context, ai.DesignRequest) (*ai.DocDesign, error) {
+	return nil, errors.New("dizayn modeli javob bermadi")
+}
+
+// customPaperHandler maxsus dizayndagi referat uchun handler: barcha
+// tariflar gen va imgs bilan.
+func customPaperHandler(t *testing.T, gen ContentGenerator, imgs ImageService) (*Handler, *storage.Session, workTypeOption) {
+	t.Helper()
+	b, _ := fakeTelegram(t, "")
+	docx, err := generator.NewDOCX(t.TempDir(), "", zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tariffs := testTariffs()
+	for k, v := range tariffs {
+		v.AI, v.Images = gen, imgs
+		tariffs[k] = v
+	}
+	h := NewHandler(context.Background(), nil, failAI{}, Builders{Papers: docx}, zap.NewNop(), Options{Custom: tariffs})
+	h.bot = b
+	s := &storage.Session{WorkType: string(ai.WorkReferat), Design: generator.ThemeCustom, Tariff: config.TariffPremium,
+		Topic: "Ipak yo'li tarixi", Volume: 15, Language: "uz"}
+	opt, _ := findWorkType(ai.WorkReferat)
+	return h, s, opt
+}
+
+// TestBuildPaperFiguresWhileWriting — maxsus dizaynda rasmlar reja tayyor
+// bo'lishi bilan, bo'limlar yozilishi bilan parallel chiziladi.
+func TestBuildPaperFiguresWhileWriting(t *testing.T) {
+	gen := &fakeDocAI{sections: make(chan struct{})}
+	imgs := &signalImages{sampleImages: &sampleImages{}, called: make(chan struct{})}
+	h, s, opt := customPaperHandler(t, gen, imgs)
+
+	type result struct {
+		out *output
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := h.buildPaper(context.Background(), testBoard(t, h.bot), s, opt, zap.NewNop())
+		done <- result{out, err}
+	}()
+
+	// Bo'limlar hali "yozilmoqda" (sections yopilmagan) — rasmlar esa chizila boshlagan bo'lishi kerak.
+	select {
+	case <-imgs.called:
+	case r := <-done:
+		t.Fatalf("buildPaper bo'limlar yozilishini kutmasdan tugadi: %v", r.err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("rasmlar bo'limlar yozilishi bilan parallel chizilmadi")
+	}
+	close(gen.sections)
+
+	r := <-done
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if !strings.Contains(r.out.summary, "🖼 3/3 rasm") {
+		t.Errorf("3 ta rasm joylashishi kerak: %s", r.out.summary)
+	}
+	imgs.mu.Lock()
+	defer imgs.mu.Unlock()
+	if len(imgs.prompts) != 3 || !strings.Contains(imgs.prompts[0], "warm sepia photography") {
+		t.Errorf("3 ta rasm dizayn uslubi bilan chizilishi kerak: %v", imgs.prompts)
+	}
+}
+
+// TestBuildPaperFallbackWithoutOutline — generator OnOutline ni chaqirmasa,
+// rasmlar matndan keyin hujjat boblaridagi g'oyalar bo'yicha chiziladi.
+func TestBuildPaperFallbackWithoutOutline(t *testing.T) {
+	imgs := &sampleImages{}
+	h, s, opt := customPaperHandler(t, noOutlineAI{&fakeDocAI{}}, imgs)
+	out, err := h.buildPaper(context.Background(), testBoard(t, h.bot), s, opt, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imgs.prompts) != 3 || !strings.Contains(imgs.prompts[0], "warm sepia photography") {
+		t.Errorf("3 ta rasm dizayn uslubi bilan chizilishi kerak: %v", imgs.prompts)
+	}
+	if !strings.Contains(out.summary, "🖼 3/3 rasm") {
+		t.Errorf("3 ta rasm joylashishi kerak: %s", out.summary)
+	}
+	if doc := docxParts(t, out.path)["word/document.xml"]; !strings.Contains(doc, "3-rasm.") || !strings.Contains(doc, "Rasm izohi") {
+		t.Error("rasmlar izohi bilan hujjatga qo'shilishi kerak")
+	}
+}
+
+// noOutlineAI — OnOutline ni e'tiborsiz qoldiradigan generator.
+type noOutlineAI struct{ *fakeDocAI }
+
+func (a noOutlineAI) GenerateDocument(ctx context.Context, req ai.DocumentRequest) (*ai.Document, error) {
+	req.OnOutline = nil
+	return a.fakeDocAI.GenerateDocument(ctx, req)
+}
+
+// TestBuildPaperDesignError — dizayn xatosi AI xatosi sifatida qaytadi,
+// qolgan bosqichlar to'xtatiladi va rasmlar chizilmaydi.
+func TestBuildPaperDesignError(t *testing.T) {
+	for name, sections := range map[string]chan struct{}{
+		"matn tugagach":       nil,
+		"matn yozilayotganda": make(chan struct{}), // yopilmaydi: matn faqat bekor qilinib to'xtaydi
+	} {
+		t.Run(name, func(t *testing.T) {
+			imgs := &sampleImages{}
+			h, s, opt := customPaperHandler(t, failDesignAI{&fakeDocAI{sections: sections}}, imgs)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			out, err := h.buildPaper(ctx, testBoard(t, h.bot), s, opt, zap.NewNop())
+			if err == nil {
+				t.Fatalf("xato kutilgan edi, natija: %+v", out)
+			}
+			if !errors.Is(err, errAI) || !strings.Contains(err.Error(), "dizayn modeli javob bermadi") {
+				t.Errorf("dizayn xatosi errAI bilan qaytishi kerak: %v", err)
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("matn yozish dizayn xatosidan keyin to'xtatilishi kerak: %v", err)
+			}
+			imgs.mu.Lock()
+			defer imgs.mu.Unlock()
+			if len(imgs.prompts) != 0 {
+				t.Errorf("dizayn bo'lmasa rasmlar chizilmasligi kerak: %v", imgs.prompts)
+			}
+		})
 	}
 }
 

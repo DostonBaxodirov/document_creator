@@ -14,10 +14,12 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/ai"
@@ -397,6 +399,108 @@ func (h *Handler) customDocDesign(ctx context.Context, progress *progressBoard, 
 		Name: d.Name, Primary: d.Primary, Accent: d.Accent, HeadingFont: d.HeadingFont,
 		Title: d.Title, Heading: d.Heading, Border: d.Border, Ornament: d.Ornament,
 	}, nil
+}
+
+// customPaper — maxsus dizayndagi Word ish uchun AI natijalari.
+type customPaper struct {
+	doc    *ai.Document
+	design *ai.DocDesign
+	spec   *generator.DocSpec
+	// figures — matn bilan parallel chizilgan rasmlar; nil — chizish
+	// boshlanmagan (rasmlar so'ralmagan yoki generator OnOutline ni chaqirmagan).
+	figures *docFigures
+}
+
+// writeCustomPaper maxsus dizayndagi Word ishning AI bosqichlarini parallel
+// bajaradi:
+//   - dizayn konsepsiyasi matnga bog'liq emas — matn bilan bir vaqtda yaratiladi;
+//   - rasm g'oyalari rejada bo'ladi: reja tayyor bo'lishi bilan (OnOutline)
+//     rasmlar bo'limlar yozilishini kutmasdan chiziladi — faqat rasm uslubi
+//     uchun dizayn tayyor bo'lishi kutiladi.
+//
+// Birorta bosqich xato bilan tugasa, qolganlari to'xtatiladi va birinchi
+// sodir bo'lgan xato qaytariladi (AI xatolari errAI bilan belgilangan).
+func (h *Handler) writeCustomPaper(ctx context.Context, progress *progressBoard, log *zap.Logger, s *storage.Session,
+	t CustomTariff, req ai.DocumentRequest, figures int) (*customPaper, error) {
+	g, gctx := errgroup.WithContext(ctx)
+	out := &customPaper{}
+
+	// Matn — eng uzun bosqich: uning qatori jarayon xabarida birinchi turadi,
+	// dizayn va rasmlar qatorlari ostida paydo bo'lib, tugagach yo'qoladi.
+	report, stopText := progress.Stage(textStage("Bo'limlar yozilmoqda..."))
+	defer stopText()
+
+	// Dizayn konsepsiyasi.
+	designDone := make(chan struct{})
+	goRecover(g, log, "dizayn", func() error {
+		defer close(designDone)
+		d, spec, err := h.customDocDesign(gctx, progress, log, s, t, req.Language)
+		if err != nil {
+			return err
+		}
+		out.design, out.spec = d, spec
+		return nil
+	})
+
+	// Rasmlar: reja tayyor bo'lgach boshlanadi (bitta goroutine).
+	if figures > 0 {
+		req.OnOutline = func(ideas []*ai.FigureIdea) {
+			f := planDocFigures(ideas, len(ideas), figures)
+			out.figures = f
+			if len(f.targets) == 0 {
+				log.Warn("AI returned no figure ideas")
+				return
+			}
+			goRecover(g, log, "rasmlar", func() error {
+				// Rasm uslubi dizayndan olinadi — dizayn tayyor bo'lishini kutamiz.
+				select {
+				case <-designDone:
+				case <-gctx.Done():
+					return nil
+				}
+				// Dizayn (yoki boshqa bosqich) xatosi guruhda qayd etilgan — rasmlar chizilmaydi.
+				if out.design == nil || gctx.Err() != nil {
+					return nil
+				}
+				f.draw(gctx, progress, t.Images, out.design.ImageStyle)
+				return nil
+			})
+		}
+	}
+
+	// Matn — asosiy yo'lda.
+	req.OnProgress = report
+	doc, err := t.AI.GenerateDocument(gctx, req)
+	stopText()
+	if err != nil {
+		// Matn xatosi ham guruhga beriladi: qolgan bosqichlar to'xtatiladi va
+		// birinchi sodir bo'lgan xato qaytariladi (dizayn xatosi tufayli matn
+		// yozish bekor qilingan bo'lsa — dizayn xatosi).
+		g.Go(func() error { return fmt.Errorf("%w: %w", errAI, err) })
+		return nil, g.Wait()
+	}
+	// Dizayn va (boshlangan bo'lsa) rasmlar tugashini kutamiz.
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	out.doc = doc
+	return out, nil
+}
+
+// goRecover fn ni guruhda ishga tushiradi va undagi panic'ni xatoga aylantiradi:
+// errgroup panic'ni Wait ga uzatmaydi, goroutine'dagi panic esa butun botni
+// to'xtatib qo'yardi (runJob dagi recover faqat o'z goroutine'ini himoya qiladi).
+func goRecover(g *errgroup.Group, log *zap.Logger, stage string, fn func() error) {
+	g.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("panic recovered in paper stage", zap.String("stage", stage),
+					zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+				err = fmt.Errorf("%s bosqichida panic: %v", stage, r)
+			}
+		}()
+		return fn()
+	})
 }
 
 // ---------------------------------------------------------------------------

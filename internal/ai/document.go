@@ -33,6 +33,14 @@ type DocumentRequest struct {
 	// Figures — har bir bob uchun rasm g'oyasi (izoh va rasm tavsifi) ham
 	// yozilsin (maxsus dizayn: rasmlar shulardan chiziladi).
 	Figures bool
+	// OnOutline — reja tayyor bo'lishi bilan, bo'limlar yozilishidan oldin
+	// bir marta chaqiriladi (ixtiyoriy): rasmlarni matn bilan parallel chizishni
+	// boshlash uchun. figures da reja boblari soniga teng element bor:
+	// figures[i] — Document.Chapters[i] bobining rasm g'oyasi (bobda g'oya
+	// bo'lmasa yoki Figures false bo'lsa — nil). Chaqiruv sinxron —
+	// generatsiya uni kutadi, shuning uchun funksiya tez qaytishi kerak
+	// (uzoq ishni alohida goroutine'da boshlash kerak).
+	OnOutline func(figures []*FigureIdea)
 }
 
 // FigureIdea — bob uchun rasm g'oyasi.
@@ -57,6 +65,9 @@ type Chapter struct {
 }
 
 // Document — AI yozgan to'liq hujjat matni.
+//
+// Kontrakt: Chapters reja boblari tartibida va sonida bo'ladi — OnOutline
+// dagi figures[i] aynan Chapters[i] ga tegishli.
 type Document struct {
 	Introduction []Paragraph
 	Chapters     []Chapter
@@ -125,6 +136,16 @@ func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Do
 	progress.setTotal(1 + len(ol.Chapters) + 2)
 	progress.advance()
 
+	// Rasm g'oyalari rejada tayyor: chaqiruvchi rasmlarni bo'limlar yozilishini
+	// kutmasdan chizishni boshlashi mumkin.
+	if req.OnOutline != nil {
+		figures := make([]*FigureIdea, len(ol.Chapters))
+		for i, ch := range ol.Chapters {
+			figures[i] = figureIdea(req, ch)
+		}
+		req.OnOutline(figures)
+	}
+
 	// 2. Bo'limlar. Boblar kamroq chiqqan bo'lsa, ularning umumiy hajmi
 	// qolgan boblarga bo'linadi — hujjat baribir so'ralgan hajmda chiqadi.
 	chapterWords := b.chapter * b.chapters / len(ol.Chapters)
@@ -152,12 +173,9 @@ func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Do
 		References:   ol.References,
 		Chapters:     make([]Chapter, 0, len(ol.Chapters)),
 	}
+	// Boblar reja tartibida, birortasi ham tashlab ketilmaydi (OnOutline kontrakti).
 	for i, ch := range ol.Chapters {
-		chapter := Chapter{Title: ch.Title, Paragraphs: texts[i+1]}
-		if req.Figures && ch.Figure != nil && ch.Figure.Prompt != "" {
-			chapter.Figure = &FigureIdea{Caption: ch.Figure.Caption, Prompt: ch.Figure.Prompt}
-		}
-		doc.Chapters = append(doc.Chapters, chapter)
+		doc.Chapters = append(doc.Chapters, Chapter{Title: ch.Title, Paragraphs: texts[i+1], Figure: figureIdea(req, ch)})
 	}
 
 	c.log.Info("AI document generated",
@@ -167,6 +185,15 @@ func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Do
 		zap.Int("requested_words", req.Words),
 		zap.Int("references", len(doc.References)))
 	return doc, nil
+}
+
+// figureIdea reja bobidagi rasm g'oyasi (rasmlar so'ralmagan yoki g'oya
+// bo'lmasa — nil). OnOutline va Document.Chapters uchun bir xil qoida.
+func figureIdea(req DocumentRequest, ch outlineChapter) *FigureIdea {
+	if !req.Figures || ch.Figure == nil || ch.Figure.Prompt == "" {
+		return nil
+	}
+	return &FigureIdea{Caption: ch.Figure.Caption, Prompt: ch.Figure.Prompt}
 }
 
 // writeSections bo'limlarni cheklangan parallellik bilan yozadi. Birorta bo'lim
