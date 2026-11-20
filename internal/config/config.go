@@ -72,6 +72,9 @@ type AIConfig struct {
 	OpenAIAPIKey  string
 	OpenAIModel   string
 	OpenAIBaseURL string // OpenAI bilan mos (compatible) API manzili
+	// OpenAIStructured — javob formati Structured Outputs (json_schema, strict);
+	// API qo'llamasa, avtomatik json_object rejimiga o'tiladi.
+	OpenAIStructured bool
 
 	DeepSeekAPIKey   string
 	DeepSeekModel    string
@@ -439,9 +442,10 @@ func aiConfig(p *parser) AIConfig {
 		GeminiAPIKey: p.str("GEMINI_API_KEY", ""),
 		GeminiModel:  p.str("GEMINI_MODEL", "gemini-flash-latest"),
 
-		OpenAIAPIKey:  p.str("OPENAI_API_KEY", ""),
-		OpenAIModel:   p.str("OPENAI_MODEL", "gpt-4o-mini"),
-		OpenAIBaseURL: strings.TrimRight(p.str("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
+		OpenAIAPIKey:     p.str("OPENAI_API_KEY", ""),
+		OpenAIModel:      p.str("OPENAI_MODEL", "gpt-4o-mini"),
+		OpenAIBaseURL:    strings.TrimRight(p.str("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
+		OpenAIStructured: p.bool("AI_OPENAI_STRUCTURED", true),
 
 		DeepSeekAPIKey:   p.str("DEEPSEEK_API_KEY", ""),
 		DeepSeekModel:    p.str("DEEPSEEK_MODEL", "deepseek-flash"),

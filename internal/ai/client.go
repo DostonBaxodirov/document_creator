@@ -22,7 +22,6 @@ import (
 	"unicode/utf8"
 
 	"go.uber.org/zap"
-	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/httpx"
@@ -74,10 +73,12 @@ type Client interface {
 type task struct {
 	system string
 	user   string
-	// schema — Gemini structured output uchun javob sxemasi. OpenAI-mos
-	// provayderlar uni e'tiborsiz qoldiradi (ular JSON rejimida ishlaydi,
-	// javob shakli esa promptda tavsiflanadi).
-	schema *genai.Schema
+	// schema — javobning JSON Schema'si (jsonschema.go): Gemini va OpenAI
+	// uni structured output sifatida oladi; DeepSeek JSON rejimida ishlaydi,
+	// javob shakli esa promptda ham tavsiflanadi.
+	schema map[string]any
+	// op — so'rov nomi (generateJSON beradi); OpenAI json_schema nomi.
+	op string
 }
 
 // provider — aniq bir AI API bilan aloqa.
@@ -117,7 +118,7 @@ func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, err
 	case config.ProviderGemini:
 		p, err = newGemini(ctx, cfg)
 	case config.ProviderOpenAI:
-		p = newOpenAI(cfg)
+		p = newOpenAI(cfg, log.Named("ai"))
 	case config.ProviderDeepSeek:
 		p = newDeepSeek(cfg)
 	default:
@@ -151,7 +152,7 @@ func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
 	// DeepSeek'ning katta chegarasi) — OpenAI modeli uni rad etmasligi uchun
 	// modelning o'z standart chegarasi ishlatiladi.
 	cfg.MaxTokens = 0
-	p := newOpenAI(cfg)
+	p := newOpenAI(cfg, log.Named("ai").With(zap.String("model", model)))
 	log.Info("AI client initialised", zap.String("provider", p.name()), zap.String("purpose", "custom design"))
 	return &client{
 		p:                p,
@@ -185,6 +186,7 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 		needBackoff bool
 	)
 	log := c.log.With(zap.String("op", op))
+	t.op = op
 
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
@@ -360,10 +362,6 @@ func writeRequirements(b *strings.Builder, req string) {
 		b.WriteString("\n\n")
 	}
 	b.WriteString(block)
-}
-
-func stringArraySchema() *genai.Schema {
-	return &genai.Schema{Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}}
 }
 
 // ---------------------------------------------------------------------------

@@ -64,10 +64,10 @@ func TestDesignPrompt(t *testing.T) {
 
 	// Sxema: barcha maydonlar majburiy, variantlar ro'yxati bilan.
 	s := designSchema()
-	if len(s.Required) != len(s.Properties) {
-		t.Errorf("sxemada %d ta maydon, %d tasi majburiy", len(s.Properties), len(s.Required))
+	if req, props := schemaRequired(s), schemaProps(s); len(req) != len(props) {
+		t.Errorf("sxemada %d ta maydon, %d tasi majburiy", len(props), len(req))
 	}
-	if !slices.Equal(s.Properties["cover"].Enum, DesignCovers) || !slices.Equal(s.Properties["heading_font"].Enum, DesignHeadingFonts) {
+	if !slices.Equal(schemaEnum(schemaProp(s, "cover")), DesignCovers) || !slices.Equal(schemaEnum(schemaProp(s, "heading_font")), DesignHeadingFonts) {
 		t.Error("sxema variantlari ro'yxatlar bilan mos emas")
 	}
 }

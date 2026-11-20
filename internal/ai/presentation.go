@@ -33,7 +33,6 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
-	"google.golang.org/genai"
 )
 
 // Slayd maketlari — generator paketidagi Layout* nomlari bilan bir xil.
@@ -740,32 +739,23 @@ func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to
 }
 
 // ---------------------------------------------------------------------------
-// JSON sxemalar (Gemini structured output)
+// JSON sxemalar (barcha provayderlar uchun, jsonschema.go)
 // ---------------------------------------------------------------------------
 
-func slideSchema(images bool, layouts []string) *genai.Schema {
-	s := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
-			"title":  {Type: genai.TypeString},
-			"lead":   {Type: genai.TypeString},
-			"items": {Type: genai.TypeArray, Items: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"value":   {Type: genai.TypeString},
-					"heading": {Type: genai.TypeString},
-					"text":    {Type: genai.TypeString},
-					"points":  stringArraySchema(),
-				},
-				Required:         []string{"heading", "text"},
-				PropertyOrdering: []string{"value", "heading", "text", "points"},
-			}},
-			"highlight": {Type: genai.TypeString},
-		},
-		Required:         []string{"layout", "title", "lead", "items"},
-		PropertyOrdering: []string{"layout", "title", "lead", "items", "highlight"},
-	}
+func slideSchema(images bool, layouts []string) map[string]any {
+	item := Object(map[string]any{
+		"value":   String(),
+		"heading": String(),
+		"text":    String(),
+		"points":  stringArraySchema(),
+	}, "value", "heading", "text", "points")
+	s := Object(map[string]any{
+		"layout":    Enum(layouts),
+		"title":     String(),
+		"lead":      String(),
+		"items":     Array(item),
+		"highlight": String(),
+	}, "layout", "title", "lead", "items", "highlight")
 	if images {
 		addImageProperty(s)
 	}
@@ -773,59 +763,38 @@ func slideSchema(images bool, layouts []string) *genai.Schema {
 }
 
 // addImageProperty sxemaga majburiy "image" maydonini qo'shadi (rasmli dizayn uchun).
-func addImageProperty(s *genai.Schema) {
-	s.Properties["image"] = &genai.Schema{Type: genai.TypeString}
-	s.Required = append(s.Required, "image")
-	s.PropertyOrdering = append(s.PropertyOrdering, "image")
+func addImageProperty(s map[string]any) {
+	withProperty(s, "image", String())
 }
 
-func deckSchema(images bool, layouts []string) *genai.Schema {
-	s := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"title":    {Type: genai.TypeString},
-			"subtitle": {Type: genai.TypeString},
-			"slides":   {Type: genai.TypeArray, Items: slideSchema(images, layouts)},
-		},
-		Required:         []string{"title", "subtitle", "slides"},
-		PropertyOrdering: []string{"title", "subtitle", "slides"},
-	}
+func deckSchema(images bool, layouts []string) map[string]any {
+	s := Object(map[string]any{
+		"title":    String(),
+		"subtitle": String(),
+		"slides":   Array(slideSchema(images, layouts)),
+	}, "title", "subtitle", "slides")
 	if images {
 		addImageProperty(s)
 	}
 	return s
 }
 
-func slidesBatchSchema(images bool, layouts []string) *genai.Schema {
-	return &genai.Schema{
-		Type:       genai.TypeObject,
-		Properties: map[string]*genai.Schema{"slides": {Type: genai.TypeArray, Items: slideSchema(images, layouts)}},
-		Required:   []string{"slides"},
-	}
+func slidesBatchSchema(images bool, layouts []string) map[string]any {
+	return Object(map[string]any{"slides": Array(slideSchema(images, layouts))}, "slides")
 }
 
-func deckOutlineSchema(images bool, layouts []string) *genai.Schema {
-	slide := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"n":      {Type: genai.TypeInteger},
-			"title":  {Type: genai.TypeString},
-			"layout": {Type: genai.TypeString, Format: "enum", Enum: layouts},
-			"focus":  {Type: genai.TypeString},
-		},
-		Required:         []string{"n", "title", "layout", "focus"},
-		PropertyOrdering: []string{"n", "title", "layout", "focus"},
-	}
-	s := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"title":    {Type: genai.TypeString},
-			"subtitle": {Type: genai.TypeString},
-			"slides":   {Type: genai.TypeArray, Items: slide},
-		},
-		Required:         []string{"title", "subtitle", "slides"},
-		PropertyOrdering: []string{"title", "subtitle", "slides"},
-	}
+func deckOutlineSchema(images bool, layouts []string) map[string]any {
+	slide := Object(map[string]any{
+		"n":      Integer(),
+		"title":  String(),
+		"layout": Enum(layouts),
+		"focus":  String(),
+	}, "n", "title", "layout", "focus")
+	s := Object(map[string]any{
+		"title":    String(),
+		"subtitle": String(),
+		"slides":   Array(slide),
+	}, "title", "subtitle", "slides")
 	if images {
 		addImageProperty(s)
 		addImageProperty(slide)

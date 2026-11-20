@@ -138,10 +138,10 @@ func TestImageDescriptions(t *testing.T) {
 		t.Errorf("guruh promptida rasm maydoni yo'q")
 	}
 
-	if s := deckSchema(true, slideLayouts); s.Properties["image"] == nil || s.Properties["slides"].Items.Properties["image"] == nil {
+	if s := deckSchema(true, slideLayouts); schemaProp(s, "image") == nil || schemaProp(slideItem(s), "image") == nil {
 		t.Errorf("rasmli sxemada image maydoni yo'q")
 	}
-	if s := deckSchema(false, slideLayouts); s.Properties["image"] != nil || s.Properties["slides"].Items.Properties["image"] != nil {
+	if s := deckSchema(false, slideLayouts); schemaProp(s, "image") != nil || schemaProp(slideItem(s), "image") != nil {
 		t.Errorf("oddiy sxemada image maydoni bo'lmasligi kerak")
 	}
 }
@@ -171,10 +171,10 @@ func TestDesignAwarePrompt(t *testing.T) {
 			t.Errorf("promptda ruxsat etilmagan maket bor: %q", unwanted)
 		}
 	}
-	if enum := deckSchema(false, req.layouts()).Properties["slides"].Items.Properties["layout"].Enum; len(enum) != 6 {
+	if enum := schemaEnum(schemaProp(slideItem(deckSchema(false, req.layouts())), "layout")); len(enum) != 6 {
 		t.Errorf("sxemadagi maketlar = %v", enum)
 	}
-	if enum := deckOutlineSchema(false, req.layouts()).Properties["slides"].Items.Properties["layout"].Enum; len(enum) != 6 {
+	if enum := schemaEnum(schemaProp(slideItem(deckOutlineSchema(false, req.layouts())), "layout")); len(enum) != 6 {
 		t.Errorf("reja sxemasidagi maketlar = %v", enum)
 	}
 
@@ -240,7 +240,7 @@ func TestConclusionLast(t *testing.T) {
 	if !strings.Contains(buildDeckOutlinePrompt(PresentationRequest{Topic: "T", SlideCount: 10}), `"n" from 1 to 10 without gaps: slide 10 is the conclusion`) {
 		t.Error("reja promptida raqamlash qoidasi yo'q")
 	}
-	if s := deckOutlineSchema(false, slideLayouts).Properties["slides"].Items; s.Properties["n"] == nil {
+	if s := slideItem(deckOutlineSchema(false, slideLayouts)); schemaProp(s, "n") == nil {
 		t.Error("reja sxemasida n maydoni yo'q")
 	}
 }

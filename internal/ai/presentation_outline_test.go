@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"google.golang.org/genai"
 )
 
 // TestOutlineImagePrompt — rasmli dizaynda rejadagi har bir slayd uchun rasm
@@ -38,13 +36,12 @@ func TestOutlineImagePrompt(t *testing.T) {
 		t.Errorf("maxsus dizayn reja promptida rasm uslubi talabi yo'q:\n%s", p)
 	}
 
-	items := func(s *genai.Schema) *genai.Schema { return s.Properties["slides"].Items }
 	s := deckOutlineSchema(true, slideLayouts)
-	if items(s).Properties["image"] == nil || !slices.Contains(items(s).Required, "image") || s.Properties["image"] == nil {
-		t.Errorf("rasmli reja sxemasida slayd va titul rasmi bo'lishi kerak: %+v", items(s))
+	if schemaProp(slideItem(s), "image") == nil || !slices.Contains(schemaRequired(slideItem(s)), "image") || schemaProp(s, "image") == nil {
+		t.Errorf("rasmli reja sxemasida slayd va titul rasmi bo'lishi kerak: %+v", slideItem(s))
 	}
 	s = deckOutlineSchema(false, slideLayouts)
-	if items(s).Properties["image"] != nil || s.Properties["image"] != nil {
+	if schemaProp(slideItem(s), "image") != nil || schemaProp(s, "image") != nil {
 		t.Errorf("oddiy reja sxemasida rasm maydoni bo'lmasligi kerak")
 	}
 
@@ -217,7 +214,7 @@ func TestBatchedDeckOnOutline(t *testing.T) {
 
 	f.mu.Lock()
 	for _, tk := range f.tasks[1:] {
-		if strings.Contains(tk.user, `"image"`) || tk.schema.Properties["slides"].Items.Properties["image"] != nil {
+		if strings.Contains(tk.user, `"image"`) || schemaProp(slideItem(tk.schema), "image") != nil {
 			t.Errorf("guruh so'rovida rasm maydoni bo'lmasligi kerak:\n%s", tk.user)
 		}
 	}
@@ -281,7 +278,7 @@ func TestSingleDeckPlanIndex(t *testing.T) {
 			t.Errorf("slayd %d: PlanIndex %d, rasm %q", i, s.PlanIndex, s.Image)
 		}
 	}
-	if f.tasks[0].schema.Properties["slides"].Items.Properties["image"] == nil {
+	if schemaProp(slideItem(f.tasks[0].schema), "image") == nil {
 		t.Error("bitta so'rovli taqdimot sxemasida rasm maydoni qolishi kerak")
 	}
 }

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
+	"sync/atomic"
 
+	"go.uber.org/zap"
 	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
@@ -50,8 +53,8 @@ func (g *geminiProvider) complete(ctx context.Context, t task) (string, error) {
 		Temperature:       g.temperature,
 		MaxOutputTokens:   g.maxTokens,
 		// Structured output: model javobni aynan shu sxema bo'yicha JSON qilib qaytaradi.
-		ResponseMIMEType: "application/json",
-		ResponseSchema:   t.schema,
+		ResponseMIMEType:   "application/json",
+		ResponseJsonSchema: geminiResponseSchema(t.schema),
 	})
 	if err != nil {
 		return "", classifyGeminiError(err)
@@ -80,6 +83,14 @@ func (g *geminiProvider) complete(ctx context.Context, t task) (string, error) {
 	return text, nil
 }
 
+// geminiResponseSchema sxemani Gemini uchun moslaydi (nil — sxemasiz).
+func geminiResponseSchema(s map[string]any) any {
+	if s == nil {
+		return nil
+	}
+	return geminiSchema(s)
+}
+
 // classifyGeminiError 4xx xatolarni (429 va 408 dan tashqari) doimiy deb belgilaydi.
 func classifyGeminiError(err error) error {
 	var apiErr genai.APIError
@@ -99,7 +110,8 @@ func classifyGeminiError(err error) error {
 // Bitta implementatsiya ikki xizmat uchun ishlatiladi:
 //   - OpenAI (yoki OPENAI_BASE_URL orqali boshqa mos xizmat);
 //   - DeepSeek (https://api.deepseek.com) — API OpenAI formatiga to'liq mos,
-//     farqi faqat qo'shimcha "thinking" parametri va max_tokens maydon nomida.
+//     farqi qo'shimcha "thinking" parametri, max_tokens maydon nomi va
+//     javob formati (DeepSeek faqat json_object rejimini qo'llaydi).
 // ---------------------------------------------------------------------------
 
 // deepSeekDefaultMaxTokens — DeepSeek fikrlashsiz rejimda standart chegara 8K;
@@ -117,17 +129,28 @@ type compatProvider struct {
 	// DeepSeek'da — "max_tokens".
 	maxTokensField string
 	extra          map[string]any // provayderga xos qo'shimcha parametrlar
+	// structured — Structured Outputs (response_format json_schema, strict)
+	// yoqilgan. API uni qo'llamasa (400), bir marta json_object rejimiga
+	// o'tiladi va jarayon oxirigacha shunday qoladi.
+	structured atomic.Bool
+	log        *zap.Logger
 }
 
-func newOpenAI(cfg config.AIConfig) *compatProvider {
-	return &compatProvider{
+func newOpenAI(cfg config.AIConfig, log *zap.Logger) *compatProvider {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	p := &compatProvider{
 		label:          "openai",
 		client:         openai.New(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, "openai"),
 		model:          cfg.OpenAIModel,
 		temperature:    cfg.Temperature,
 		maxTokens:      cfg.MaxTokens,
 		maxTokensField: "max_completion_tokens",
+		log:            log,
 	}
+	p.structured.Store(cfg.OpenAIStructured)
+	return p
 }
 
 func newDeepSeek(cfg config.AIConfig) *compatProvider {
@@ -148,20 +171,62 @@ func newDeepSeek(cfg config.AIConfig) *compatProvider {
 		maxTokens:      maxTokens,
 		maxTokensField: "max_tokens",
 		extra:          map[string]any{"thinking": map[string]string{"type": thinking}},
+		log:            zap.NewNop(), // structured o'chiq — log kerak emas
 	}
 }
 
 func (o *compatProvider) name() string { return o.label + "/" + o.model }
 
 func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
+	structured := t.schema != nil && o.structured.Load()
+	payload, err := o.payload(t, structured)
+	if err != nil {
+		return "", err
+	}
+	raw, err := o.client.Chat(ctx, payload)
+	if !structured || !isResponseFormatError(err) {
+		return raw, err
+	}
+
+	// API json_schema'ni qo'llamaydi (masalan, OPENAI_BASE_URL dagi boshqa
+	// xizmat yoki eski model) — json_object rejimiga o'tib, darhol qayta yuboramiz.
+	if o.structured.CompareAndSwap(true, false) {
+		o.log.Warn("structured outputs not supported, falling back to json_object",
+			zap.String("provider", o.name()), zap.Error(err))
+	}
+	if payload, err = o.payload(t, false); err != nil {
+		return "", err
+	}
+	return o.client.Chat(ctx, payload)
+}
+
+// payload Chat Completions so'rovini quradi. structured — javob formati
+// json_schema (strict), aks holda json_object.
+func (o *compatProvider) payload(t task, structured bool) (map[string]any, error) {
+	// JSON rejimi: model faqat yaroqli JSON qaytaradi (promptda "JSON" so'zi bo'lishi shart).
+	var format any = map[string]string{"type": "json_object"}
+	if structured {
+		schema, err := marshalSchema(t.schema)
+		if err != nil {
+			return nil, httpx.Permanent(fmt.Errorf("%s: javob sxemasini tayyorlab bo'lmadi: %w", o.label, err))
+		}
+		// Structured Outputs: javob aynan shu sxemaga mos keladi.
+		format = map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   schemaName(t.op),
+				"strict": true,
+				"schema": schema,
+			},
+		}
+	}
 	payload := map[string]any{
 		"model": o.model,
 		"messages": []openai.Message{
 			{Role: "system", Content: t.system},
 			{Role: "user", Content: t.user},
 		},
-		// JSON rejimi: model faqat yaroqli JSON qaytaradi (promptda "JSON" so'zi bo'lishi shart).
-		"response_format": map[string]string{"type": "json_object"},
+		"response_format": format,
 		"stream":          false,
 	}
 	if o.temperature != nil {
@@ -173,5 +238,16 @@ func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
 	for k, v := range o.extra {
 		payload[k] = v
 	}
-	return o.client.Chat(ctx, payload)
+	return payload, nil
+}
+
+// isResponseFormatError API json_schema javob formatini rad etganini bildiradi:
+// 400 va xabarda response_format yoki json_schema tilga olingan.
+func isResponseFormatError(err error) bool {
+	var apiErr *openai.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	msg := strings.ToLower(apiErr.Message)
+	return strings.Contains(msg, "response_format") || strings.Contains(msg, "json_schema")
 }

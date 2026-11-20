@@ -49,7 +49,7 @@ func TestReferatPrompts(t *testing.T) {
 	if !strings.Contains(section, "analytical review") {
 		t.Error("referat bo'limi uslubi analitik sharh bo'lishi kerak")
 	}
-	if s := outlineSchema(true); s.Properties["chapters"].Items.Properties["figure"] == nil {
+	if s := outlineSchema(true); schemaProp(schemaItems(schemaProp(s, "chapters")), "figure") == nil {
 		t.Error("sxemada figure bo'lishi kerak")
 	}
 }

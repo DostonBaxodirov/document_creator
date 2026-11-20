@@ -17,8 +17,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"google.golang.org/genai"
 )
 
 // DesignRequest — maxsus dizayn so'rovi.
@@ -145,36 +143,29 @@ func buildDesignPrompt(req DesignRequest) string {
 	return b.String()
 }
 
-func designSchema() *genai.Schema {
-	str := func() *genai.Schema { return &genai.Schema{Type: genai.TypeString} }
-	enum := func(v []string) *genai.Schema { return &genai.Schema{Type: genai.TypeString, Format: "enum", Enum: v} }
+func designSchema() map[string]any {
 	colors := []string{"background", "surface", "primary", "secondary", "accent", "text", "muted"}
-	colorProps := make(map[string]*genai.Schema, len(colors))
+	colorProps := make(map[string]any, len(colors))
 	for _, c := range colors {
-		colorProps[c] = str()
+		colorProps[c] = String()
 	}
-	order := []string{"name", "mood", "colors", "heading_font", "body_font", "cover", "header", "cards", "corners", "markers", "motif", "photo_side", "image_style", "signature_layouts"}
-	return &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"name":              str(),
-			"mood":              str(),
-			"colors":            {Type: genai.TypeObject, Properties: colorProps, Required: colors, PropertyOrdering: colors},
-			"heading_font":      enum(DesignHeadingFonts),
-			"body_font":         enum(DesignBodyFonts),
-			"cover":             enum(DesignCovers),
-			"header":            enum(DesignHeaders),
-			"cards":             enum(DesignCards),
-			"corners":           enum(DesignCorners),
-			"markers":           enum(DesignMarkers),
-			"motif":             enum(DesignMotifs),
-			"photo_side":        enum(DesignSides),
-			"image_style":       str(),
-			"signature_layouts": {Type: genai.TypeArray, Items: enum(designSignatureLayouts)},
-		},
-		Required:         order,
-		PropertyOrdering: order,
-	}
+	return Object(map[string]any{
+		"name":              String(),
+		"mood":              String(),
+		"colors":            Object(colorProps, colors...),
+		"heading_font":      Enum(DesignHeadingFonts),
+		"body_font":         Enum(DesignBodyFonts),
+		"cover":             Enum(DesignCovers),
+		"header":            Enum(DesignHeaders),
+		"cards":             Enum(DesignCards),
+		"corners":           Enum(DesignCorners),
+		"markers":           Enum(DesignMarkers),
+		"motif":             Enum(DesignMotifs),
+		"photo_side":        Enum(DesignSides),
+		"image_style":       String(),
+		"signature_layouts": Array(Enum(designSignatureLayouts)),
+	}, "name", "mood", "colors", "heading_font", "body_font", "cover", "header", "cards", "corners", "markers", "motif",
+		"photo_side", "image_style", "signature_layouts")
 }
 
 // Dizayn matnlari uzunligi chegaralari.

@@ -38,6 +38,20 @@ func TestImagesConfigDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+// TestAIOpenAIStructured — AI_OPENAI_STRUCTURED: standart true, false bilan o'chadi.
+func TestAIOpenAIStructured(t *testing.T) {
+	t.Setenv("AI_OPENAI_STRUCTURED", "")
+	p := &parser{}
+	if c := aiConfig(p); len(p.errs) > 0 || !c.OpenAIStructured {
+		t.Fatalf("standart qiymat true bo'lishi kerak: %v", p.errs)
+	}
+	t.Setenv("AI_OPENAI_STRUCTURED", "false")
+	p = &parser{}
+	if c := aiConfig(p); len(p.errs) > 0 || c.OpenAIStructured {
+		t.Fatalf("false berilganda o'chishi kerak: %v", p.errs)
+	}
+}
+
 // TestAISlidesPerRequest — AI_SLIDES_PER_REQUEST: standart 6, ruxsat etilgan
 // oraliq 3..10, son bo'lmasa — format xatosi.
 func TestAISlidesPerRequest(t *testing.T) {

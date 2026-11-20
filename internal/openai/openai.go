@@ -106,6 +106,19 @@ func (c *Client) PostJSON(ctx context.Context, path string, payload, out any, ma
 	return nil
 }
 
+// APIError — API'ning 200 dan boshqa javobi. Chaqiruvchi status va xabarni
+// errors.As bilan tekshirishi mumkin (masalan, qo'llab-quvvatlanmagan
+// parametrni aniqlash uchun).
+type APIError struct {
+	Label      string // klient nomi: "openai", "deepseek" ...
+	StatusCode int
+	Message    string // {"error":{"message"}} yoki qisqartirilgan javob tanasi
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("%s API xatosi %d: %s", e.Label, e.StatusCode, e.Message)
+}
+
 // statusError 200 dan boshqa javob uchun xato yasaydi.
 func (c *Client) statusError(code int, data []byte) error {
 	msg := truncate(strings.TrimSpace(string(data)), maxErrorRunes)
@@ -113,7 +126,7 @@ func (c *Client) statusError(code int, data []byte) error {
 	if json.Unmarshal(data, &parsed) == nil && parsed.Error != nil && parsed.Error.Message != "" {
 		msg = parsed.Error.Message
 	}
-	e := fmt.Errorf("%s API xatosi %d: %s", c.label, code, msg)
+	e := &APIError{Label: c.label, StatusCode: code, Message: msg}
 	if httpx.IsPermanentStatus(code) {
 		return httpx.Permanent(e)
 	}

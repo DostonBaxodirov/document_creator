@@ -14,8 +14,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"google.golang.org/genai"
 )
 
 // DocDesign — AI yaratgan Word dizayni.
@@ -86,26 +84,18 @@ func buildDocDesignPrompt(req DesignRequest) string {
 	return b.String()
 }
 
-func docDesignSchema() *genai.Schema {
-	str := func() *genai.Schema { return &genai.Schema{Type: genai.TypeString} }
-	enum := func(v []string) *genai.Schema { return &genai.Schema{Type: genai.TypeString, Format: "enum", Enum: v} }
-	order := []string{"name", "primary", "accent", "heading_font", "title", "heading", "border", "ornament", "image_style"}
-	return &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"name":         str(),
-			"primary":      str(),
-			"accent":       str(),
-			"heading_font": enum(DocHeadingFonts),
-			"title":        enum(DocTitles),
-			"heading":      enum(DocHeadings),
-			"border":       enum(DocBorders),
-			"ornament":     enum(DocOrnaments),
-			"image_style":  str(),
-		},
-		Required:         order,
-		PropertyOrdering: order,
-	}
+func docDesignSchema() map[string]any {
+	return Object(map[string]any{
+		"name":         String(),
+		"primary":      String(),
+		"accent":       String(),
+		"heading_font": Enum(DocHeadingFonts),
+		"title":        Enum(DocTitles),
+		"heading":      Enum(DocHeadings),
+		"border":       Enum(DocBorders),
+		"ornament":     Enum(DocOrnaments),
+		"image_style":  String(),
+	}, "name", "primary", "accent", "heading_font", "title", "heading", "border", "ornament", "image_style")
 }
 
 // docDesignScoreComplete — to'liq javob: 2 ta rang va 4 ta variant to'g'ri.

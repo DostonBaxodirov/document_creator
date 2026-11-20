@@ -15,8 +15,10 @@ yozilgani izohlangan.
   amal qiladi. Kontent tili (o'zbekcha lotin/kirill, ruscha, inglizcha) har bir
   topshiriqda alohida qator bilan beriladi.
 - Javob doim **bitta JSON obyekt** — kod uni o'qiydi, tekshiradi va tozalaydi.
-  OpenAI/DeepSeek'da JSON rejimi yoqiladi (buning uchun promptda "JSON" so'zi bo'lishi
-  shart), Gemini'da esa javob sxemasi (structured output) beriladi.
+  Gemini va OpenAI'ga yagona JSON Schema (`internal/ai/jsonschema.go`) structured
+  output sifatida beriladi (OpenAI'da strict `json_schema`; API uni qo'llamasa yoki
+  `AI_OPENAI_STRUCTURED=false` bo'lsa — JSON rejimi). DeepSeek'da JSON rejimi yoqiladi
+  (buning uchun promptda "JSON" so'zi bo'lishi shart).
 - Prompt — himoyaning **birinchi** qatlami. Ikkinchi qatlam — kod: noto'g'ri
   qiymatlar standart qiymatga almashtiriladi, ranglar kontrasti tuzatiladi, xizmat
   gaplari ("Albatta, mana...") o'chiriladi, maket uchun ma'lumot yetmasa boshqa

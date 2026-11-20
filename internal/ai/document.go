@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
-	"google.golang.org/genai"
 )
 
 // DocumentRequest — mustaqil ish, referat yoki amaliy topshiriq generatsiyasi uchun ma'lumotlar.
@@ -426,41 +425,21 @@ type outline struct {
 }
 
 // outlineSchema reja sxemasi; figures — har bir bobga rasm g'oyasi ham.
-func outlineSchema(figures bool) *genai.Schema {
-	chapter := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"title":  {Type: genai.TypeString},
-			"points": stringArraySchema(),
-		},
-		Required:         []string{"title", "points"},
-		PropertyOrdering: []string{"title", "points"},
-	}
+func outlineSchema(figures bool) map[string]any {
+	chapter := Object(map[string]any{
+		"title":  String(),
+		"points": stringArraySchema(),
+	}, "title", "points")
 	if figures {
-		chapter.Properties["figure"] = &genai.Schema{
-			Type: genai.TypeObject,
-			Properties: map[string]*genai.Schema{
-				"caption": {Type: genai.TypeString},
-				"prompt":  {Type: genai.TypeString},
-			},
-			Required:         []string{"caption", "prompt"},
-			PropertyOrdering: []string{"caption", "prompt"},
-		}
-		chapter.Required = append(chapter.Required, "figure")
-		chapter.PropertyOrdering = append(chapter.PropertyOrdering, "figure")
+		withProperty(chapter, "figure", Object(map[string]any{
+			"caption": String(),
+			"prompt":  String(),
+		}, "caption", "prompt"))
 	}
-	return &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"chapters": {
-				Type:  genai.TypeArray,
-				Items: chapter,
-			},
-			"references": stringArraySchema(),
-		},
-		Required:         []string{"chapters", "references"},
-		PropertyOrdering: []string{"chapters", "references"},
-	}
+	return Object(map[string]any{
+		"chapters":   Array(chapter),
+		"references": stringArraySchema(),
+	}, "chapters", "references")
 }
 
 // "[1] ", "1. " kabi adabiyot raqamlari (raqamni generator o'zi qo'yadi).
@@ -566,13 +545,8 @@ func (s section) label() string {
 	return s.kind.String()
 }
 
-func sectionSchema() *genai.Schema {
-	return &genai.Schema{
-		Type:             genai.TypeObject,
-		Properties:       map[string]*genai.Schema{"paragraphs": stringArraySchema()},
-		Required:         []string{"paragraphs"},
-		PropertyOrdering: []string{"paragraphs"},
-	}
+func sectionSchema() map[string]any {
+	return Object(map[string]any{"paragraphs": stringArraySchema()}, "paragraphs")
 }
 
 // parseSection bo'lim matnini o'qiydi; ball — so'zlar soni.
