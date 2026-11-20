@@ -206,13 +206,19 @@ func NewHandler(jobsCtx context.Context, sessions SessionStore, aiClient Content
 	if opts.MaxConcurrentJobs < 1 {
 		opts.MaxConcurrentJobs = 1
 	}
+	log = log.Named("bot")
+	// Admin tekshiruvlari va adminlarga xabarlar ro'yxatni keshdan oladi.
+	billing := opts.Billing
+	if billing != nil {
+		billing = newAdminCache(billing, log, time.Now)
+	}
 	return &Handler{
 		sessions: sessions,
 		ai:       aiClient,
 		builders: builders,
-		log:      log.Named("bot"),
+		log:      log,
 		opts:     opts,
-		billing:  opts.Billing,
+		billing:  billing,
 		verifier: opts.Verifier,
 		stats:    opts.Stats,
 		jobsCtx:  jobsCtx,
