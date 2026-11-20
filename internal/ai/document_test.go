@@ -84,8 +84,8 @@ func (f *fakeDocProvider) count(prefix string) int {
 	return n
 }
 
-func testClient(p provider) *client {
-	return &client{p: p, timeout: time.Minute, maxRetries: 0, parallel: 3, log: zap.NewNop()}
+func testClient(p provider) *Client {
+	return &Client{p: p, timeout: time.Minute, maxRetries: 0, parallel: 3, log: zap.NewNop()}
 }
 
 // TestDocumentReachesRequestedLength — model bo'limlarni qisqa (70%) yozsa,

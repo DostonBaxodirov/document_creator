@@ -189,7 +189,7 @@ const (
 )
 
 // GenerateDesign mavzuga mos dizayn konsepsiyasini yaratadi.
-func (c *client) GenerateDesign(ctx context.Context, req DesignRequest) (*Design, error) {
+func (c *Client) GenerateDesign(ctx context.Context, req DesignRequest) (*Design, error) {
 	if strings.TrimSpace(req.Topic) == "" {
 		return nil, errors.New("ai: mavzu bo'sh")
 	}

@@ -105,7 +105,7 @@ const (
 //
 // Bo'lib yozish uzun hujjatlarni ham modelning javob uzunligi chegarasiga
 // sig'dirish imkonini beradi va har bir bo'limning hajmini nazorat qiladi.
-func (c *client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Document, error) {
+func (c *Client) GenerateDocument(ctx context.Context, req DocumentRequest) (*Document, error) {
 	if strings.TrimSpace(req.Topic) == "" {
 		return nil, errors.New("ai: mavzu bo'sh")
 	}
@@ -199,7 +199,7 @@ func figureIdea(req DocumentRequest, ch outlineChapter) *FigureIdea {
 
 // writeSections bo'limlarni cheklangan parallellik bilan yozadi. Birorta bo'lim
 // xato bilan tugasa, qolganlari to'xtatiladi va birinchi xato qaytariladi.
-func (c *client) writeSections(ctx context.Context, req DocumentRequest, ol *outline,
+func (c *Client) writeSections(ctx context.Context, req DocumentRequest, ol *outline,
 	parts []section, progress *progressReporter) ([][]Paragraph, error) {
 	results := make([][]Paragraph, len(parts))
 	// Har bir goroutine faqat o'z bo'limiga (results[i]) yozadi; panic'ni
@@ -243,7 +243,7 @@ func shortSections(parts []section, texts [][]Paragraph) []int {
 // bo'limning hozirgi matnini ko'radi va yetishmayotgan hajmda yangi
 // paragraflar qo'shadi. Bu qo'shimcha bosqich — xato bo'lsa, bo'lim avvalgi
 // holicha qoladi va hujjat baribir tayyorlanadi.
-func (c *client) extendSections(ctx context.Context, req DocumentRequest, ol *outline,
+func (c *Client) extendSections(ctx context.Context, req DocumentRequest, ol *outline,
 	parts []section, texts [][]Paragraph, progress *progressReporter) {
 	short := shortSections(parts, texts)
 	if len(short) == 0 {

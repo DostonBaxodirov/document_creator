@@ -55,23 +55,6 @@ type ReceiptVerifier interface {
 	Read(ctx context.Context, image []byte, exp payment.Expectation) (*payment.Receipt, error)
 }
 
-// PaymentOptions — pullik xizmat sozlamalari.
-type PaymentOptions struct {
-	Enabled    bool
-	CardNumber string
-	CardHolder string
-	// Taqdimot narxi = slaydlar soni × bitta slayd narxi (rasmli yoki rasmsiz dizayn).
-	PriceSlidePhoto int // rasmli dizayndagi bitta slayd, so'm
-	PriceSlidePlain int // rasmsiz dizayndagi bitta slayd, so'm
-	PriceDocument   int // amaliy topshiriq (Word), so'm — qat'iy narx
-	PricePage       int // mustaqil ish va referat: bitta sahifa narxi, so'm
-	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
-	// FreePhoto       int
-	// FreePlain       int
-	// AdminPassword — shu matnni yuborgan foydalanuvchi admin bo'ladi (bo'sh — o'chirilgan).
-	AdminPassword string
-}
-
 const (
 	maxReceiptBytes = 10 << 20        // chek rasmi hajmi chegarasi
 	receiptTimeout  = 3 * time.Minute // chekni yuklab olish va AI tekshiruvi uchun
@@ -636,7 +619,7 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 	defer cancel()
 	_ = h.bot.Notify(chat, tele.Typing)
 
-	exp := payment.Expectation{Amount: j.order.Price, CardLast4: textutil.LastDigits(h.opts.Payment.CardNumber, 4)}
+	exp := payment.Expectation{Amount: j.order.Price, CardLast4: h.opts.Payment.CardLast4()}
 	var (
 		receipt *payment.Receipt
 		aiErr   error

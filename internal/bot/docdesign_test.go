@@ -60,7 +60,7 @@ func TestDocTariffs(t *testing.T) {
 	}
 	h := NewHandler(context.Background(), nil, nil, Builders{Papers: docx}, zap.NewNop(), Options{
 		Billing: &fakeBilling{},
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
+		Payment: config.PaymentConfig{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
 		Custom:  tariffs,
 	})
 	s := &storage.Session{WorkType: string(ai.WorkReferat), Design: generator.ThemeCustom, Tariff: config.TariffPremium, Topic: "Ipak yo'li tarixi", Volume: 15}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
 )
@@ -22,25 +23,25 @@ func TestFlowIncludesRequirementsBeforeConfirm(t *testing.T) {
 func TestRequirementsStep(t *testing.T) {
 	st := steps[StateRequirements]
 
-	if got := st.suggest(Limits{}, &storage.Session{}); len(got) != 1 || got[0] != skipRequirements {
+	if got := st.suggest(config.LimitsConfig{}, &storage.Session{}); len(got) != 1 || got[0] != skipRequirements {
 		t.Errorf("suggest = %v, kutilgan o'tkazib yuborish tugmasi", got)
 	}
 	for _, skip := range []string{skipRequirements, "yo'q", "Yo‘q", "  YOQ. ", "-", "нет", "No"} {
 		s := &storage.Session{Requirements: "eski"}
-		if err := st.apply(Limits{}, s, skip); err != nil || s.Requirements != "" {
+		if err := st.apply(config.LimitsConfig{}, s, skip); err != nil || s.Requirements != "" {
 			t.Errorf("%q: talablar tozalanishi kerak (err=%v, got=%q)", skip, err, s.Requirements)
 		}
 	}
 
 	s := &storage.Session{}
-	if err := st.apply(Limits{}, s, "  Ko'proq   amaliy\nmisollar bo'lsin  "); err != nil || s.Requirements != "Ko'proq amaliy misollar bo'lsin" {
+	if err := st.apply(config.LimitsConfig{}, s, "  Ko'proq   amaliy\nmisollar bo'lsin  "); err != nil || s.Requirements != "Ko'proq amaliy misollar bo'lsin" {
 		t.Errorf("oddiy talab saqlanishi kerak: err=%v, got=%q", err, s.Requirements)
 	}
 	long := strings.Repeat("a", maxRequirementsRunes+1)
-	if err := st.apply(Limits{}, &storage.Session{}, long); err == nil {
+	if err := st.apply(config.LimitsConfig{}, &storage.Session{}, long); err == nil {
 		t.Errorf("%d belgidan uzun talab rad etilishi kerak", maxRequirementsRunes)
 	}
-	if err := st.apply(Limits{}, &storage.Session{}, "12"); err == nil {
+	if err := st.apply(config.LimitsConfig{}, &storage.Session{}, "12"); err == nil {
 		t.Errorf("harfsiz qisqa javob rad etilishi kerak")
 	}
 }
@@ -62,17 +63,17 @@ func TestPersonNameStep(t *testing.T) {
 		}
 	}
 	s := &storage.Session{}
-	if err := steps[StateTeacher].apply(Limits{}, s, "i.f.n., dotsent Karimova D."); err != nil || s.TeacherName != "i.f.n., dotsent Karimova D." {
+	if err := steps[StateTeacher].apply(config.LimitsConfig{}, s, "i.f.n., dotsent Karimova D."); err != nil || s.TeacherName != "i.f.n., dotsent Karimova D." {
 		t.Errorf("tekshiruvchi darajasi bilan saqlanishi kerak: err=%v, got=%q", err, s.TeacherName)
 	}
 }
 
 func TestTopicPromptHintsLanguage(t *testing.T) {
 	p := steps[StateTopic].prompt
-	if strings.Contains(p(Limits{}, &storage.Session{}), "🌐") {
+	if strings.Contains(p(config.LimitsConfig{}, &storage.Session{}), "🌐") {
 		t.Errorf("o'zbek (lotin) tilida til maslahati bo'lmasligi kerak")
 	}
-	if got := p(Limits{}, &storage.Session{Language: string(lang.Ru)}); !strings.Contains(got, "Русский") {
+	if got := p(config.LimitsConfig{}, &storage.Session{Language: string(lang.Ru)}); !strings.Contains(got, "Русский") {
 		t.Errorf("ruscha ishda til maslahati yo'q:\n%s", got)
 	}
 }

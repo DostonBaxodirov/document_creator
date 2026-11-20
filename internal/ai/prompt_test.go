@@ -243,7 +243,7 @@ func TestSectionPromptsSharePrefix(t *testing.T) {
 // TestSlidesPerRequestSetting — bitta so'rovdagi slaydlar soni klient
 // sozlamasidan olinadi (0 bo'lsa — slidesPerRequest).
 func TestSlidesPerRequestSetting(t *testing.T) {
-	if got := (&client{}).slidesBatchSize(); got != slidesPerRequest {
+	if got := (&Client{}).slidesBatchSize(); got != slidesPerRequest {
 		t.Errorf("standart qiymat %d, kutilgan %d", got, slidesPerRequest)
 	}
 	for _, tc := range []struct{ setting, slides, requests int }{

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/storage"
@@ -143,10 +144,10 @@ func TestTopicLengthLimit(t *testing.T) {
 	// 500-belgi bo'sh joy bo'lmasligi kerak (validateText chetdagi bo'sh joylarni qirqadi).
 	ok := []rune(strings.Repeat("Raqamli o'zbek iqtisodiyoti ", 30))[:maxTopicRunes]
 	s := &storage.Session{}
-	if err := apply(Limits{}, s, string(ok)); err != nil || len([]rune(s.Topic)) != maxTopicRunes {
+	if err := apply(config.LimitsConfig{}, s, string(ok)); err != nil || len([]rune(s.Topic)) != maxTopicRunes {
 		t.Errorf("%d belgilik mavzu qabul qilinishi kerak: %v", maxTopicRunes, err)
 	}
-	if err := apply(Limits{}, &storage.Session{}, string(ok)+"x"); err == nil || !strings.Contains(err.Error(), "500") {
+	if err := apply(config.LimitsConfig{}, &storage.Session{}, string(ok)+"x"); err == nil || !strings.Contains(err.Error(), "500") {
 		t.Errorf("%d belgidan uzun mavzu rad etilishi kerak: %v", maxTopicRunes, err)
 	}
 }

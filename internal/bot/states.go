@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/textutil"
@@ -107,21 +108,13 @@ func findWorkType(t ai.WorkType) (workTypeOption, bool) {
 	return workTypeOption{}, false
 }
 
-// Limits — foydalanuvchi kiritadigan qiymatlar chegaralari.
-type Limits struct {
-	MinSlides int // taqdimot: umumiy slaydlar soni
-	MaxSlides int
-	MinPages  int // Word ishlar: umumiy sahifalar soni
-	MaxPages  int
-}
-
 // volumeSpec — ish turiga mos hajm birligi va chegaralari.
 type volumeSpec struct {
 	unit     string // "slayd" yoki "sahifa"
 	min, max int
 }
 
-func volumeFor(l Limits, s *storage.Session) volumeSpec {
+func volumeFor(l config.LimitsConfig, s *storage.Session) volumeSpec {
 	if ai.WorkType(s.WorkType).IsDocument() {
 		return volumeSpec{unit: "sahifa", min: l.MinPages, max: l.MaxPages}
 	}
@@ -143,11 +136,11 @@ type step struct {
 	// route — keyingi qadam sessiyaga bog'liq bo'lsa (ixtiyoriy; next o'rniga).
 	route func(s *storage.Session) State
 	// prompt foydalanuvchiga beriladigan savol (HTML).
-	prompt func(l Limits, s *storage.Session) string
+	prompt func(l config.LimitsConfig, s *storage.Session) string
 	// suggest javob tugmalari (reply keyboard). nil yoki bo'sh bo'lsa — klaviatura olib tashlanadi.
-	suggest func(l Limits, s *storage.Session) []string
+	suggest func(l config.LimitsConfig, s *storage.Session) []string
 	// apply javobni tekshiradi va sessiyaga yozadi; noto'g'ri bo'lsa *inputError qaytaradi.
-	apply func(l Limits, s *storage.Session, input string) error
+	apply func(l config.LimitsConfig, s *storage.Session, input string) error
 }
 
 // steps — matnli qadamlar jadvali. Yangi qadam qo'shish uchun yangi State
@@ -155,14 +148,14 @@ type step struct {
 var steps = map[State]step{
 	StateTopic: {
 		next: StateVolume,
-		prompt: func(_ Limits, s *storage.Session) string {
+		prompt: func(_ config.LimitsConfig, s *storage.Session) string {
 			text := "📝 <b>Mavzuni kiriting.</b>\n\n<i>Masalan: Raqamli iqtisodiyotning rivojlanish istiqbollari</i>"
 			if l := lang.Get(s.Language); l.Code != lang.UzLatn {
 				text += fmt.Sprintf("\n\n🌐 Mavzuni <b>%s</b> tilida yozing — u titulda aynan shunday chiqadi.", html.EscapeString(l.Name))
 			}
 			return text
 		},
-		apply: func(_ Limits, s *storage.Session, input string) error {
+		apply: func(_ config.LimitsConfig, s *storage.Session, input string) error {
 			v, err := validateText(input, "Mavzu", 3, maxTopicRunes)
 			if err != nil {
 				return err
@@ -181,7 +174,7 @@ var steps = map[State]step{
 			}
 			return StateDesign
 		},
-		prompt: func(l Limits, s *storage.Session) string {
+		prompt: func(l config.LimitsConfig, s *storage.Session) string {
 			v := volumeFor(l, s)
 			if v.unit == "sahifa" {
 				return fmt.Sprintf("📄 <b>Necha sahifa bo'lsin?</b>\n\n"+
@@ -193,7 +186,7 @@ var steps = map[State]step{
 				"%d dan %d gacha son kiriting yoki tugmalardan tanlang.\n"+
 				"<i>Titul va yakuniy slayd ham shu songa kiradi.</i>", v.min, v.max)
 		},
-		suggest: func(l Limits, s *storage.Session) []string {
+		suggest: func(l config.LimitsConfig, s *storage.Session) []string {
 			v := volumeFor(l, s)
 			var out []string
 			for _, n := range []int{5, 8, 10, 12, 15, 20, 25, 30, 40, 50} {
@@ -203,7 +196,7 @@ var steps = map[State]step{
 			}
 			return out
 		},
-		apply: func(l Limits, s *storage.Session, input string) error {
+		apply: func(l config.LimitsConfig, s *storage.Session, input string) error {
 			v := volumeFor(l, s)
 			n, err := strconv.Atoi(strings.TrimSpace(input))
 			if err != nil {
@@ -218,11 +211,11 @@ var steps = map[State]step{
 	},
 	StateStudent: {
 		next: StateUniversity,
-		prompt: func(Limits, *storage.Session) string {
+		prompt: func(config.LimitsConfig, *storage.Session) string {
 			return "👤 <b>Ism-familiyangizni kiriting.</b>\n\n<i>Masalan: Aliyev Vali</i>"
 		},
-		suggest: func(_ Limits, s *storage.Session) []string { return nonEmpty(s.StudentName) },
-		apply: func(_ Limits, s *storage.Session, input string) error {
+		suggest: func(_ config.LimitsConfig, s *storage.Session) []string { return nonEmpty(s.StudentName) },
+		apply: func(_ config.LimitsConfig, s *storage.Session, input string) error {
 			v, err := validatePersonName(input, "Ism-familiya")
 			if err != nil {
 				return err
@@ -233,11 +226,11 @@ var steps = map[State]step{
 	},
 	StateUniversity: {
 		next: StateTeacher,
-		prompt: func(Limits, *storage.Session) string {
+		prompt: func(config.LimitsConfig, *storage.Session) string {
 			return "🏛 <b>Universitet (o'quv yurti) nomini kiriting.</b>\n\n<i>Masalan: Toshkent axborot texnologiyalari universiteti</i>"
 		},
-		suggest: func(_ Limits, s *storage.Session) []string { return nonEmpty(s.University) },
-		apply: func(_ Limits, s *storage.Session, input string) error {
+		suggest: func(_ config.LimitsConfig, s *storage.Session) []string { return nonEmpty(s.University) },
+		apply: func(_ config.LimitsConfig, s *storage.Session, input string) error {
 			v, err := validateText(input, "Universitet nomi", 2, 150)
 			if err != nil {
 				return err
@@ -248,11 +241,11 @@ var steps = map[State]step{
 	},
 	StateTeacher: {
 		next: StateRequirements,
-		prompt: func(Limits, *storage.Session) string {
+		prompt: func(config.LimitsConfig, *storage.Session) string {
 			return "👨‍🏫 <b>Tekshiruvchi (o'qituvchi) F.I.Sh. ni kiriting.</b>\n\n<i>Masalan: Karimova Dilnoza</i>"
 		},
-		suggest: func(_ Limits, s *storage.Session) []string { return nonEmpty(s.TeacherName) },
-		apply: func(_ Limits, s *storage.Session, input string) error {
+		suggest: func(_ config.LimitsConfig, s *storage.Session) []string { return nonEmpty(s.TeacherName) },
+		apply: func(_ config.LimitsConfig, s *storage.Session, input string) error {
 			v, err := validatePersonName(input, "Tekshiruvchi F.I.Sh.")
 			if err != nil {
 				return err
@@ -263,7 +256,7 @@ var steps = map[State]step{
 	},
 	StateRequirements: {
 		next: StateConfirm,
-		prompt: func(Limits, *storage.Session) string {
+		prompt: func(config.LimitsConfig, *storage.Session) string {
 			return "✍️ <b>Qo'shimcha talablaringiz bormi?</b>\n\n" +
 				"Ishga qo'yiladigan maxsus talablarni yozing — ular albatta hisobga olinadi. Masalan:\n" +
 				"• ko'proq amaliy misollar bo'lsin\n" +
@@ -273,8 +266,8 @@ var steps = map[State]step{
 				"• atamalar inglizcha tarjimasi bilan berilsin\n\n" +
 				"<i>Talab bo'lmasa — «" + skipRequirements + "» tugmasini bosing.</i>"
 		},
-		suggest: func(Limits, *storage.Session) []string { return []string{skipRequirements} },
-		apply: func(_ Limits, s *storage.Session, input string) error {
+		suggest: func(config.LimitsConfig, *storage.Session) []string { return []string{skipRequirements} },
+		apply: func(_ config.LimitsConfig, s *storage.Session, input string) error {
 			if isSkipAnswer(input) {
 				s.Requirements = ""
 				return nil

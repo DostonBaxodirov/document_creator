@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/storage"
 )
@@ -77,7 +78,7 @@ func TestQuote(t *testing.T) {
 	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
+		Payment: config.PaymentConfig{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
 	})
 	u := &storage.User{ID: 1, TelegramUserID: 42}
 	photo := &storage.Session{WorkType: string(ai.WorkPresentation), Design: generator.ThemeOcean, Volume: 10}
@@ -121,7 +122,7 @@ func TestQuote(t *testing.T) {
 }
 
 func TestPaymentsOn(t *testing.T) {
-	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Payment: PaymentOptions{Enabled: true}})
+	h := NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Payment: config.PaymentConfig{Enabled: true}})
 	if h.paymentsOn() {
 		t.Error("ombor (Billing) bo'lmasa to'lov o'chiq bo'lishi kerak")
 	}

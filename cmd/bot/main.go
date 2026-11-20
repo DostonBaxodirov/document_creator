@@ -146,12 +146,7 @@ func run() error {
 	defer cancelJobs()
 
 	handler := bot.NewHandler(jobsCtx, sessions, aiClient, bot.Builders{Slides: pptx, Papers: docx}, log, bot.Options{
-		Limits: bot.Limits{
-			MinSlides: cfg.Limits.MinSlides,
-			MaxSlides: cfg.Limits.MaxSlides,
-			MinPages:  cfg.Limits.MinPages,
-			MaxPages:  cfg.Limits.MaxPages,
-		},
+		Limits:            cfg.Limits,
 		MaxConcurrentJobs: cfg.Generator.MaxConcurrentJobs,
 		JobTimeout:        cfg.Generator.JobTimeout,
 		// Dizaynlar ko'rinishi rasmi shablon yonida turadi (go run ./cmd/preview bilan yangilanadi).
@@ -161,22 +156,10 @@ func run() error {
 		DefaultImageTier: images.Tier(cfg.Images.DefaultTier),
 		Billing:          billing,
 		Verifier:         verifier,
-		Payment: bot.PaymentOptions{
-			Enabled:         cfg.Payment.Enabled,
-			CardNumber:      cfg.Payment.CardNumber,
-			CardHolder:      cfg.Payment.CardHolder,
-			PriceSlidePhoto: cfg.Payment.PriceSlidePhoto,
-			PriceSlidePlain: cfg.Payment.PriceSlidePlain,
-			PriceDocument:   cfg.Payment.PriceDocument,
-			PricePage:       cfg.Payment.PricePage,
-			// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
-			// FreePhoto:       cfg.Payment.FreePhoto,
-			// FreePlain:       cfg.Payment.FreePlain,
-			AdminPassword: cfg.Payment.AdminPassword,
-		},
-		Custom: customTariffs,
-		Stats:  stats,
-		Backup: backupOpts,
+		Payment:          cfg.Payment,
+		Custom:           customTariffs,
+		Stats:            stats,
+		Backup:           backupOpts,
 	})
 
 	// 6. Telegram bot.

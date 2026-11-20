@@ -104,7 +104,7 @@ func docDesignSchema() map[string]any {
 const docDesignScoreComplete = 6
 
 // GenerateDocDesign Word hujjat uchun mavzuga mos dizayn yaratadi.
-func (c *client) GenerateDocDesign(ctx context.Context, req DesignRequest) (*DocDesign, error) {
+func (c *Client) GenerateDocDesign(ctx context.Context, req DesignRequest) (*DocDesign, error) {
 	if strings.TrimSpace(req.Topic) == "" {
 		return nil, errors.New("ai: mavzu bo'sh")
 	}

@@ -27,6 +27,7 @@ import (
 	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/lang"
@@ -87,7 +88,7 @@ type Builders struct {
 
 // Options — handler sozlamalari.
 type Options struct {
-	Limits            Limits
+	Limits            config.LimitsConfig
 	MaxConcurrentJobs int
 	JobTimeout        time.Duration
 	// DesignPreview — dizayn mavzulari ko'rinishi rasmi (ixtiyoriy). Fayl
@@ -109,7 +110,7 @@ type Options struct {
 	// admin tekshiruviga yuboriladi.
 	Verifier ReceiptVerifier
 	// Payment — narxlar, karta va admin paroli (bepul urinishlar hozircha o'chirilgan).
-	Payment PaymentOptions
+	Payment config.PaymentConfig
 
 	// Custom — AI maxsus dizayn tariflari (config.Tariff* → sozlamalar).
 	// Bo'sh bo'lsa, "✨ Maxsus dizayn" tugmasi ko'rsatilmaydi.

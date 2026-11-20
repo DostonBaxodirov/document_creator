@@ -80,7 +80,7 @@ func sectionTask() task {
 func TestOpenAIStructuredPayload(t *testing.T) {
 	srv := newChatServer(t, func(map[string]any) (int, string) { return http.StatusOK, chatOK })
 	p := newOpenAI(testOpenAIConfig(srv.URL, true), nil)
-	c := &client{p: p, timeout: time.Minute, parallel: 1, log: zap.NewNop()}
+	c := &Client{p: p, timeout: time.Minute, parallel: 1, log: zap.NewNop()}
 
 	// generateJSON op ni task'ga yozadi — json_schema nomi shundan olinadi.
 	_, _ = c.GenerateDocDesign(context.Background(), DesignRequest{Topic: "Tarix"})

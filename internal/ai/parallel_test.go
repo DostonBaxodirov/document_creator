@@ -151,7 +151,7 @@ func (p *probedDocProvider) complete(ctx context.Context, t task) (string, error
 	return p.fakeDocProvider.complete(ctx, t)
 }
 
-// TestWriteSectionsParallelLimit — bo'limlar client.parallel tadan ortiq
+// TestWriteSectionsParallelLimit — bo'limlar Client.parallel tadan ortiq
 // bir vaqtda yozilmaydi.
 func TestWriteSectionsParallelLimit(t *testing.T) {
 	const words, limit = 3000, 2

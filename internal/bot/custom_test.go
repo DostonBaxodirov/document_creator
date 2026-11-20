@@ -26,10 +26,10 @@ func testTariffs() map[string]CustomTariff {
 
 func customHandler(fb *fakeBilling) *Handler {
 	return NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{
-		Limits:  Limits{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30},
+		Limits:  config.LimitsConfig{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30},
 		Images:  fakeImages{},
 		Billing: fb,
-		Payment: PaymentOptions{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
+		Payment: config.PaymentConfig{Enabled: true, PriceSlidePhoto: 300, PriceSlidePlain: 250, PriceDocument: 7000, PricePage: 200},
 		Custom:  testTariffs(),
 	})
 }
@@ -191,7 +191,7 @@ func TestGuideText(t *testing.T) {
 	}
 
 	// To'lov va AI dizayn o'chirilgan: narxlar va tariflar bo'limi yo'q.
-	h = NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Limits: Limits{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30}})
+	h = NewHandler(context.Background(), nil, nil, Builders{}, zap.NewNop(), Options{Limits: config.LimitsConfig{MinSlides: 5, MaxSlides: 50, MinPages: 5, MaxPages: 30}})
 	g = h.guideText()
 	for _, unwanted := range []string{"Narxlar", "so'm", "Maxsus dizayn", "To'lov"} {
 		if strings.Contains(g, unwanted) {

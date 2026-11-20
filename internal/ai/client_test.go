@@ -38,9 +38,9 @@ func (s *scriptedProvider) complete(context.Context, task) (string, error) {
 }
 
 // retryClient sleep chaqiruvlarini yozib boradigan (haqiqatan kutmaydigan) test klienti.
-func retryClient(p provider, maxRetries int) (*client, *[]int) {
+func retryClient(p provider, maxRetries int) (*Client, *[]int) {
 	sleeps := &[]int{}
-	return &client{
+	return &Client{
 		p: p, timeout: time.Minute, maxRetries: maxRetries, parallel: 1, log: zap.NewNop(),
 		sleep: func(_ context.Context, retry int) error {
 			*sleeps = append(*sleeps, retry)

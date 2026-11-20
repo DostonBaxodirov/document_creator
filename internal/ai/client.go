@@ -2,8 +2,9 @@
 // taqdimot slaydlari va hujjat (mustaqil ish, amaliy topshiriq) matnini
 // JSON ko'rinishida generatsiya qiladi.
 //
-// Tashqi kod faqat Client interfeysi bilan ishlaydi; qaysi provayder
-// ishlatilishi konfiguratsiya orqali tanlanadi.
+// Tashqi kod *Client bilan o'z interfeysi orqali ishlaydi (masalan,
+// bot.ContentGenerator); qaysi provayder ishlatilishi konfiguratsiya orqali
+// tanlanadi.
 //
 // Fayllar:
 //   - client.go    — umumiy turlar, qayta urinish mantiqi va taqdimot generatsiyasi;
@@ -57,18 +58,6 @@ func (w WorkType) HasDesigns() bool {
 	return w == WorkIndependent || w == WorkReferat
 }
 
-// Client — matn generatsiya qiluvchi servis.
-type Client interface {
-	// GeneratePresentation taqdimot slaydlarini yaratadi.
-	GeneratePresentation(ctx context.Context, req PresentationRequest) (*Presentation, error)
-	// GenerateDocument mustaqil ish yoki amaliy topshiriq matnini yaratadi.
-	GenerateDocument(ctx context.Context, req DocumentRequest) (*Document, error)
-	// GenerateDesign mavzuga mos maxsus dizayn konsepsiyasini yaratadi.
-	GenerateDesign(ctx context.Context, req DesignRequest) (*Design, error)
-	// GenerateDocDesign Word hujjat uchun maxsus dizayn konsepsiyasini yaratadi.
-	GenerateDocDesign(ctx context.Context, req DesignRequest) (*DocDesign, error)
-}
-
 // task — provayderga yuboriladigan bitta so'rov.
 type task struct {
 	system string
@@ -88,8 +77,10 @@ type provider interface {
 	complete(ctx context.Context, t task) (string, error)
 }
 
-// client — provayderdan mustaqil umumiy mantiq: prompt, qayta urinish, JSON parse.
-type client struct {
+// Client — matn generatsiya qiluvchi servis: provayderdan mustaqil umumiy
+// mantiq (prompt, qayta urinish, JSON parse). Usullari: GeneratePresentation,
+// GenerateDocument, GenerateDesign va GenerateDocDesign.
+type Client struct {
 	p          provider
 	timeout    time.Duration
 	maxRetries int
@@ -109,7 +100,7 @@ type client struct {
 const maxIncompleteRetries = 1
 
 // New konfiguratsiyaga ko'ra kerakli provayder bilan Client yaratadi.
-func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, error) {
+func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (*Client, error) {
 	var (
 		p   provider
 		err error
@@ -132,7 +123,7 @@ func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, err
 		zap.String("provider", p.name()),
 		zap.Int("parallel_requests", cfg.ParallelRequests),
 		zap.Int("slides_per_request", cfg.SlidesPerRequest))
-	return &client{
+	return &Client{
 		p:                p,
 		timeout:          cfg.Timeout,
 		maxRetries:       cfg.MaxRetries,
@@ -146,7 +137,7 @@ func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, err
 // modeli aniq berilgan Client yaratadi. AI maxsus dizayn tariflari uchun
 // (standard, optimal, premium) har biriga o'z modeli bilan alohida klient
 // yaratiladi; asosiy AI_PROVIDER ga bog'liq emas.
-func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
+func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) *Client {
 	cfg.OpenAIModel = model
 	// AI_MAX_TOKENS asosiy provayder uchun sozlangan bo'lishi mumkin (masalan,
 	// DeepSeek'ning katta chegarasi) — OpenAI modeli uni rad etmasligi uchun
@@ -154,7 +145,7 @@ func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
 	cfg.MaxTokens = 0
 	p := newOpenAI(cfg, log.Named("ai").With(zap.String("model", model)))
 	log.Info("AI client initialised", zap.String("provider", p.name()), zap.String("purpose", "custom design"))
-	return &client{
+	return &Client{
 		p:                p,
 		timeout:          cfg.Timeout,
 		maxRetries:       cfg.MaxRetries,
@@ -172,7 +163,7 @@ func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
 // qayta uriniladi va eng yuqori balli natija saqlab qo'yiladi. Vaqtinchalik
 // xatolar (tarmoq, 429, 5xx, buzilgan JSON) bo'lganda eksponensial kechikish
 // bilan maxRetries martagacha qayta uriniladi, doimiy xatolarda — to'xtaladi.
-func generateJSON[T any](ctx context.Context, c *client, op string, t task, want int,
+func generateJSON[T any](ctx context.Context, c *Client, op string, t task, want int,
 	parse func(raw string) (T, int, error)) (T, error) {
 	var (
 		zero      T
@@ -262,7 +253,7 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 }
 
 // completeWithTimeout har bir urinishga alohida timeout beradi.
-func (c *client) completeWithTimeout(ctx context.Context, t task) (string, error) {
+func (c *Client) completeWithTimeout(ctx context.Context, t task) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.p.complete(ctx, t)
@@ -276,7 +267,7 @@ const (
 
 // backoff retry-chi xatodan keyingi qayta urinishdan oldin kutadi (c.sleep
 // berilmagan bo'lsa — httpx.Backoff bo'yicha); kontekst bekor bo'lsa to'xtaydi.
-func (c *client) backoff(ctx context.Context, retry int) error {
+func (c *Client) backoff(ctx context.Context, retry int) error {
 	if c.sleep != nil {
 		return c.sleep(ctx, retry)
 	}

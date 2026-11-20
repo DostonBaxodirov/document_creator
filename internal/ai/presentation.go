@@ -215,7 +215,7 @@ const (
 
 // GeneratePresentation slaydlarni yaratadi. Slaydlar soni kam bo'lsa qayta
 // uriniladi; barcha urinishlarda kam bo'lsa — eng to'liq natija qaytariladi.
-func (c *client) GeneratePresentation(ctx context.Context, req PresentationRequest) (*Presentation, error) {
+func (c *Client) GeneratePresentation(ctx context.Context, req PresentationRequest) (*Presentation, error) {
 	if strings.TrimSpace(req.Topic) == "" {
 		return nil, errors.New("ai: mavzu bo'sh")
 	}
@@ -230,7 +230,7 @@ func (c *client) GeneratePresentation(ctx context.Context, req PresentationReque
 
 // slidesBatchSize bitta so'rovda yoziladigan slaydlar soni: sozlamadagi
 // qiymat (AI_SLIDES_PER_REQUEST), berilmagan bo'lsa — slidesPerRequest.
-func (c *client) slidesBatchSize() int {
+func (c *Client) slidesBatchSize() int {
 	if c.slidesPerRequest > 0 {
 		return c.slidesPerRequest
 	}
@@ -238,7 +238,7 @@ func (c *client) slidesBatchSize() int {
 }
 
 // generateDeck butun taqdimotni bitta so'rov bilan yozadi.
-func (c *client) generateDeck(ctx context.Context, req PresentationRequest) (*Presentation, error) {
+func (c *Client) generateDeck(ctx context.Context, req PresentationRequest) (*Presentation, error) {
 	t := task{system: presentationSystemPrompt, user: buildDeckPrompt(req), schema: deckSchema(req.Images, req.layouts())}
 	return generateJSON(ctx, c, "presentation", t, req.SlideCount, func(raw string) (*Presentation, int, error) {
 		pres, err := parsePresentation(raw)
@@ -254,7 +254,7 @@ func (c *client) generateDeck(ctx context.Context, req PresentationRequest) (*Pr
 }
 
 // generateDeckInBatches avval rejani, so'ng slaydlarni guruhlab parallel yozadi.
-func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequest) (*Presentation, error) {
+func (c *Client) generateDeckInBatches(ctx context.Context, req PresentationRequest) (*Presentation, error) {
 	n := req.SlideCount
 	batches := splitBatches(n, c.slidesBatchSize())
 	progress := &progressReporter{fn: req.OnProgress, total: 1 + len(batches)}

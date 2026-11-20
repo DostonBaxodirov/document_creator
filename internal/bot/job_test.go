@@ -15,6 +15,7 @@ import (
 	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/storage"
 )
@@ -302,7 +303,7 @@ func TestCancelDuringConfirmStopsJob(t *testing.T) {
 		MaxConcurrentJobs: 1,
 		JobTimeout:        5 * time.Second,
 		Billing:           billing,
-		Payment:           PaymentOptions{Enabled: true, PricePage: 200, PriceDocument: 7000},
+		Payment:           config.PaymentConfig{Enabled: true, PricePage: 200, PriceDocument: 7000},
 	})
 	h.bot = b
 
