@@ -357,9 +357,6 @@ func (d Design) Photos() bool { return d.t.photos }
 // Custom — AI maxsus dizayni ekanini bildiradi.
 func (d Design) Custom() bool { return d.t.custom != nil }
 
-// Name dizayn nomi.
-func (d Design) Name() string { return d.t.Name }
-
 // Structure dizayn tuzilishi (AI promptini moslash uchun).
 func (d Design) Structure() Structure {
 	layouts := append([]string(nil), design.CoreLayouts...)

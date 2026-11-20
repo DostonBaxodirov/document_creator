@@ -191,16 +191,6 @@ func contentHeight(blocks []placed) float64 {
 	return h
 }
 
-// shiftY bloklarni dy ga suradi va balandligini h ga o'zgartiradi (h <= 0 — o'zgarmaydi).
-func shiftY(blocks []placed, dy, h float64) {
-	for i := range blocks {
-		blocks[i].r.Y += dy
-		if h > 0 {
-			blocks[i].r.H = h
-		}
-	}
-}
-
 func drawAll(c *canvas, blocks []placed) {
 	for _, b := range blocks {
 		c.text(b.r, b.tb)

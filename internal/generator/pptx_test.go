@@ -253,7 +253,7 @@ func TestThemeStructure(t *testing.T) {
 	}
 	seen := map[string]string{}
 	for _, info := range Themes() {
-		st := ThemeStructure(info.ID)
+		st := DesignFor(info.ID, nil).Structure()
 		if len(st.Signature) < 2 {
 			t.Errorf("%s: imzo maketlari kam: %v", info.ID, st.Signature)
 		}
@@ -281,7 +281,7 @@ func TestThemeStructure(t *testing.T) {
 	if len(Themes()) != 16 {
 		t.Errorf("dizaynlar soni %d, kutilgan 16", len(Themes()))
 	}
-	if st := ThemeStructure("mavjud-emas"); !slices.Equal(st.Signature, ThemeStructure(DefaultTheme).Signature) {
+	if st := DesignFor("mavjud-emas", nil).Structure(); !slices.Equal(st.Signature, DesignFor(DefaultTheme, nil).Structure().Signature) {
 		t.Errorf("noma'lum dizayn standart tuzilishni olishi kerak")
 	}
 }

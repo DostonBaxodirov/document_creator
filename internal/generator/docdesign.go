@@ -167,9 +167,3 @@ func docSpecStyle(sp *DocSpec) docStyle {
 		ornament:    oneOf(sp.Ornament, design.DocOrnaments, docOrnamentNone),
 	}
 }
-
-// IsDocDesign id Word dizayni (tayyor yoki maxsus) ekanini bildiradi.
-func IsDocDesign(id string) bool {
-	_, ok := FindDocTheme(id)
-	return ok || id == ThemeCustom
-}

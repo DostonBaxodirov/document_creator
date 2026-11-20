@@ -326,9 +326,8 @@ func paymentConfig(p *parser, ai AIConfig) PaymentConfig {
 		CardHolder:      p.str("PAYMENT_CARD_HOLDER", ""),
 		PriceSlidePhoto: p.int("PRICE_SLIDE_PHOTO", 300),
 		PriceSlidePlain: p.int("PRICE_SLIDE_PLAIN", 250),
-		// Eski .env lar uchun: PRICE_DOCUMENT berilmasa, PRICE_PLAIN olinadi.
-		PriceDocument: p.int("PRICE_DOCUMENT", p.int("PRICE_PLAIN", 7000)),
-		PricePage:     p.int("PRICE_PAGE", 200),
+		PriceDocument:   p.int("PRICE_DOCUMENT", 7000),
+		PricePage:       p.int("PRICE_PAGE", 200),
 		// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
 		// FreePhoto:     p.int("FREE_PHOTO", 1),
 		// FreePlain:     p.int("FREE_PLAIN", 1),

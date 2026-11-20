@@ -38,15 +38,6 @@ const (
 	WorkReferat      WorkType = "referat"      // Referat → .docx
 )
 
-// Valid ish turi ma'lum qiymatlardan biri ekanini tekshiradi.
-func (w WorkType) Valid() bool {
-	switch w {
-	case WorkPresentation, WorkIndependent, WorkPractical, WorkReferat:
-		return true
-	}
-	return false
-}
-
 // IsDocument ish turi matnli hujjat (.docx) ekanini bildiradi.
 func (w WorkType) IsDocument() bool {
 	return w == WorkIndependent || w == WorkPractical || w == WorkReferat

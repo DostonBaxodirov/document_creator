@@ -57,9 +57,6 @@ func NewVerifier(baseURL, apiKey, model string, timeout time.Duration) *Verifier
 	}
 }
 
-// Name logdagi nom.
-func (v *Verifier) Name() string { return "openai/" + v.model }
-
 const systemPrompt = `You are a meticulous payment receipt reader for a Telegram bot in Uzbekistan.
 You receive a screenshot or photo that a customer claims is a receipt of a bank card transfer
 (Payme, Click, Uzum, Paynet, bank mobile apps, ATM/terminal checks and similar).

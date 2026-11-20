@@ -35,7 +35,7 @@ func TestDocDesignPrompt(t *testing.T) {
 
 func TestReferatPrompts(t *testing.T) {
 	req := DocumentRequest{WorkType: WorkReferat, Topic: "Ipak yo'li", Figures: true}
-	if !WorkReferat.Valid() || !WorkReferat.IsDocument() || !WorkReferat.HasDesigns() || WorkPractical.HasDesigns() {
+	if !WorkReferat.IsDocument() || !WorkReferat.HasDesigns() || WorkPractical.HasDesigns() {
 		t.Error("referat ish turi xususiyatlari noto'g'ri")
 	}
 	plan := buildOutlinePrompt(req, 4)

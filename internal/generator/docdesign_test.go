@@ -128,7 +128,10 @@ func TestDocSpecNormalization(t *testing.T) {
 	if got := docSpecStyle(&DocSpec{Primary: "#1F4E79", HeadingFont: "georgia"}); got.primary != "1F4E79" || got.headingFont != "Georgia" {
 		t.Errorf("yaroqli qiymatlar saqlanishi kerak: %+v", got)
 	}
-	if !IsDocDesign(DocThemeAcademic) || !IsDocDesign(ThemeCustom) || IsDocDesign("okean") {
-		t.Error("IsDocDesign noto'g'ri")
+	if _, ok := FindDocTheme(DocThemeAcademic); !ok {
+		t.Errorf("%s Word dizayni topilmadi", DocThemeAcademic)
+	}
+	if _, ok := FindDocTheme("okean"); ok {
+		t.Error("slayd dizayni Word dizayni sifatida topilmasligi kerak")
 	}
 }

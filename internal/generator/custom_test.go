@@ -159,8 +159,8 @@ func TestCustomNormalized(t *testing.T) {
 func TestCustomDesign(t *testing.T) {
 	sp := SampleCustomSpecs()[1]
 	d := DesignFor("", &sp)
-	if !d.Custom() || !d.Photos() || d.Name() != sp.Name {
-		t.Fatalf("maxsus dizayn: custom=%v photos=%v name=%q", d.Custom(), d.Photos(), d.Name())
+	if !d.Custom() || !d.Photos() || d.t.Name != sp.Name {
+		t.Fatalf("maxsus dizayn: custom=%v photos=%v name=%q", d.Custom(), d.Photos(), d.t.Name)
 	}
 	st := d.Structure()
 	for _, l := range design.AllLayouts {

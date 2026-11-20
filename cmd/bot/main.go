@@ -70,12 +70,6 @@ func run() error {
 	sessions := storage.NewSessionRepository(db)
 	billing := storage.NewBillingRepository(db)
 	stats := storage.NewStatsRepository(db, payment.Tashkent)
-	// Statistika endigina qo'shilgan bo'lsa, tashriflar mavjud ma'lumotlardan tiklanadi.
-	if n, err := stats.BackfillVisits(ctx); err != nil {
-		log.Warn("failed to backfill visits", zap.Error(err))
-	} else if n > 0 {
-		log.Info("visits backfilled", zap.Int("visits", n))
-	}
 
 	// 4. AI klient va fayl generatorlari: taqdimot — .pptx (shablon asosida),
 	// mustaqil ish, referat va amaliy topshiriq — .docx.

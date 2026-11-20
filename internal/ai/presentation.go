@@ -86,7 +86,7 @@ type PresentationRequest struct {
 	// tavsifini ham yozadi ("image" maydoni). Oddiy dizaynlarda false.
 	Images bool
 
-	// Dizayn tuzilishi (generator.ThemeStructure). Layouts — AI tanlashi
+	// Dizayn tuzilishi (generator.Design.Structure). Layouts — AI tanlashi
 	// mumkin bo'lgan maketlar (bo'sh bo'lsa — barchasi); Signature — dizaynga
 	// xos maketlar, AI ularni ishlatishi kerak; Compact — dizaynda matn uchun
 	// joy kam, AI qisqaroq yozadi.

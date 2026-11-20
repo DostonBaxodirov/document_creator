@@ -21,21 +21,16 @@ func TestStatsRepository(t *testing.T) {
 		return today.AddDate(0, 0, -daysAgo).Add(time.Duration(hour) * time.Hour)
 	}
 
-	// Foydalanuvchilar: 1 — 10 kun oldin, 2 — 3 kun oldin, 3 — bugun kirgan.
+	// Foydalanuvchilar: 1 — 10 kun oldin, 2 — 3 kun oldin, 3 — bugun kirgan
+	// (kirgan kuni tashrif ham yoziladi).
 	for id, created := range map[int64]time.Time{1: at(10, 12), 2: at(3, 9), 3: at(0, 1)} {
 		s := Session{UserID: id, ChatID: id, State: "idle", CreatedAt: created, UpdatedAt: created}
 		if err := db.Create(&s).Error; err != nil {
 			t.Fatal(err)
 		}
-	}
-
-	// Jadval bo'sh — mavjud ma'lumotlardan tiklanadi (har bir sessiya: 1 kun).
-	n, err := r.BackfillVisits(ctx)
-	if err != nil || n != 3 {
-		t.Fatalf("backfill: n=%d err=%v", n, err)
-	}
-	if n, err := r.BackfillVisits(ctx); err != nil || n != 0 {
-		t.Fatalf("jadval to'la bo'lsa backfill ishlamasligi kerak: n=%d err=%v", n, err)
+		if err := r.RecordVisit(ctx, id, created); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Tashriflar: 1-foydalanuvchi bugun ikki marta (bitta yozuv), kecha bir marta;
@@ -89,7 +84,7 @@ func TestStatsRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []DayStats{
-		{Day: today.AddDate(0, 0, -3), NewUsers: 1, ActiveUsers: 1}, // 2-foydalanuvchi kirgan kuni (backfill)
+		{Day: today.AddDate(0, 0, -3), NewUsers: 1, ActiveUsers: 1}, // 2-foydalanuvchi kirgan kuni
 		{Day: today.AddDate(0, 0, -2)},
 		{Day: today.AddDate(0, 0, -1), ActiveUsers: 1},
 		{Day: today, NewUsers: 1, ActiveUsers: 3},

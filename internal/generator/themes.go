@@ -86,7 +86,7 @@ type theme struct {
 	badgePlain   bool // raqamlar shaklsiz — fon rangidagi maydonda katta matn
 	transition   string
 
-	// Dizayn tuzilishi (AI promptiga uzatiladi — ThemeStructure).
+	// Dizayn tuzilishi (AI promptiga uzatiladi — Design.Structure).
 	signature []string // dizaynga xos maketlar: AI ularni albatta ishlatadi
 	compact   bool     // matn uchun joy kam (katta shrift, banner) — AI qisqaroq yozadi
 	// layouts — mavzuga xos maketlar (umumiy maket o'rniga chiziladi).
@@ -166,12 +166,6 @@ type Structure struct {
 	Layouts   []string // dizayn chizadigan maketlar (AI faqat shulardan tanlaydi)
 	Signature []string // dizaynga xos maketlar — AI ularni ishlatishi kerak
 	Compact   bool     // matn uchun joy kam — AI qisqaroq yozadi
-}
-
-// ThemeStructure dizayn tuzilishini qaytaradi: asosiy maketlar va dizaynning
-// imzo maketlari. Noma'lum ID uchun — standart dizayn tuzilishi.
-func ThemeStructure(id string) Structure {
-	return Design{themeByID(id)}.Structure()
 }
 
 // Themes barcha mavzular ro'yxatini (tanlash tugmalari uchun) qaytaradi.

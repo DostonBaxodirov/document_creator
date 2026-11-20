@@ -106,7 +106,7 @@ func TestLimitsValidation(t *testing.T) {
 }
 
 func TestPaymentConfig(t *testing.T) {
-	for _, k := range []string{"PAYMENT_ENABLED", "PAYMENT_CARD_NUMBER", "PAYMENT_CARD_HOLDER", "PRICE_SLIDE_PHOTO", "PRICE_SLIDE_PLAIN", "PRICE_DOCUMENT", "PRICE_PLAIN",
+	for _, k := range []string{"PAYMENT_ENABLED", "PAYMENT_CARD_NUMBER", "PAYMENT_CARD_HOLDER", "PRICE_SLIDE_PHOTO", "PRICE_SLIDE_PLAIN", "PRICE_DOCUMENT",
 		"PAYMENT_VISION_MODEL", "PAYMENT_CHECK_TIMEOUT", "ADMIN_PASSWORD"} {
 		t.Setenv(k, "")
 	}
@@ -139,14 +139,9 @@ func TestPaymentConfig(t *testing.T) {
 		t.Errorf("CardLast4 = %q", c.CardLast4())
 	}
 
-	// Eski PRICE_PLAIN Word ishlar narxi sifatida o'qiladi (PRICE_DOCUMENT berilmasa).
-	t.Setenv("PRICE_PLAIN", "5000")
-	if c := paymentConfig(&parser{}, AIConfig{}); c.PriceDocument != 5000 {
-		t.Errorf("PRICE_PLAIN zaxira qiymati olinmadi: %d", c.PriceDocument)
-	}
 	t.Setenv("PRICE_DOCUMENT", "6000")
 	if c := paymentConfig(&parser{}, AIConfig{}); c.PriceDocument != 6000 {
-		t.Errorf("PRICE_DOCUMENT ustun bo'lishi kerak: %d", c.PriceDocument)
+		t.Errorf("PRICE_DOCUMENT o'qilmadi: %d", c.PriceDocument)
 	}
 
 	t.Setenv("PRICE_SLIDE_PLAIN", "0")
