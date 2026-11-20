@@ -151,19 +151,20 @@ func NewBillingRepository(db *gorm.DB) *BillingRepository {
 // ---------------------------------------------------------------------------
 
 // EnsureUser foydalanuvchini qaytaradi; mavjud bo'lmasa — yaratadi,
-// mavjud bo'lsa — username va ismini yangilaydi.
+// mavjud bo'lsa — username va ismini yangilaydi. Bitta so'rov: upsert
+// RETURNING * bilan yozuvning bazadagi barcha ustunlarini (ID, is_admin,
+// admin_since, created_at) struct'ga qaytaradi — konflikt holatida ham.
 func (r *BillingRepository) EnsureUser(ctx context.Context, telegramID int64, username, firstName string) (*User, error) {
-	db := r.db.WithContext(ctx)
 	u := User{TelegramUserID: telegramID, Username: username, FirstName: firstName}
-	err := db.Clauses(clause.OnConflict{
+	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "telegram_user_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"username", "first_name", "updated_at"}),
-	}).Create(&u).Error
+	}, clause.Returning{}).Create(&u).Error
 	if err != nil {
 		return nil, fmt.Errorf("storage: foydalanuvchini saqlab bo'lmadi: %w", err)
 	}
-	if err := db.First(&u, "telegram_user_id = ?", telegramID).Error; err != nil {
-		return nil, fmt.Errorf("storage: foydalanuvchini o'qib bo'lmadi: %w", err)
+	if u.ID == 0 {
+		return nil, errors.New("storage: foydalanuvchini o'qib bo'lmadi: upsert qator qaytarmadi")
 	}
 	return &u, nil
 }

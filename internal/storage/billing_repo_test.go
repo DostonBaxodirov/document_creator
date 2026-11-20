@@ -77,6 +77,23 @@ func TestEnsureUser(t *testing.T) {
 	ctx := context.Background()
 	r := NewBillingRepository(db)
 
+	// matchesDB — EnsureUser qaytargan qiymatlar bazadagi yozuv bilan bir xil
+	// (RETURNING Go tomonidagi qiymatlarni emas, bazadagisini qaytarishi kerak).
+	matchesDB := func(t *testing.T, got *User) {
+		t.Helper()
+		var want User
+		if err := db.First(&want, "telegram_user_id = ?", got.TelegramUserID).Error; err != nil {
+			t.Fatal(err)
+		}
+		sameTime := func(a, b *time.Time) bool {
+			return (a == nil && b == nil) || (a != nil && b != nil && a.Equal(*b))
+		}
+		if got.ID != want.ID || got.IsAdmin != want.IsAdmin || !sameTime(got.AdminSince, want.AdminSince) ||
+			!got.CreatedAt.Equal(want.CreatedAt) || !got.UpdatedAt.Equal(want.UpdatedAt) {
+			t.Errorf("qaytgan foydalanuvchi bazadagidan farq qiladi:\n got %+v\nwant %+v", got, want)
+		}
+	}
+
 	u, err := r.EnsureUser(ctx, 500, "ali", "Ali")
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +102,7 @@ func TestEnsureUser(t *testing.T) {
 		u.IsAdmin || u.AdminSince != nil {
 		t.Fatalf("yangi foydalanuvchi: %+v", u)
 	}
+	matchesDB(t, u)
 	if ok, err := r.SetAdmin(ctx, 500); err != nil || !ok {
 		t.Fatalf("SetAdmin: %v %v", ok, err)
 	}
@@ -100,6 +118,7 @@ func TestEnsureUser(t *testing.T) {
 	if !u2.IsAdmin || u2.AdminSince == nil {
 		t.Errorf("admin belgisi o'chib ketdi: %+v", u2)
 	}
+	matchesDB(t, u2)
 	if !u2.CreatedAt.Equal(u.CreatedAt) {
 		t.Errorf("created_at o'zgardi: %v → %v", u.CreatedAt, u2.CreatedAt)
 	}
