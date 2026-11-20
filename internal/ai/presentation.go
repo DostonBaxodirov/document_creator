@@ -13,9 +13,10 @@ package ai
 // dizaynning imzo maketlarini albatta ishlatadi va matn hajmini dizayndagi
 // joyga moslaydi (katta shriftli dizaynlarda qisqaroq).
 //
-// Slaydlar soni kam bo'lsa (slidesPerRequest gacha) — bitta so'rov. Ko'p
-// bo'lsa — avval reja (har bir slayd sarlavhasi, maketi va mazmuni; rasmli
-// dizaynda — rasm tavsifi ham), so'ng slaydlar guruhlab parallel yoziladi: bu
+// Slaydlar soni kam bo'lsa (AI_SLIDES_PER_REQUEST gacha, standart
+// slidesPerRequest) — bitta so'rov. Ko'p bo'lsa — avval reja (har bir slayd
+// sarlavhasi, maketi va mazmuni; rasmli dizaynda — rasm tavsifi ham), so'ng
+// slaydlar guruhlab parallel yoziladi: bu
 // katta taqdimotlarni modelning javob uzunligi chegarasiga sig'diradi. Reja
 // tayyor bo'lishi bilan OnOutline chaqiriladi — rasmlar matn bilan parallel
 // chizilishi mumkin.
@@ -201,7 +202,7 @@ type Presentation struct {
 
 // Slayd matni cheklovlari: slaydga sig'maydigan darajada uzun javoblarni qirqamiz.
 const (
-	slidesPerRequest  = 6
+	slidesPerRequest  = 6 // bitta so'rovdagi slaydlar soni (AI_SLIDES_PER_REQUEST berilmasa)
 	maxSlideItems     = 8
 	maxItemPoints     = 6
 	maxTitleRunes     = 120
@@ -225,10 +226,19 @@ func (c *client) GeneratePresentation(ctx context.Context, req PresentationReque
 	if req.SlideCount < 1 {
 		return nil, fmt.Errorf("ai: slaydlar soni noto'g'ri: %d", req.SlideCount)
 	}
-	if req.SlideCount <= slidesPerRequest {
+	if req.SlideCount <= c.slidesBatchSize() {
 		return c.generateDeck(ctx, req)
 	}
 	return c.generateDeckInBatches(ctx, req)
+}
+
+// slidesBatchSize bitta so'rovda yoziladigan slaydlar soni: sozlamadagi
+// qiymat (AI_SLIDES_PER_REQUEST), berilmagan bo'lsa — slidesPerRequest.
+func (c *client) slidesBatchSize() int {
+	if c.slidesPerRequest > 0 {
+		return c.slidesPerRequest
+	}
+	return slidesPerRequest
 }
 
 // generateDeck butun taqdimotni bitta so'rov bilan yozadi.
@@ -250,7 +260,7 @@ func (c *client) generateDeck(ctx context.Context, req PresentationRequest) (*Pr
 // generateDeckInBatches avval rejani, so'ng slaydlarni guruhlab parallel yozadi.
 func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequest) (*Presentation, error) {
 	n := req.SlideCount
-	batches := splitBatches(n, slidesPerRequest)
+	batches := splitBatches(n, c.slidesBatchSize())
 	progress := &progressReporter{fn: req.OnProgress, total: 1 + len(batches)}
 	progress.report()
 
@@ -270,7 +280,7 @@ func (c *client) generateDeckInBatches(ctx context.Context, req PresentationRequ
 		return nil, err
 	}
 	// Reja kamroq slayd qaytargan bo'lishi mumkin — guruhlarni qayta hisoblaymiz.
-	batches = splitBatches(len(plan.Slides), slidesPerRequest)
+	batches = splitBatches(len(plan.Slides), c.slidesBatchSize())
 	progress.setTotal(1 + len(batches))
 	progress.advance()
 
@@ -697,6 +707,11 @@ func buildDeckOutlinePrompt(req PresentationRequest) string {
 }
 
 // buildSlidesBatchPrompt — rejadagi [from, to) slaydlar mazmuni.
+//
+// Guruhga xos ko'rsatma (qaysi slaydlar yoziladi) promptning eng oxirida:
+// bir taqdimot guruhlarining promptlari undan oldingi qismda belgima-belgi bir
+// xil, shuning uchun provayderlarning prompt keshi (OpenAI, DeepSeek, Gemini)
+// umumiy prefiksni qayta ishlatadi.
 func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to int) string {
 	// Rasm tavsiflari rejada bo'lsa, guruhda ular so'ralmaydi (javob qisqaroq).
 	images := req.Images && !plan.hasImages()
@@ -707,9 +722,7 @@ func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to
 	for i, s := range plan.Slides {
 		fmt.Fprintf(&b, "%d. [%s] %s — %s\n", i+1, s.Layout, s.Title, s.Focus)
 	}
-	fmt.Fprintf(&b, "\nWrite the full content of slides %d-%d only (%d slides), exactly as planned: same order, titles and layouts. "+
-		"Stay within each slide's focus and do not repeat what other slides cover.\n\n", from+1, to, to-from)
-	b.WriteString(layoutGuide(req.layouts(), req.Compact) + "\n")
+	b.WriteString("\n" + layoutGuide(req.layouts(), req.Compact) + "\n")
 	if images {
 		writeImageRules(&b, req)
 	}
@@ -719,6 +732,10 @@ func buildSlidesBatchPrompt(req PresentationRequest, plan *deckOutline, from, to
 		b.WriteString("\n\n" + numberedCheck(customContentChecks(true)))
 	}
 	writeRequirements(&b, req.Requirements)
+
+	// Guruhga xos qism — doim oxirida.
+	fmt.Fprintf(&b, "\n\nWrite the full content of slides %d-%d only (%d slides), exactly as planned: same order, titles and layouts. "+
+		"Stay within each slide's focus and do not repeat what other slides cover.", from+1, to, to-from)
 	return b.String()
 }
 

@@ -107,7 +107,10 @@ type client struct {
 	timeout    time.Duration
 	maxRetries int
 	parallel   int // hujjat bo'limlari uchun bir vaqtdagi so'rovlar soni
-	log        *zap.Logger
+	// slidesPerRequest — katta taqdimotda bitta so'rovdagi slaydlar soni
+	// (AI_SLIDES_PER_REQUEST); 0 bo'lsa — slidesPerRequest konstantasi.
+	slidesPerRequest int
+	log              *zap.Logger
 	// sleep — xatodan keyingi kechikish (nil bo'lsa sleepBackoff). Testlar
 	// haqiqatan kutmasligi uchun almashtiriladi.
 	sleep func(ctx context.Context, retry int) error
@@ -140,13 +143,15 @@ func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (Client, err
 
 	log.Info("AI client initialised",
 		zap.String("provider", p.name()),
-		zap.Int("parallel_requests", cfg.ParallelRequests))
+		zap.Int("parallel_requests", cfg.ParallelRequests),
+		zap.Int("slides_per_request", cfg.SlidesPerRequest))
 	return &client{
-		p:          p,
-		timeout:    cfg.Timeout,
-		maxRetries: cfg.MaxRetries,
-		parallel:   max(1, cfg.ParallelRequests),
-		log:        log.Named("ai"),
+		p:                p,
+		timeout:          cfg.Timeout,
+		maxRetries:       cfg.MaxRetries,
+		parallel:         max(1, cfg.ParallelRequests),
+		slidesPerRequest: cfg.SlidesPerRequest,
+		log:              log.Named("ai"),
 	}, nil
 }
 
@@ -163,11 +168,12 @@ func NewOpenAIModel(cfg config.AIConfig, model string, log *zap.Logger) Client {
 	p := newOpenAI(cfg)
 	log.Info("AI client initialised", zap.String("provider", p.name()), zap.String("purpose", "custom design"))
 	return &client{
-		p:          p,
-		timeout:    cfg.Timeout,
-		maxRetries: cfg.MaxRetries,
-		parallel:   max(1, cfg.ParallelRequests),
-		log:        log.Named("ai").With(zap.String("model", model)),
+		p:                p,
+		timeout:          cfg.Timeout,
+		maxRetries:       cfg.MaxRetries,
+		parallel:         max(1, cfg.ParallelRequests),
+		slidesPerRequest: cfg.SlidesPerRequest,
+		log:              log.Named("ai").With(zap.String("model", model)),
 	}
 }
 

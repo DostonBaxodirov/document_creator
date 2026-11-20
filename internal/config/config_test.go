@@ -38,6 +38,36 @@ func TestImagesConfigDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+// TestAISlidesPerRequest — AI_SLIDES_PER_REQUEST: standart 6, ruxsat etilgan
+// oraliq 3..10, son bo'lmasa — format xatosi.
+func TestAISlidesPerRequest(t *testing.T) {
+	t.Setenv("AI_SLIDES_PER_REQUEST", "")
+	p := &parser{}
+	if c := aiConfig(p); len(p.errs) > 0 || c.SlidesPerRequest != 6 {
+		t.Fatalf("standart qiymat 6 bo'lishi kerak: %d %v", c.SlidesPerRequest, p.errs)
+	}
+
+	for v, valid := range map[string]bool{"3": true, "6": true, "10": true, "2": false, "11": false, "0": false, "-4": false} {
+		t.Setenv("AI_SLIDES_PER_REQUEST", v)
+		p := &parser{}
+		cfg := &Config{AI: aiConfig(p)}
+		if len(p.errs) > 0 {
+			t.Fatalf("%s: %v", v, p.errs)
+		}
+		err := cfg.validate()
+		if hasErr := err != nil && strings.Contains(err.Error(), "AI_SLIDES_PER_REQUEST"); hasErr == valid {
+			t.Errorf("AI_SLIDES_PER_REQUEST=%s: yaroqli=%v kutilgan, xato: %v", v, valid, err)
+		}
+	}
+
+	t.Setenv("AI_SLIDES_PER_REQUEST", "olti")
+	p = &parser{}
+	aiConfig(p)
+	if len(p.errs) != 1 || !strings.Contains(p.errs[0].Error(), "AI_SLIDES_PER_REQUEST") {
+		t.Errorf("format xatosi kutilgan edi: %v", p.errs)
+	}
+}
+
 func TestLimitsValidation(t *testing.T) {
 	// Kichik va katta qiymatlar ruxsat etiladi — chegaralar to'liq sozlamalarga bog'liq.
 	for _, l := range []LimitsConfig{

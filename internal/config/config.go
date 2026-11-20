@@ -83,6 +83,7 @@ type AIConfig struct {
 	Timeout          time.Duration // bitta so'rov uchun maksimal vaqt
 	MaxRetries       int           // xato bo'lganda qayta urinishlar soni
 	ParallelRequests int           // hujjat bo'limlarini yozishda bir vaqtdagi so'rovlar soni
+	SlidesPerRequest int           // katta taqdimotda bitta so'rovda yoziladigan slaydlar soni (3..10)
 }
 
 // ImagesConfig — rasmli dizaynlar uchun AI rasm generatsiyasi sozlamalari.
@@ -452,6 +453,7 @@ func aiConfig(p *parser) AIConfig {
 		Timeout:          p.duration("AI_TIMEOUT", 120*time.Second),
 		MaxRetries:       p.int("AI_MAX_RETRIES", 2),
 		ParallelRequests: p.int("AI_PARALLEL_REQUESTS", 3),
+		SlidesPerRequest: p.int("AI_SLIDES_PER_REQUEST", 6),
 	}
 }
 
@@ -563,6 +565,9 @@ func (c *Config) validate() error {
 	}
 	if c.AI.ParallelRequests < 1 || c.AI.ParallelRequests > 10 {
 		add("AI_PARALLEL_REQUESTS 1 dan 10 gacha bo'lishi kerak")
+	}
+	if c.AI.SlidesPerRequest < 3 || c.AI.SlidesPerRequest > 10 {
+		add("AI_SLIDES_PER_REQUEST 3 dan 10 gacha bo'lishi kerak")
 	}
 
 	errs = append(errs, c.Images.validate()...)

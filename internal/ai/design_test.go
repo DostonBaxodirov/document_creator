@@ -133,8 +133,9 @@ func TestCustomChecks(t *testing.T) {
 		}
 	}
 	req.Requirements = "talab"
-	if p := buildSlidesBatchPrompt(req, plan, 0, 2); !strings.HasSuffix(p, "\"\"\"") {
-		t.Error("talablar bloki promptning oxirida qolishi kerak")
+	if p := buildSlidesBatchPrompt(req, plan, 0, 2); !strings.Contains(p, "\"\"\"\n\n"+batchMarker+"1-2 only") ||
+		!strings.HasSuffix(p, "do not repeat what other slides cover.") {
+		t.Errorf("talablar bloki guruh ko'rsatmasidan oldin, ko'rsatma esa oxirida bo'lishi kerak:\n%s", p)
 	}
 	req.Custom = nil
 	if p := buildDeckOutlinePrompt(req) + buildDeckPrompt(req); strings.Contains(p, "Before answering") {

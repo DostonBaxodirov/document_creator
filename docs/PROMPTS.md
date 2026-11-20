@@ -21,9 +21,16 @@ yozilgani izohlangan.
   qiymatlar standart qiymatga almashtiriladi, ranglar kontrasti tuzatiladi, xizmat
   gaplari ("Albatta, mana...") o'chiriladi, maket uchun ma'lumot yetmasa boshqa
   maketga o'tiladi (7-bo'lim).
-- Foydalanuvchining qo'shimcha talablari doim promptning **eng oxirida**,
-  `"""` bloki ichida keladi va asosiy qoidalarni (JSON, slaydlar soni, til) bekor
-  qila olmaydi.
+- Foydalanuvchining qo'shimcha talablari promptning **oxirida**, `"""` bloki ichida
+  keladi va asosiy qoidalarni (JSON, slaydlar soni, til) bekor qila olmaydi. Ulardan
+  keyin faqat slaydlar guruhi (3.2) va bo'lim (6.4) promptlarida guruhga/bo'limga xos
+  ko'rsatma keladi.
+- **Prompt keshi uchun tartib.** Bitta ishning parallel so'rovlari (slaydlar guruhlari,
+  ish bo'limlari) belgima-belgi bir xil boshlanadi: mavzu, til, butun reja, qoidalar,
+  JSON shakli, talablar — va faqat eng oxirida qaysi guruh/bo'lim yozilishi. Provayderlar
+  bir xil prefiksni keshdan oladi (OpenAI 1024+ tokenli prefikslarni avtomatik keshlaydi,
+  DeepSeek — disk keshi, Gemini — implicit caching): kirish tokenlari arzonroq va javob
+  tezroq. Shu qismga o'zgaruvchan matn (guruh raqami, bo'lim nomi) qo'shmang.
 
 ## Mundarija
 
@@ -47,12 +54,13 @@ bosadi va tarifni tanlaydi. Generatsiya shu tartibda boradi:
 |---|---------|--------------|--------|
 | 1 | Dizayn konsepsiyasi | tarif matn modeli, **2-bo'lim** prompti | palitra, shriftlar, titul/sarlavha/kartochka uslubi, motiv, rasm uslubi, imzo maketlari (JSON) |
 | 2 | Dizaynni tekshirish | kod (`generator/custom.go`) | noma'lum qiymatlar → standart; ranglar kontrasti WCAG bo'yicha tuzatiladi |
-| 3 | Reja (6 tadan ko'p slaydda) | tarif matn modeli, **3.1** prompti | har bir slayd: sarlavha, maket, mazmun yo'nalishi |
-| 4 | Slaydlar matni (6 tadan guruhlab, parallel) | tarif matn modeli, **3.2** prompti | to'liq slaydlar + har biriga rasm tavsifi |
+| 3 | Reja (6 tadan ko'p slaydda; `AI_SLIDES_PER_REQUEST`) | tarif matn modeli, **3.1** prompti | har bir slayd: sarlavha, maket, mazmun yo'nalishi |
+| 4 | Slaydlar matni (6 tadan guruhlab, parallel; `AI_SLIDES_PER_REQUEST`) | tarif matn modeli, **3.2** prompti | to'liq slaydlar + har biriga rasm tavsifi |
 | 5 | Rasmlar | tarif rasm modeli, **4-bo'lim** | titul + slaydlarning bir qismiga kvadrat AI rasmlar |
 | 6 | PowerPoint fayl | kod | tayyor .pptx |
 
 Kichik taqdimotda (mazmunli slaydlar ≤ 6) 3–4-bosqichlar bitta so'rovda bajariladi (**3.3**).
+Guruh hajmi (6) `.env` dagi `AI_SLIDES_PER_REQUEST` bilan o'zgartiriladi (3..10).
 
 **Tariflar** (`.env` dagi `CUSTOM_*` sozlamalari, standart qiymatlar):
 
@@ -291,8 +299,6 @@ Presentation plan (all slides):
 9. [comparison] Ichki va tashqi siyosat — Ichki barqarorlik va tashqi yurishlar
 10. [conclusion] Xulosa — Asosiy xulosalar
 
-Write the full content of slides 6-10 only (5 slides), exactly as planned: same order, titles and layouts. Stay within each slide's focus and do not repeat what other slides cover.
-
 Slide layouts (the "layout" field) — use only these — and the content each one needs:
 - "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
 - "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
@@ -321,6 +327,8 @@ Additional requirements from the student. Follow them as long as they do not con
 """
 Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
 """
+
+Write the full content of slides 6-10 only (5 slides), exactly as planned: same order, titles and layouts. Stay within each slide's focus and do not repeat what other slides cover.
 ~~~
 
 **Izoh:**
@@ -328,6 +336,10 @@ Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
 - **Butun reja ko'rsatiladi**, lekin faqat o'z guruhi yoziladi — slaydlar bir-birini
   takrorlamaydi. Model ba'zan guruhni oldingi guruhning oxirgi slaydidan boshlaydi;
   kod bunday "begona" slaydni olib tashlaydi va kerak bo'lsa qayta so'raydi.
+- **Tartib**: mavzu, til, butun reja, maketlar, rasm qoidalari, JSON shakli, tekshiruv
+  ro'yxati, talablar — va eng oxirida guruh ko'rsatmasi ("Write the full content of
+  slides X-Y only ..."). Bir taqdimotning barcha guruh promptlari shu ko'rsatmagacha
+  bir xil — provayder prompt keshi umumiy qismni qayta ishlatadi.
 - **Rasm uslubi qoidasi** ("Image descriptions follow one art direction ...") — barcha
   rasm tavsiflari dizayn rasm uslubida va turli rakursda (umumiy, o'rta, yaqin plan)
   yoziladi — rasmlar bir seriyadek, lekin bir xil emas.
@@ -339,7 +351,7 @@ Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
 
 ### 3.3. Kichik taqdimot — bitta so'rov (namuna: 5 ta mazmunli slayd)
 
-Mazmunli slaydlar 6 tadan ko'p bo'lmasa, reja va matn bitta so'rovda yoziladi. Prompt
+Mazmunli slaydlar 6 tadan (`AI_SLIDES_PER_REQUEST`) ko'p bo'lmasa, reja va matn bitta so'rovda yoziladi. Prompt
 3.1 va 3.2 dagi qoidalarning birlashmasi; tekshiruv ro'yxati ham bitta:
 
 ~~~text
@@ -592,6 +604,12 @@ Requirements:
 Har bir bo'lim so'rovida butun reja ko'rsatiladi (bo'limlar bir-birini takrorlamasligi
 uchun) va so'zlar soni aniq beriladi (sahifalar sonidan hisoblanadi).
 
+Tartib: ish turi, mavzu, til, butun reja, JSON shakli, qoidalar, uslub, talablar — va eng
+oxirida bo'limga xos qism ("Write now: ...", "It must cover ...", "Length: ..."). Bir ishning
+barcha bo'lim promptlari (kirish, boblar, xulosa) shu qismgacha bir xil — provayder prompt
+keshi umumiy qismni qayta ishlatadi. Shuning uchun faqat boblarga tegishli "Do not write an
+introduction or a conclusion ..." qoidasi ham umumiy ro'yxatda emas, bo'limga xos qismda.
+
 **Bob (mustaqil ish):**
 
 ~~~text
@@ -606,16 +624,11 @@ Plan of the whole work:
 - Chapter 3: Muammolar va istiqbollar
 - Conclusion
 
-Write now: Chapter 1 "Raqamli iqtisodiyot tushunchasi".
-It must cover: asosiy ta'riflar; tarkibiy qismlar; rivojlanish bosqichlari.
-
-Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.
 Return JSON: {"paragraphs": [string, ...]}
 
 Rules:
 - Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
 - Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-- Do not write an introduction or a conclusion to the whole work here.
 
 Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
 
@@ -623,6 +636,12 @@ Additional requirements from the student. Follow them as long as they do not con
 """
 O'zbekiston misolida
 """
+
+Write now: Chapter 1 "Raqamli iqtisodiyot tushunchasi".
+It must cover: asosiy ta'riflar; tarkibiy qismlar; rivojlanish bosqichlari.
+Do not write an introduction or a conclusion to the whole work here.
+
+Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.
 ~~~
 
 **Kirish:**
@@ -639,10 +658,6 @@ Plan of the whole work:
 - Chapter 3: Muammolar va istiqbollar
 - Conclusion
 
-Write now: the Introduction.
-It must cover: the relevance of the topic, the aim and the tasks of the work, the object and the subject of the study, and a short overview of the chapters.
-
-Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.
 Return JSON: {"paragraphs": [string, ...]}
 
 Rules:
@@ -655,6 +670,11 @@ Additional requirements from the student. Follow them as long as they do not con
 """
 O'zbekiston misolida
 """
+
+Write now: the Introduction.
+It must cover: the relevance of the topic, the aim and the tasks of the work, the object and the subject of the study, and a short overview of the chapters.
+
+Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.
 ~~~
 
 **Xulosa:**
@@ -671,10 +691,6 @@ Plan of the whole work:
 - Chapter 3: Muammolar va istiqbollar
 - Conclusion
 
-Write now: the Conclusion.
-It must summarise the key results of every chapter, their theoretical and practical significance, and give recommendations. Do not introduce new facts.
-
-Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.
 Return JSON: {"paragraphs": [string, ...]}
 
 Rules:
@@ -687,6 +703,11 @@ Additional requirements from the student. Follow them as long as they do not con
 """
 O'zbekiston misolida
 """
+
+Write now: the Conclusion.
+It must summarise the key results of every chapter, their theoretical and practical significance, and give recommendations. Do not introduce new facts.
+
+Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.
 ~~~
 
 **Bob (amaliy topshiriq — uslub boshqacha, dastur kodi ham bo'lishi mumkin):**
@@ -703,18 +724,19 @@ Plan of the whole work:
 - Chapter 3: Muammolar va istiqbollar
 - Conclusion
 
-Write now: Chapter 2 "Algoritmlarni amalga oshirish".
-It must cover: pufakchali saralash; tez saralash.
-
-Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.
 Return JSON: {"paragraphs": [string, ...]}
 
 Rules:
 - Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
 - Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-- Do not write an introduction or a conclusion to the whole work here.
 
 Style: applied and hands-on: methods, step-by-step procedures, worked examples, formulas and calculations with clear explanations of every step and of the results. If the topic involves programming, you may add short code listings as separate paragraphs that start with ``` and end with ``` (keep the line breaks).
+
+Write now: Chapter 2 "Algoritmlarni amalga oshirish".
+It must cover: pufakchali saralash; tez saralash.
+Do not write an introduction or a conclusion to the whole work here.
+
+Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.
 ~~~
 
 ### 6.5. Bo'limni davom ettirish prompti

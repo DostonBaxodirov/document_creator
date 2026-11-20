@@ -749,6 +749,12 @@ func buildOutlinePrompt(req DocumentRequest, chapters int) string {
 
 // buildSectionPrompt bitta bo'limni yozish topshirig'i. Model butun rejani
 // ko'radi — shunda bo'limlar bir-birini takrorlamaydi va mantiqan bog'lanadi.
+//
+// Bo'limga xos qism (qaysi bo'lim, nimani yoritadi, hajmi) promptning eng
+// oxirida: bir ish bo'limlarining (kirish, boblar, xulosa) promptlari undan
+// oldingi qismda belgima-belgi bir xil, shuning uchun provayderlarning prompt
+// keshi umumiy prefiksni qayta ishlatadi. Shu sababli faqat boblarga tegishli
+// qoida ham umumiy "Rules" ro'yxatida emas, bo'limga xos qismda.
 func buildSectionPrompt(req DocumentRequest, ol *outline, s section) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are writing one part of a %s.\n", documentTypeName(req.WorkType))
@@ -757,21 +763,22 @@ func buildSectionPrompt(req DocumentRequest, ol *outline, s section) string {
 	b.WriteString("\n")
 	writePlan(&b, ol)
 
-	fmt.Fprintf(&b, "Write now: %s.\n", sectionName(s))
-	b.WriteString(sectionBrief(req, s))
-
-	paragraphs := max(2, int(math.Round(float64(s.words)/wordsPerParagraph)))
-	fmt.Fprintf(&b, "\nLength: about %d words in total — this is important. Split the text into %d paragraphs of 4-7 sentences each.\n", s.words, paragraphs)
 	b.WriteString(`Return JSON: {"paragraphs": [string, ...]}` + "\n\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.\n")
 	b.WriteString("- Stay strictly within this part; do not repeat what belongs to other parts of the plan.\n")
-	if s.kind == sectionChapter {
-		b.WriteString("- Do not write an introduction or a conclusion to the whole work here.\n")
-	}
 	b.WriteString("\nStyle: ")
 	b.WriteString(documentStyle(req.WorkType))
 	writeRequirements(&b, req.Requirements)
+
+	// Bo'limga xos qism — doim oxirida.
+	fmt.Fprintf(&b, "\n\nWrite now: %s.\n", sectionName(s))
+	b.WriteString(sectionBrief(req, s))
+	if s.kind == sectionChapter {
+		b.WriteString("Do not write an introduction or a conclusion to the whole work here.\n")
+	}
+	paragraphs := max(2, int(math.Round(float64(s.words)/wordsPerParagraph)))
+	fmt.Fprintf(&b, "\nLength: about %d words in total — this is important. Split the text into %d paragraphs of 4-7 sentences each.", s.words, paragraphs)
 	return b.String()
 }
 
