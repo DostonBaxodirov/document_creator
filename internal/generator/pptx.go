@@ -39,6 +39,7 @@ import (
 	"go.uber.org/zap"
 
 	"telegram-presentation-bot/internal/lang"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // OOXML ichki yo'llari va turlari.
@@ -202,8 +203,8 @@ func renderDeck(t *theme, d *Deck) []slidePart {
 	t.cover(t, c, d)
 	out = append(out, done(c))
 
-	topic := truncateRunes(d.Topic, topicShortRunes)
-	uni := truncateRunes(d.University, footerUniRunes)
+	topic := textutil.Truncate(d.Topic, topicShortRunes)
+	uni := textutil.Truncate(d.University, footerUniRunes)
 	for i, s := range d.Slides {
 		s = normalizeSlide(s)
 		var photo *Picture

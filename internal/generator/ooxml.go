@@ -9,7 +9,6 @@ import (
 	"path"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // prepareOutputDir vaqtinchalik fayllar papkasini tayyorlaydi
@@ -129,16 +128,4 @@ func sanitizeXMLText(s string, keepNewlines bool) string {
 // va maxsus belgilarni ekranlaydi.
 func xmlEscape(s string) string {
 	return xmlEscaper.Replace(sanitizeXMLText(s, false))
-}
-
-// truncateRunes matnni so'z chegarasida qisqartiradi.
-func truncateRunes(s string, limit int) string {
-	if utf8.RuneCountInString(s) <= limit {
-		return s
-	}
-	cut := string([]rune(s)[:limit])
-	if i := strings.LastIndexByte(cut, ' '); i > len(cut)/2 {
-		cut = cut[:i]
-	}
-	return strings.TrimRight(cut, " ,.;:-") + "…"
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // Tashkent — O'zbekiston vaqti (UTC+5, yozgi vaqt yo'q). Cheklardagi vaqt shu
@@ -84,11 +86,11 @@ func Decide(in Input) Decision {
 		add("Valyuta: %s", r.Currency)
 	}
 
-	switch last4 := lastDigits(r.CardLast4.String(), 4); {
+	switch last4 := textutil.LastDigits(r.CardLast4.String(), 4); {
 	case last4 == "":
 		add("Qabul qiluvchi karta raqami ko'rinmadi")
-	case last4 != lastDigits(in.CardLast4, 4):
-		add("Karta mos emas: ****%s (kutilgan ****%s)", last4, lastDigits(in.CardLast4, 4))
+	case last4 != textutil.LastDigits(in.CardLast4, 4):
+		add("Karta mos emas: ****%s (kutilgan ****%s)", last4, textutil.LastDigits(in.CardLast4, 4))
 	}
 
 	if conf < minConfidence {
@@ -135,21 +137,6 @@ func isUZS(c string) bool {
 		return true
 	}
 	return false
-}
-
-// lastDigits satrdagi raqamlarning oxirgi n tasini qaytaradi.
-func lastDigits(s string, n int) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	d := b.String()
-	if len(d) > n {
-		d = d[len(d)-n:]
-	}
-	return d
 }
 
 // paidAtLayouts — chekdagi sana-vaqt formatlari (model "YYYY-MM-DD HH:MM" ga

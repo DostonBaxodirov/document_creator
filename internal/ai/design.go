@@ -17,6 +17,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // DesignRequest — maxsus dizayn so'rovi.
@@ -202,9 +204,9 @@ func parseDesign(raw string) (*Design, error) {
 	if err := decodeJSON(raw, &d, nil); err != nil {
 		return nil, err
 	}
-	d.Name = truncateRunes(stripMeta(cleanText(d.Name)), maxDesignNameRunes)
-	d.Mood = truncateRunes(cleanText(d.Mood), maxDesignMoodRunes)
-	d.ImageStyle = truncateRunes(cleanText(d.ImageStyle), maxImageStyleRunes)
+	d.Name = textutil.Truncate(stripMeta(cleanText(d.Name)), maxDesignNameRunes)
+	d.Mood = textutil.Truncate(cleanText(d.Mood), maxDesignMoodRunes)
+	d.ImageStyle = textutil.Truncate(cleanText(d.ImageStyle), maxImageStyleRunes)
 	d.HeadingFont = strings.TrimSpace(d.HeadingFont)
 	d.BodyFont = strings.TrimSpace(d.BodyFont)
 	for _, f := range []*string{&d.Cover, &d.Header, &d.Cards, &d.Corners, &d.Markers, &d.Motif, &d.PhotoSide} {

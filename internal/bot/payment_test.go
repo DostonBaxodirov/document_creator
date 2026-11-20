@@ -43,12 +43,6 @@ func TestFormatting(t *testing.T) {
 	if got := formatCard("8600-1234 5678 9012"); got != "8600 1234 5678 9012" {
 		t.Errorf("formatCard = %q", got)
 	}
-	if got := lastDigits("8600 **** **** 9012", 4); got != "9012" {
-		t.Errorf("lastDigits = %q", got)
-	}
-	if got := truncateRunes("abcdef", 4); got != "abc…" {
-		t.Errorf("truncateRunes = %q", got)
-	}
 }
 
 // fakeBilling — quote() uchun kerakli metodlargina amalga oshirilgan ombor.

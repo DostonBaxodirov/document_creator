@@ -33,6 +33,8 @@ import (
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // Slayd maketlari — generator paketidagi Layout* nomlari bilan bir xil.
@@ -799,9 +801,9 @@ func parsePresentation(raw string) (*Presentation, error) {
 	if err := decodeJSON(raw, &pres, &pres.Slides); err != nil {
 		return nil, err
 	}
-	pres.Title = truncateRunes(stripMeta(cleanText(pres.Title)), maxTitleRunes)
-	pres.Subtitle = truncateRunes(strings.TrimRight(stripMeta(cleanText(pres.Subtitle)), "."), maxSubtitleRunes)
-	pres.Image = truncateRunes(cleanText(pres.Image), maxImageRunes)
+	pres.Title = textutil.Truncate(stripMeta(cleanText(pres.Title)), maxTitleRunes)
+	pres.Subtitle = textutil.Truncate(strings.TrimRight(stripMeta(cleanText(pres.Subtitle)), "."), maxSubtitleRunes)
+	pres.Image = textutil.Truncate(cleanText(pres.Image), maxImageRunes)
 	pres.Slides = normalizeSlides(pres.Slides)
 	if len(pres.Slides) == 0 {
 		return nil, errors.New("javobda birorta ham to'liq slayd yo'q")
@@ -840,20 +842,20 @@ func normalizeSlides(in []Slide) []Slide {
 // Slayd ishlatishga yaroqli bo'lsa true qaytaradi.
 func (s *Slide) normalize() bool {
 	s.Layout = normalizeLayout(s.Layout)
-	s.Title = truncateRunes(stripMeta(cleanText(s.Title)), maxTitleRunes)
-	s.Lead = truncateRunes(stripMeta(cleanText(s.Lead)), maxLeadRunes)
-	s.Highlight = truncateRunes(stripMeta(cleanText(s.Highlight)), maxHighlightRunes)
-	s.Image = truncateRunes(cleanText(s.Image), maxImageRunes)
+	s.Title = textutil.Truncate(stripMeta(cleanText(s.Title)), maxTitleRunes)
+	s.Lead = textutil.Truncate(stripMeta(cleanText(s.Lead)), maxLeadRunes)
+	s.Highlight = textutil.Truncate(stripMeta(cleanText(s.Highlight)), maxHighlightRunes)
+	s.Image = textutil.Truncate(cleanText(s.Image), maxImageRunes)
 
 	items := make([]SlideItem, 0, len(s.Items))
 	for _, it := range s.Items {
-		it.Heading = truncateRunes(strings.TrimRight(stripMeta(cleanText(it.Heading)), ":;,"), maxHeadingRunes)
-		it.Text = truncateRunes(stripMeta(cleanText(it.Text)), maxItemTextRunes)
-		it.Value = truncateRunes(cleanText(it.Value), maxValueRunes)
+		it.Heading = textutil.Truncate(strings.TrimRight(stripMeta(cleanText(it.Heading)), ":;,"), maxHeadingRunes)
+		it.Text = textutil.Truncate(stripMeta(cleanText(it.Text)), maxItemTextRunes)
+		it.Value = textutil.Truncate(cleanText(it.Value), maxValueRunes)
 		points := make([]string, 0, len(it.Points))
 		for _, p := range it.Points {
 			if p = stripMeta(cleanText(p)); p != "" {
-				points = append(points, truncateRunes(p, maxPointRunes))
+				points = append(points, textutil.Truncate(p, maxPointRunes))
 			}
 			if len(points) == maxItemPoints {
 				break
@@ -872,7 +874,7 @@ func (s *Slide) normalize() bool {
 	if len(items) == 0 {
 		for _, b := range s.Bullets {
 			if b = stripMeta(cleanText(b)); b != "" {
-				items = append(items, SlideItem{Text: truncateRunes(b, maxItemTextRunes)})
+				items = append(items, SlideItem{Text: textutil.Truncate(b, maxItemTextRunes)})
 			}
 			if len(items) == maxSlideItems {
 				break
@@ -952,15 +954,15 @@ func parseDeckOutline(raw string) (*deckOutline, error) {
 	if err := decodeJSON(raw, &o, &o.Slides); err != nil {
 		return nil, err
 	}
-	o.Title = truncateRunes(stripMeta(cleanText(o.Title)), maxTitleRunes)
-	o.Subtitle = truncateRunes(strings.TrimRight(stripMeta(cleanText(o.Subtitle)), "."), maxSubtitleRunes)
-	o.Image = truncateRunes(cleanText(o.Image), maxImageRunes)
+	o.Title = textutil.Truncate(stripMeta(cleanText(o.Title)), maxTitleRunes)
+	o.Subtitle = textutil.Truncate(strings.TrimRight(stripMeta(cleanText(o.Subtitle)), "."), maxSubtitleRunes)
+	o.Image = textutil.Truncate(cleanText(o.Image), maxImageRunes)
 	slides := o.Slides[:0]
 	for _, s := range o.Slides {
-		s.Title = truncateRunes(cleanText(s.Title), maxTitleRunes)
+		s.Title = textutil.Truncate(cleanText(s.Title), maxTitleRunes)
 		s.Layout = normalizeLayout(s.Layout)
-		s.Focus = truncateRunes(cleanText(s.Focus), maxFocusRunes)
-		s.Image = truncateRunes(cleanText(s.Image), maxImageRunes)
+		s.Focus = textutil.Truncate(cleanText(s.Focus), maxFocusRunes)
+		s.Image = textutil.Truncate(cleanText(s.Image), maxImageRunes)
 		if s.Title != "" {
 			slides = append(slides, s)
 		}

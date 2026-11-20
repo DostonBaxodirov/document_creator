@@ -31,6 +31,7 @@ import (
 	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // SessionStore — foydalanuvchi sessiyalari ombori.
@@ -1889,7 +1890,7 @@ func orderDetails(s *storage.Session, maxRequirements int) string {
 		e(name), e(lang.Get(s.Language).Name), e(s.Topic), volume, s.Volume, format,
 		e(s.StudentName), e(s.University), e(s.TeacherName))
 	if s.Requirements != "" {
-		text += "\n✍️ <b>Qo'shimcha talablar:</b> " + e(truncateRunes(s.Requirements, maxRequirements))
+		text += "\n✍️ <b>Qo'shimcha talablar:</b> " + e(textutil.TruncateHard(s.Requirements, maxRequirements))
 	}
 	return text
 }

@@ -3,6 +3,8 @@ package ai
 import (
 	"regexp"
 	"strings"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // Tayyor hujjat (yoki taqdimot) haqiqiy, topshirishga tayyor ish ko'rinishida
@@ -112,11 +114,5 @@ var reservedHeadings = map[string]bool{
 }
 
 func isReservedHeading(title string) bool {
-	return reservedHeadings[headingKey(normalizeApostrophes(title))]
-}
-
-var apostropheRe = regexp.MustCompile(apos)
-
-func normalizeApostrophes(s string) string {
-	return apostropheRe.ReplaceAllString(s, "'")
+	return reservedHeadings[headingKey(textutil.NormalizeApostrophes(title))]
 }

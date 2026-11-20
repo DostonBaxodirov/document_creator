@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // DocDesign — AI yaratgan Word dizayni.
@@ -123,8 +125,8 @@ func parseDocDesign(raw string) (*DocDesign, error) {
 	if err := decodeJSON(raw, &d, nil); err != nil {
 		return nil, err
 	}
-	d.Name = truncateRunes(stripMeta(cleanText(d.Name)), maxDesignNameRunes)
-	d.ImageStyle = truncateRunes(cleanText(d.ImageStyle), maxImageStyleRunes)
+	d.Name = textutil.Truncate(stripMeta(cleanText(d.Name)), maxDesignNameRunes)
+	d.ImageStyle = textutil.Truncate(cleanText(d.ImageStyle), maxImageStyleRunes)
 	d.HeadingFont = strings.TrimSpace(d.HeadingFont)
 	d.Primary, d.Accent = strings.TrimSpace(d.Primary), strings.TrimSpace(d.Accent)
 	for _, f := range []*string{&d.Title, &d.Heading, &d.Border, &d.Ornament} {

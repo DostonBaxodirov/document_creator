@@ -17,6 +17,7 @@ import (
 
 	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // maxNoticeErrRunes — admin xabaridagi xato matni uzunligi.
@@ -181,9 +182,9 @@ func failureText(pc purchase, jobErr error) string {
 	fmt.Fprintf(&b, "⚠️ <b>Buyurtma #%d tayyorlanmadi</b>\n", *s.OrderID)
 	b.WriteString(customerLine(s.UserID, s.Username) + "\n")
 	fmt.Fprintf(&b, "📌 %s%s\n📝 %s\n", e(orderLabel(s.WorkType, kind)), volumeSuffix(s.WorkType, s.Volume),
-		e(truncateRunes(s.Topic, 200)))
+		e(textutil.TruncateHard(s.Topic, 200)))
 	b.WriteString(paymentLine(pc) + "\n")
-	fmt.Fprintf(&b, "❗ <b>Xato:</b> <code>%s</code>\n\n", e(truncateRunes(errText, maxNoticeErrRunes)))
+	fmt.Fprintf(&b, "❗ <b>Xato:</b> <code>%s</code>\n\n", e(textutil.TruncateHard(errText, maxNoticeErrRunes)))
 	b.WriteString("Foydalanuvchiga «Qayta urinish» tugmasi yuborildi, to'lovi saqlanib qoladi.")
 	return b.String()
 }

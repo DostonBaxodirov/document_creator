@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/joho/godotenv"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // AI provayderlari nomlari.
@@ -308,22 +310,11 @@ type PaymentConfig struct {
 
 // CardLast4 karta raqamining oxirgi 4 raqamini qaytaradi.
 func (p PaymentConfig) CardLast4() string {
-	d := digitsOnly(p.CardNumber)
+	d := textutil.Digits(p.CardNumber)
 	if len(d) < 4 {
 		return d
 	}
 	return d[len(d)-4:]
-}
-
-// digitsOnly satrdan faqat raqamlarni qoldiradi.
-func digitsOnly(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // paymentConfig to'lov sozlamalarini o'qiydi. Vision modeli ko'rsatilmasa,
@@ -354,7 +345,7 @@ func (c PaymentConfig) validate() []error {
 	}
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
-	if n := len(digitsOnly(c.CardNumber)); n < 16 || n > 19 {
+	if n := len(textutil.Digits(c.CardNumber)); n < 16 || n > 19 {
 		add("PAYMENT_ENABLED=true uchun PAYMENT_CARD_NUMBER majburiy (16–19 ta raqam)")
 	}
 	if c.PriceSlidePhoto <= 0 || c.PriceSlidePlain <= 0 || c.PriceDocument <= 0 || c.PricePage <= 0 {

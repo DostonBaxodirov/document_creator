@@ -22,6 +22,7 @@ import (
 
 	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 const msgNoUserStats = "Foydalanuvchilar ro'yxati hozircha mavjud emas."
@@ -177,7 +178,7 @@ func userLine(n int, u storage.UserSummary) string {
 func userDisplayName(u storage.UserSummary) string {
 	for _, s := range []string{u.FirstName, u.StudentName} {
 		if s = strings.TrimSpace(s); s != "" {
-			return truncateRunes(s, 40)
+			return textutil.TruncateHard(s, 40)
 		}
 	}
 	return "Foydalanuvchi"

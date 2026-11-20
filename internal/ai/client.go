@@ -19,12 +19,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.uber.org/zap"
 
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/httpx"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // WorkType — ish turi. Qiymatlari bazada saqlanadi, shuning uchun o'zgartirmang.
@@ -221,7 +221,7 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 			lastErr = fmt.Errorf("AI javobini o'qib bo'lmadi: %w", err)
 			log.Warn("AI returned invalid JSON",
 				zap.Int("attempt", attempt+1),
-				zap.String("raw_prefix", truncateRunes(raw, 300)),
+				zap.String("raw_prefix", textutil.Truncate(raw, 300)),
 				zap.Error(err))
 			if errRetries >= c.maxRetries {
 				break
@@ -344,7 +344,7 @@ func fencedRequirements(req string) string {
 	if req == "" {
 		return ""
 	}
-	return "\"\"\"\n" + truncateRunes(req, maxRequirementsRunes) + "\n\"\"\""
+	return "\"\"\"\n" + textutil.Truncate(req, maxRequirementsRunes) + "\n\"\"\""
 }
 
 // writeRequirements talablar blokini promptning oxiriga bo'sh qator bilan
@@ -416,17 +416,4 @@ func cleanText(s string) string {
 	s = strings.TrimSpace(s)
 	s = listPrefixRe.ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
-}
-
-// truncateRunes matnni so'z chegarasida qirqadi va "…" qo'shadi.
-func truncateRunes(s string, limit int) string {
-	if utf8.RuneCountInString(s) <= limit {
-		return s
-	}
-	r := []rune(s)[:limit]
-	cut := string(r)
-	if i := strings.LastIndexByte(cut, ' '); i > len(cut)/2 {
-		cut = cut[:i]
-	}
-	return strings.TrimRight(cut, " ,.;:-") + "…"
 }

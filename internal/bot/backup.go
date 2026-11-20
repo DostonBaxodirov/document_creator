@@ -16,6 +16,7 @@ import (
 
 	"telegram-presentation-bot/internal/backup"
 	"telegram-presentation-bot/internal/payment"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // Backuper — bazaning zaxira nusxasini oluvchi (internal/backup.Dumper).
@@ -128,7 +129,7 @@ func (h *Handler) sendBackup(ctx context.Context, chats []int64, title string, n
 	if err != nil {
 		h.log.Error("backup failed", zap.Error(err))
 		h.sendText(chats, fmt.Sprintf("⚠️ <b>%s olinmadi</b>\n\n<code>%s</code>",
-			title, html.EscapeString(truncateRunes(err.Error(), maxNoticeErrRunes))))
+			title, html.EscapeString(textutil.TruncateHard(err.Error(), maxNoticeErrRunes))))
 		return 0
 	}
 	defer func() { _ = os.Remove(f.Path) }()

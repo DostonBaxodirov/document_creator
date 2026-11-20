@@ -11,6 +11,7 @@ import (
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // State — foydalanuvchining FSM (Finite State Machine) dagi holati.
@@ -302,15 +303,13 @@ var skipAnswers = map[string]bool{
 	"йўқ": true, "нет": true, "no": true, "none": true, "o'tkazib yuborish": true,
 }
 
-var apostrophes = strings.NewReplacer("`", "'", "’", "'", "‘", "'", "ʻ", "'", "ʼ", "'")
-
 // isSkipAnswer javob qo'shimcha talablar qadamini o'tkazib yuborishni bildiradimi.
 func isSkipAnswer(input string) bool {
 	v := strings.ToLower(normalizeSpaces(input))
 	if v == strings.ToLower(skipRequirements) {
 		return true
 	}
-	return skipAnswers[strings.TrimRight(apostrophes.Replace(v), ".!")]
+	return skipAnswers[strings.TrimRight(textutil.NormalizeApostrophes(v), ".!")]
 }
 
 // nextState javobdan keyingi qadamni qaytaradi.

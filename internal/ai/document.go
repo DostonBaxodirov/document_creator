@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
+
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // DocumentRequest — mustaqil ish, referat yoki amaliy topshiriq generatsiyasi uchun ma'lumotlar.
@@ -418,7 +420,7 @@ func parseOutline(raw string, want int) (*outline, error) {
 	chapters := o.Chapters[:0]
 	seen := map[string]bool{}
 	for _, ch := range o.Chapters {
-		ch.Title = truncateRunes(strings.TrimRight(cleanText(ch.Title), ".:;"), maxChapterTitleLen)
+		ch.Title = textutil.Truncate(strings.TrimRight(cleanText(ch.Title), ".:;"), maxChapterTitleLen)
 		key := strings.ToLower(ch.Title)
 		// Kirish/Xulosa kabi bo'limlar hujjatda alohida chiqadi — boblar orasida takrorlanmasin.
 		if ch.Title == "" || seen[key] || isMeta(ch.Title) || isReservedHeading(ch.Title) {
@@ -429,7 +431,7 @@ func parseOutline(raw string, want int) (*outline, error) {
 		points := make([]string, 0, len(ch.Points))
 		for _, p := range ch.Points {
 			if p = stripMeta(cleanText(p)); p != "" {
-				points = append(points, truncateRunes(p, 200))
+				points = append(points, textutil.Truncate(p, 200))
 			}
 			if len(points) == maxPointsPerTopic {
 				break
@@ -437,8 +439,8 @@ func parseOutline(raw string, want int) (*outline, error) {
 		}
 		ch.Points = points
 		if f := ch.Figure; f != nil {
-			f.Caption = truncateRunes(strings.TrimRight(stripMeta(cleanText(f.Caption)), "."), maxFigureCaption)
-			f.Prompt = truncateRunes(cleanText(f.Prompt), maxFigurePrompt)
+			f.Caption = textutil.Truncate(strings.TrimRight(stripMeta(cleanText(f.Caption)), "."), maxFigureCaption)
+			f.Prompt = textutil.Truncate(cleanText(f.Prompt), maxFigurePrompt)
 			if f.Prompt == "" {
 				ch.Figure = nil
 			}
@@ -460,7 +462,7 @@ func parseOutline(raw string, want int) (*outline, error) {
 			continue
 		}
 		seenRef[strings.ToLower(r)] = true
-		refs = append(refs, truncateRunes(r, maxReferenceRunes))
+		refs = append(refs, textutil.Truncate(r, maxReferenceRunes))
 		if len(refs) == maxReferences {
 			break
 		}
@@ -552,7 +554,7 @@ func normalizeParagraphs(in []string, title string) []Paragraph {
 			if len(out) == 0 && titleKey != "" && headingKey(text) == titleKey {
 				continue
 			}
-			out = append(out, Paragraph{Text: truncateRunes(text, maxParagraphRunes)})
+			out = append(out, Paragraph{Text: textutil.Truncate(text, maxParagraphRunes)})
 		}
 	}
 	return out
@@ -589,7 +591,7 @@ func cleanCode(s string) string {
 	if len(lines) > maxCodeLines {
 		lines = lines[:maxCodeLines]
 	}
-	return truncateRunes(strings.Join(lines, "\n"), maxParagraphRunes)
+	return textutil.Truncate(strings.Join(lines, "\n"), maxParagraphRunes)
 }
 
 func wordCount(paras []Paragraph) int {

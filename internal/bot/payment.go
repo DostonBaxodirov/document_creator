@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
@@ -24,6 +23,7 @@ import (
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // BillingStore — foydalanuvchilar, buyurtmalar va to'lovlar ombori.
@@ -636,7 +636,7 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 	defer cancel()
 	_ = h.bot.Notify(chat, tele.Typing)
 
-	exp := payment.Expectation{Amount: j.order.Price, CardLast4: lastDigits(h.opts.Payment.CardNumber, 4)}
+	exp := payment.Expectation{Amount: j.order.Price, CardLast4: textutil.LastDigits(h.opts.Payment.CardNumber, 4)}
 	var (
 		receipt *payment.Receipt
 		aiErr   error
@@ -656,7 +656,7 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 
 	txID := ""
 	if receipt != nil {
-		txID = truncateRunes(receipt.TransactionID.String(), 128)
+		txID = textutil.TruncateHard(receipt.TransactionID.String(), 128)
 	}
 	seen, err := h.billing.ReceiptSeen(ctx, txID, j.file.UniqueID)
 	if err != nil {
@@ -693,13 +693,13 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 	reasons := d.Reasons
 	if receipt != nil {
 		p.DetectedAmount = receipt.Amount.Int()
-		p.DetectedLast4 = lastDigits(receipt.CardLast4.String(), 4)
+		p.DetectedLast4 = textutil.LastDigits(receipt.CardLast4.String(), 4)
 		p.AIRaw = receipt.Raw
 		if n := strings.TrimSpace(receipt.Notes); n != "" && d.Verdict != payment.Approved {
 			reasons = append(reasons, "Tekshiruv izohi: "+n)
 		}
 	}
-	p.Reason = truncateRunes(strings.Join(reasons, "\n"), 1000)
+	p.Reason = textutil.TruncateHard(strings.Join(reasons, "\n"), 1000)
 
 	if err := h.billing.SubmitPayment(ctx, p); err != nil {
 		log.Error("failed to save payment", zap.Error(err))
@@ -917,7 +917,7 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 	fmt.Fprintf(&b, "👤 %s\n", user)
 	if o != nil {
 		fmt.Fprintf(&b, "📌 Buyurtma #%d: %s%s\n📝 %s\n", o.ID, e(orderLabel(o.WorkType, o.Kind)),
-			volumeSuffix(o.WorkType, o.Volume), e(truncateRunes(o.Topic, 80)))
+			volumeSuffix(o.WorkType, o.Volume), e(textutil.TruncateHard(o.Topic, 80)))
 	}
 	fmt.Fprintf(&b, "💰 Kutilgan summa: <b>%s</b>\n", formatSum(p.Amount))
 
@@ -928,7 +928,7 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 	}
 	fmt.Fprintf(&b, "🔎 Chekda: %s\n", strings.Join(detected, " · "))
 	if p.TransactionID != "" {
-		fmt.Fprintf(&b, "🔖 Tranzaksiya: <code>%s</code>\n", e(truncateRunes(p.TransactionID, 40)))
+		fmt.Fprintf(&b, "🔖 Tranzaksiya: <code>%s</code>\n", e(textutil.TruncateHard(p.TransactionID, 40)))
 	}
 	fmt.Fprintf(&b, "🕒 Yuborilgan: %s\n", p.CreatedAt.In(payment.Tashkent).Format("02.01.2006 15:04"))
 
@@ -1104,7 +1104,7 @@ func formatSum(n int) string {
 
 // formatCard karta raqamini 4 tadan guruhlaydi: "8600 1234 5678 9012".
 func formatCard(card string) string {
-	return groupDigits(lastDigits(card, 32), 4, false)
+	return groupDigits(textutil.LastDigits(card, 32), 4, false)
 }
 
 // groupDigits raqamlarni bo'sh joy bilan guruhlaydi: fromRight — o'ngdan (summalar uchun).
@@ -1130,27 +1130,4 @@ func groupDigits(d string, size int, fromRight bool) string {
 		out = "-" + out
 	}
 	return out
-}
-
-// lastDigits satrdagi raqamlarning oxirgi n tasini qaytaradi.
-func lastDigits(s string, n int) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	d := b.String()
-	if len(d) > n {
-		d = d[len(d)-n:]
-	}
-	return d
-}
-
-// truncateRunes matnni n ta belgigacha qisqartiradi.
-func truncateRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
 }

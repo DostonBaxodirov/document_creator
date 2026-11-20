@@ -27,6 +27,7 @@ import (
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/storage"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // CustomTariff — AI maxsus dizayn tarifi.
@@ -162,7 +163,7 @@ func (h *Handler) tariffPrompt(s *storage.Session) string {
 	doc := ai.WorkType(s.WorkType).IsDocument()
 	var b strings.Builder
 	b.WriteString("✨ <b>Maxsus dizayn</b>\n\n")
-	topic := html.EscapeString(truncateRunes(s.Topic, 120))
+	topic := html.EscapeString(textutil.TruncateHard(s.Topic, 120))
 	if doc {
 		fmt.Fprintf(&b, "«%s» mavzusiga mos <b>noyob dizayn noldan yaratiladi</b>: "+
 			"sarlavhalar rangi va shrifti, titul varaq kompozitsiyasi, ramka va bezaklar, boblarda mavzuga mos rasmlar. "+

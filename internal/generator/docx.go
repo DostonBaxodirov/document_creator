@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"telegram-presentation-bot/internal/lang"
+	"telegram-presentation-bot/internal/textutil"
 )
 
 // DOCX generatori mustaqil ish, referat va amaliy topshiriq uchun Word (.docx)
@@ -471,9 +472,6 @@ func shading(fill string) string {
 	return `<w:shd w:val="clear" w:color="auto" w:fill="` + fill + `"/>`
 }
 
-// apostrophes — apostrof variantlari (solishtirish uchun bittasiga keltiriladi).
-var apostrophes = strings.NewReplacer("’", "'", "ʻ", "'", "ʼ", "'", "‘", "'", "`", "'")
-
 // titleHeader titul varaqning yuqori qatori (vazirlik nomi) hujjat tilida.
 // Sozlamada standart nom (o'zbekcha) turgan bo'lsa, hujjat tilidagi tarjimasi
 // olinadi; boshqa, qo'lda yozilgan nom o'zgarishsiz chiqadi.
@@ -481,7 +479,7 @@ func (g *DOCX) titleHeader(p Paper) string {
 	if g.header == "" {
 		return ""
 	}
-	norm := func(s string) string { return strings.Join(strings.Fields(apostrophes.Replace(s)), " ") }
+	norm := func(s string) string { return strings.Join(strings.Fields(textutil.NormalizeApostrophes(s)), " ") }
 	if def := lang.Get(string(lang.UzLatn)).Labels.Ministry; strings.EqualFold(norm(g.header), norm(def)) {
 		return p.labels().Ministry
 	}
