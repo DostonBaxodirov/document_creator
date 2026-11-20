@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"google.golang.org/genai"
+
+	"telegram-presentation-bot/internal/httpx"
 )
 
 // Gemini — Gemini rasm modeli (Nano Banana oilasi) klienti.
@@ -19,8 +21,9 @@ type Gemini struct {
 // NewGemini yangi klient yaratadi.
 func NewGemini(ctx context.Context, apiKey, model, size string) (*Gemini, error) {
 	c, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		APIKey:     apiKey,
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: httpx.Client(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gemini klientini yaratib bo'lmadi: %w", err)
@@ -50,7 +53,7 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 		return nil, fmt.Errorf("gemini: %w", err)
 	}
 	if fb := resp.PromptFeedback; fb != nil && fb.BlockReason != "" {
-		return nil, permanent(fmt.Errorf("gemini so'rovni blokladi: %s", fb.BlockReason))
+		return nil, httpx.Permanent(fmt.Errorf("gemini so'rovni blokladi: %s", fb.BlockReason))
 	}
 
 	var reason genai.FinishReason
@@ -71,7 +74,7 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 	}
 	e := fmt.Errorf("gemini rasm qaytarmadi (finish reason: %s)", reason)
 	if reason == genai.FinishReasonSafety || reason == genai.FinishReasonProhibitedContent || reason == genai.FinishReasonImageSafety {
-		return nil, permanent(e)
+		return nil, httpx.Permanent(e)
 	}
 	return nil, e
 }
@@ -82,8 +85,8 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 // foyda bermaydi, billing yoqish kerak.
 func classifyGeminiError(code int, msg string) error {
 	e := fmt.Errorf("gemini API xatosi %d: %s", code, msg)
-	if isPermanentStatus(code) || code == 429 && strings.Contains(msg, "limit: 0") {
-		return permanent(e)
+	if httpx.IsPermanentStatus(code) || code == 429 && strings.Contains(msg, "limit: 0") {
+		return httpx.Permanent(e)
 	}
 	return e
 }

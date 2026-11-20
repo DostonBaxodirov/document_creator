@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"regexp"
 	"strings"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/httpx"
 )
 
 // WorkType — ish turi. Qiymatlari bazada saqlanadi, shuning uchun o'zgartirmang.
@@ -87,20 +87,6 @@ type provider interface {
 	complete(ctx context.Context, t task) (string, error)
 }
 
-// permanentError — qayta urinish foyda bermaydigan xato (noto'g'ri API kalit,
-// noto'g'ri model nomi, balans yetarli emas, kontent bloklangan va h.k.).
-type permanentError struct{ err error }
-
-func (e *permanentError) Error() string { return e.err.Error() }
-func (e *permanentError) Unwrap() error { return e.err }
-
-func permanent(err error) error { return &permanentError{err: err} }
-
-func isPermanent(err error) bool {
-	var pe *permanentError
-	return errors.As(err, &pe)
-}
-
 // client — provayderdan mustaqil umumiy mantiq: prompt, qayta urinish, JSON parse.
 type client struct {
 	p          provider
@@ -111,7 +97,7 @@ type client struct {
 	// (AI_SLIDES_PER_REQUEST); 0 bo'lsa — slidesPerRequest konstantasi.
 	slidesPerRequest int
 	log              *zap.Logger
-	// sleep — xatodan keyingi kechikish (nil bo'lsa sleepBackoff). Testlar
+	// sleep — xatodan keyingi kechikish (nil bo'lsa httpx.Backoff). Testlar
 	// haqiqatan kutmasligi uchun almashtiriladi.
 	sleep func(ctx context.Context, retry int) error
 }
@@ -218,9 +204,9 @@ func generateJSON[T any](ctx context.Context, c *client, op string, t task, want
 			log.Warn("AI request failed",
 				zap.Int("attempt", attempt+1),
 				zap.Duration("took", time.Since(started)),
-				zap.Bool("permanent", isPermanent(err)),
+				zap.Bool("permanent", httpx.IsPermanent(err)),
 				zap.Error(err))
-			if isPermanent(err) || ctx.Err() != nil || errRetries >= c.maxRetries {
+			if httpx.IsPermanent(err) || ctx.Err() != nil || errRetries >= c.maxRetries {
 				break
 			}
 			errRetries++
@@ -280,25 +266,22 @@ func (c *client) completeWithTimeout(ctx context.Context, t task) (string, error
 	return c.p.complete(ctx, t)
 }
 
+// Xatodan keyingi kechikish: 2s, 4s, 8s, 16s, 32s (+ tasodifiy jitter).
+const (
+	backoffBase = 2 * time.Second
+	backoffMax  = 32 * time.Second
+)
+
 // backoff retry-chi xatodan keyingi qayta urinishdan oldin kutadi (c.sleep
-// berilmagan bo'lsa — sleepBackoff).
+// berilmagan bo'lsa — httpx.Backoff bo'yicha); kontekst bekor bo'lsa to'xtaydi.
 func (c *client) backoff(ctx context.Context, retry int) error {
 	if c.sleep != nil {
 		return c.sleep(ctx, retry)
 	}
-	return sleepBackoff(ctx, retry)
-}
-
-// sleepBackoff 2s, 4s, 8s ... (+ tasodifiy jitter) kutadi; kontekst bekor bo'lsa to'xtaydi.
-func sleepBackoff(ctx context.Context, attempt int) error {
-	base := time.Duration(1<<min(attempt-1, 4)) * 2 * time.Second
-	jitter := time.Duration(rand.Int64N(int64(time.Second)))
-	select {
-	case <-ctx.Done():
+	if !httpx.Sleep(ctx, httpx.Backoff(retry, backoffBase, backoffMax)) {
 		return ctx.Err()
-	case <-time.After(base + jitter):
-		return nil
 	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

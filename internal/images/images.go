@@ -19,18 +19,17 @@ package images
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	_ "image/png" // PNG javoblarni o'qish uchun (Gemini PNG qaytaradi)
-	"math/rand/v2"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/httpx"
 )
 
 // Tier — rasm sifati tarifi. Qiymatlari bazada (Session.Plan) saqlanadi.
@@ -83,26 +82,6 @@ type Generator interface {
 	Name() string
 	// Generate rasmni chizadi va uning baytlarini (JPEG yoki PNG) qaytaradi.
 	Generate(ctx context.Context, prompt string, shape Shape) ([]byte, error)
-}
-
-// permanentError — qayta urinish foyda bermaydigan xato (noto'g'ri kalit,
-// balans yetarli emas, kontent filtri va h.k.).
-type permanentError struct{ err error }
-
-func (e *permanentError) Error() string { return e.err.Error() }
-func (e *permanentError) Unwrap() error { return e.err }
-
-func permanent(err error) error { return &permanentError{err: err} }
-
-func isPermanent(err error) bool {
-	var pe *permanentError
-	return errors.As(err, &pe)
-}
-
-// isPermanentStatus HTTP status qayta urinish bilan tuzalmasligini bildiradi
-// (4xx, 429 va 408 dan tashqari).
-func isPermanentStatus(code int) bool {
-	return code >= 400 && code < 500 && code != 429 && code != 408
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +264,7 @@ func (s *Service) one(ctx context.Context, chain []Generator, r Request) Result 
 		}
 		log := s.log.With(zap.String("provider", g.Name()), zap.String("shape", r.Shape.String()))
 		for attempt := range 2 {
-			if attempt > 0 && !sleep(ctx, s.retryDelay) {
+			if attempt > 0 && !httpx.Sleep(ctx, httpx.Backoff(attempt, s.retryDelay, s.retryDelay)) {
 				return Result{}
 			}
 			started := time.Now()
@@ -299,17 +278,17 @@ func (s *Service) one(ctx context.Context, chain []Generator, r Request) Result 
 						zap.Duration("took", time.Since(started)))
 					return Result{Data: jpg, Provider: g.Name()}
 				}
-				err = permanent(fmt.Errorf("rasm formati noto'g'ri: %w", err))
+				err = httpx.Permanent(fmt.Errorf("rasm formati noto'g'ri: %w", err))
 			}
 			log.Warn("image generation failed",
 				zap.Int("attempt", attempt+1),
 				zap.Duration("took", time.Since(started)),
-				zap.Bool("permanent", isPermanent(err)),
+				zap.Bool("permanent", httpx.IsPermanent(err)),
 				zap.Error(err))
 			if ctx.Err() != nil {
 				return Result{}
 			}
-			if isPermanent(err) {
+			if httpx.IsPermanent(err) {
 				break
 			}
 		}
@@ -317,27 +296,20 @@ func (s *Service) one(ctx context.Context, chain []Generator, r Request) Result 
 	return Result{}
 }
 
+// defaultTimeout — Service timeout berilmaganda (<= 0) bitta urinish uchun
+// muddat (IMAGE_TIMEOUT standart qiymati bilan bir xil). Umumiy HTTP klientda
+// timeout yo'q, shuning uchun har bir so'rov kontekst muddati bilan cheklanishi shart.
+const defaultTimeout = 90 * time.Second
+
 // call bitta urinishga alohida timeout beradi.
 func (s *Service) call(ctx context.Context, g Generator, r Request) ([]byte, error) {
-	if s.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.timeout)
-		defer cancel()
+	timeout := s.timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	return g.Generate(ctx, r.Prompt, r.Shape)
-}
-
-// sleep d (+ tasodifiy jitter) kutadi; kontekst bekor bo'lsa false qaytaradi.
-func sleep(ctx context.Context, d time.Duration) bool {
-	if d > 0 {
-		d += time.Duration(rand.Int64N(int64(d)/2 + 1))
-	}
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(d):
-		return true
-	}
 }
 
 // jpegQuality — PNG dan o'girishdagi JPEG sifati.

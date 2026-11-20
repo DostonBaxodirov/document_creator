@@ -8,10 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"telegram-presentation-bot/internal/httpx"
 )
 
 // maxResponseBytes — rasm javobi hajmi chegarasi (base64 JSON).
@@ -25,16 +26,20 @@ type OpenAI struct {
 	apiKey   string
 	model    string
 	quality  string // low | medium | high | auto
+	// timeout — kontekstda muddat bo'lmasa, bitta so'rov uchun muddat
+	// (Service orqali chaqirilganda muddatni Service.call beradi).
+	timeout time.Duration
 }
 
 // NewOpenAI yangi klient yaratadi. baseURL — masalan "https://api.openai.com/v1".
 func NewOpenAI(baseURL, apiKey, model, quality string, timeout time.Duration) *OpenAI {
 	return &OpenAI{
-		http:     newHTTPClient(timeout),
+		http:     httpx.Client(),
 		endpoint: strings.TrimRight(baseURL, "/") + "/images/generations",
 		apiKey:   apiKey,
 		model:    model,
 		quality:  quality,
+		timeout:  timeout,
 	}
 }
 
@@ -51,6 +56,13 @@ type openAIImageResponse struct {
 }
 
 func (o *OpenAI) Generate(ctx context.Context, prompt string, shape Shape) ([]byte, error) {
+	// Umumiy HTTP klientda timeout yo'q — muddatsiz kontekst bilan so'rov
+	// cheksiz osilib qolmasligi uchun.
+	if _, ok := ctx.Deadline(); !ok && o.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, o.timeout)
+		defer cancel()
+	}
 	size := "1536x1024"
 	switch shape {
 	case Portrait:
@@ -69,11 +81,11 @@ func (o *OpenAI) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, permanent(err)
+		return nil, httpx.Permanent(err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, permanent(err)
+		return nil, httpx.Permanent(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+o.apiKey)
@@ -89,7 +101,7 @@ func (o *OpenAI) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 		return nil, fmt.Errorf("openai javobini o'qib bo'lmadi: %w", err)
 	}
 	if len(data) > maxResponseBytes {
-		return nil, permanent(errors.New("openai javobi juda katta"))
+		return nil, httpx.Permanent(errors.New("openai javobi juda katta"))
 	}
 
 	var parsed openAIImageResponse
@@ -104,8 +116,8 @@ func (o *OpenAI) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 			msg = parsed.Error.Message
 		}
 		e := fmt.Errorf("openai images API xatosi %d: %s", resp.StatusCode, msg)
-		if isPermanentStatus(resp.StatusCode) {
-			return nil, permanent(e)
+		if httpx.IsPermanentStatus(resp.StatusCode) {
+			return nil, httpx.Permanent(e)
 		}
 		return nil, e
 	}
@@ -120,17 +132,4 @@ func (o *OpenAI) Generate(ctx context.Context, prompt string, shape Shape) ([]by
 		return nil, fmt.Errorf("openai rasmini dekodlab bo'lmadi: %w", err)
 	}
 	return img, nil
-}
-
-// newHTTPClient umumiy timeout kontekst orqali boshqariladi; bu yerda faqat
-// ulanish bosqichlari cheklanadi.
-func newHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: timeout,
-		MaxIdleConnsPerHost:   10,
-		IdleConnTimeout:       90 * time.Second,
-	}}
 }

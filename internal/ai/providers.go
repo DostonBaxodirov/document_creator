@@ -8,14 +8,13 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/httpx"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,8 +30,9 @@ type geminiProvider struct {
 
 func newGemini(ctx context.Context, cfg config.AIConfig) (*geminiProvider, error) {
 	c, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  cfg.GeminiAPIKey,
-		Backend: genai.BackendGeminiAPI,
+		APIKey:     cfg.GeminiAPIKey,
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: httpx.Client(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gemini klientini yaratib bo'lmadi: %w", err)
@@ -61,7 +61,7 @@ func (g *geminiProvider) complete(ctx context.Context, t task) (string, error) {
 	}
 
 	if fb := resp.PromptFeedback; fb != nil && fb.BlockReason != "" {
-		return "", permanent(fmt.Errorf("gemini so'rovni blokladi: %s", fb.BlockReason))
+		return "", httpx.Permanent(fmt.Errorf("gemini so'rovni blokladi: %s", fb.BlockReason))
 	}
 
 	var reason genai.FinishReason
@@ -70,7 +70,7 @@ func (g *geminiProvider) complete(ctx context.Context, t task) (string, error) {
 	}
 	switch reason {
 	case genai.FinishReasonSafety:
-		return "", permanent(errors.New("gemini javobi xavfsizlik filtri tomonidan bloklandi"))
+		return "", httpx.Permanent(errors.New("gemini javobi xavfsizlik filtri tomonidan bloklandi"))
 	case genai.FinishReasonMaxTokens:
 		// JSON yarmida qirqilgan — parse qilishga urinishning foydasi yo'q.
 		return "", errors.New("gemini javobi uzunlik chegarasida qirqildi (AI_MAX_TOKENS ni oshiring)")
@@ -88,18 +88,12 @@ func classifyGeminiError(err error) error {
 	var apiErr genai.APIError
 	if errors.As(err, &apiErr) {
 		e := fmt.Errorf("gemini API xatosi %d: %s", apiErr.Code, apiErr.Message)
-		if isPermanentStatus(apiErr.Code) {
-			return permanent(e)
+		if httpx.IsPermanentStatus(apiErr.Code) {
+			return httpx.Permanent(e)
 		}
 		return e
 	}
 	return fmt.Errorf("gemini: %w", err)
-}
-
-// isPermanentStatus HTTP status qayta urinish bilan tuzalmasligini bildiradi:
-// 4xx (noto'g'ri kalit, model, parametr, balans yetarli emas), 429 va 408 dan tashqari.
-func isPermanentStatus(code int) bool {
-	return code >= 400 && code < 500 && code != http.StatusTooManyRequests && code != http.StatusRequestTimeout
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +127,7 @@ type compatProvider struct {
 func newOpenAI(cfg config.AIConfig) *compatProvider {
 	return &compatProvider{
 		label:          "openai",
-		http:           newHTTPClient(cfg.Timeout),
+		http:           httpx.Client(),
 		endpoint:       cfg.OpenAIBaseURL + "/chat/completions",
 		apiKey:         cfg.OpenAIAPIKey,
 		model:          cfg.OpenAIModel,
@@ -155,7 +149,7 @@ func newDeepSeek(cfg config.AIConfig) *compatProvider {
 	}
 	return &compatProvider{
 		label:          "deepseek",
-		http:           newHTTPClient(cfg.Timeout),
+		http:           httpx.Client(),
 		endpoint:       cfg.DeepSeekBaseURL + "/chat/completions",
 		apiKey:         cfg.DeepSeekAPIKey,
 		model:          cfg.DeepSeekModel,
@@ -164,19 +158,6 @@ func newDeepSeek(cfg config.AIConfig) *compatProvider {
 		maxTokensField: "max_tokens",
 		extra:          map[string]any{"thinking": map[string]string{"type": thinking}},
 	}
-}
-
-// newHTTPClient umumiy timeout kontekst orqali boshqariladi; bu yerda faqat
-// ulanish bosqichlari cheklanadi.
-func newHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: timeout,
-		MaxIdleConnsPerHost:   10,
-		IdleConnTimeout:       90 * time.Second,
-	}}
 }
 
 func (o *compatProvider) name() string { return o.label + "/" + o.model }
@@ -223,11 +204,11 @@ func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", permanent(err)
+		return "", httpx.Permanent(err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", permanent(err)
+		return "", httpx.Permanent(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -253,8 +234,8 @@ func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
 			msg = parsed.Error.Message
 		}
 		e := fmt.Errorf("%s API xatosi %d: %s", o.label, resp.StatusCode, msg)
-		if isPermanentStatus(resp.StatusCode) {
-			return "", permanent(e)
+		if httpx.IsPermanentStatus(resp.StatusCode) {
+			return "", httpx.Permanent(e)
 		}
 		return "", e
 	}
@@ -267,14 +248,14 @@ func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
 
 	choice := parsed.Choices[0]
 	if choice.Message.Refusal != "" {
-		return "", permanent(fmt.Errorf("%s so'rovni rad etdi: %s", o.label, choice.Message.Refusal))
+		return "", httpx.Permanent(fmt.Errorf("%s so'rovni rad etdi: %s", o.label, choice.Message.Refusal))
 	}
 	switch choice.FinishReason {
 	case "length":
 		// JSON yarmida qirqilgan — parse qilishga urinishning foydasi yo'q.
 		return "", fmt.Errorf("%s javobi uzunlik chegarasida qirqildi (AI_MAX_TOKENS ni oshiring)", o.label)
 	case "content_filter":
-		return "", permanent(fmt.Errorf("%s javobi kontent filtri tomonidan bloklandi", o.label))
+		return "", httpx.Permanent(fmt.Errorf("%s javobi kontent filtri tomonidan bloklandi", o.label))
 	case "insufficient_system_resource":
 		return "", fmt.Errorf("%s serverida resurs yetishmadi (vaqtinchalik)", o.label)
 	}

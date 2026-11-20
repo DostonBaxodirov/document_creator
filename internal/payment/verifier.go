@@ -12,12 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"telegram-presentation-bot/internal/httpx"
 )
 
 // Receipt — chekdan o'qilgan qiymatlar.
@@ -55,14 +55,7 @@ type Verifier struct {
 // NewVerifier yangi klient yaratadi. baseURL — masalan "https://api.openai.com/v1".
 func NewVerifier(baseURL, apiKey, model string, timeout time.Duration) *Verifier {
 	return &Verifier{
-		http: &http.Client{Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: timeout,
-			MaxIdleConnsPerHost:   4,
-			IdleConnTimeout:       90 * time.Second,
-		}},
+		http:     httpx.Client(),
 		endpoint: strings.TrimRight(baseURL, "/") + "/chat/completions",
 		apiKey:   apiKey,
 		model:    model,
@@ -122,27 +115,23 @@ func (v *Verifier) Read(ctx context.Context, image []byte, exp Expectation) (*Re
 		return nil, err
 	}
 
-	const attempts = 2
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(2*time.Second + time.Duration(rand.Int64N(int64(time.Second)))):
-			}
-		}
-		r, err := v.do(ctx, body)
-		if err == nil {
-			return r, nil
-		}
-		lastErr = err
-		if isPermanent(err) || ctx.Err() != nil {
-			break
-		}
+	var r *Receipt
+	err = httpx.Retry(ctx, readAttempts, readRetryBase, func(ctx context.Context) error {
+		var err error
+		r, err = v.do(ctx, body)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nil, lastErr
+	return r, nil
 }
+
+// Read dagi qayta urinish: ko'pi bilan 2 urinish, oradagi kechikish ~2s (+ jitter).
+const (
+	readAttempts  = 2
+	readRetryBase = 2 * time.Second
+)
 
 type chatResponse struct {
 	Choices []struct {
@@ -163,7 +152,7 @@ func (v *Verifier) do(ctx context.Context, body []byte) (*Receipt, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, permanent(err)
+		return nil, httpx.Permanent(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+v.apiKey)
@@ -189,9 +178,8 @@ func (v *Verifier) do(ctx context.Context, body []byte) (*Receipt, error) {
 			msg = parsed.Error.Message
 		}
 		e := fmt.Errorf("openai vision API xatosi %d: %s", resp.StatusCode, msg)
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
-			resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusRequestTimeout {
-			return nil, permanent(e)
+		if httpx.IsPermanentStatus(resp.StatusCode) {
+			return nil, httpx.Permanent(e)
 		}
 		return nil, e
 	}
@@ -203,7 +191,7 @@ func (v *Verifier) do(ctx context.Context, body []byte) (*Receipt, error) {
 	}
 	ch := parsed.Choices[0]
 	if ch.Message.Refusal != "" {
-		return nil, permanent(fmt.Errorf("openai so'rovni rad etdi: %s", ch.Message.Refusal))
+		return nil, httpx.Permanent(fmt.Errorf("openai so'rovni rad etdi: %s", ch.Message.Refusal))
 	}
 	return parseReceipt(ch.Message.Content)
 }
@@ -301,19 +289,3 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 }
 
 func (f flexString) String() string { return string(f) }
-
-// ---------------------------------------------------------------------------
-// Xatolar
-// ---------------------------------------------------------------------------
-
-type permanentError struct{ err error }
-
-func (e *permanentError) Error() string { return e.err.Error() }
-func (e *permanentError) Unwrap() error { return e.err }
-
-func permanent(err error) error { return &permanentError{err: err} }
-
-func isPermanent(err error) bool {
-	var pe *permanentError
-	return errors.As(err, &pe)
-}
