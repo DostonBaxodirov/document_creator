@@ -1,20 +1,17 @@
 package ai
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"strings"
 
 	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/httpx"
+	"telegram-presentation-bot/internal/openai"
 )
 
 // ---------------------------------------------------------------------------
@@ -111,9 +108,7 @@ const deepSeekDefaultMaxTokens = 16384
 
 type compatProvider struct {
 	label       string // logdagi nom: "openai" yoki "deepseek"
-	http        *http.Client
-	endpoint    string
-	apiKey      string
+	client      *openai.Client
 	model       string
 	temperature *float32
 	maxTokens   int
@@ -127,9 +122,7 @@ type compatProvider struct {
 func newOpenAI(cfg config.AIConfig) *compatProvider {
 	return &compatProvider{
 		label:          "openai",
-		http:           httpx.Client(),
-		endpoint:       cfg.OpenAIBaseURL + "/chat/completions",
-		apiKey:         cfg.OpenAIAPIKey,
+		client:         openai.New(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, "openai"),
 		model:          cfg.OpenAIModel,
 		temperature:    cfg.Temperature,
 		maxTokens:      cfg.MaxTokens,
@@ -149,9 +142,7 @@ func newDeepSeek(cfg config.AIConfig) *compatProvider {
 	}
 	return &compatProvider{
 		label:          "deepseek",
-		http:           httpx.Client(),
-		endpoint:       cfg.DeepSeekBaseURL + "/chat/completions",
-		apiKey:         cfg.DeepSeekAPIKey,
+		client:         openai.New(cfg.DeepSeekBaseURL, cfg.DeepSeekAPIKey, "deepseek"),
 		model:          cfg.DeepSeekModel,
 		temperature:    cfg.Temperature, // fikrlash rejimida DeepSeek uni e'tiborsiz qoldiradi
 		maxTokens:      maxTokens,
@@ -162,29 +153,10 @@ func newDeepSeek(cfg config.AIConfig) *compatProvider {
 
 func (o *compatProvider) name() string { return o.label + "/" + o.model }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-			Refusal string `json:"refusal"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error"`
-}
-
 func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
 	payload := map[string]any{
 		"model": o.model,
-		"messages": []chatMessage{
+		"messages": []openai.Message{
 			{Role: "system", Content: t.system},
 			{Role: "user", Content: t.user},
 		},
@@ -201,68 +173,5 @@ func (o *compatProvider) complete(ctx context.Context, t task) (string, error) {
 	for k, v := range o.extra {
 		payload[k] = v
 	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", httpx.Permanent(err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", httpx.Permanent(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+o.apiKey)
-
-	resp, err := o.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("%s so'rovi bajarilmadi: %w", o.label, err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		return "", fmt.Errorf("%s javobini o'qib bo'lmadi: %w", o.label, err)
-	}
-
-	var parsed chatResponse
-	jsonErr := json.Unmarshal(data, &parsed) // DeepSeek javob oldidan bo'sh qatorlar yuborishi mumkin — Unmarshal ularni o'tkazib yuboradi
-
-	if resp.StatusCode != http.StatusOK {
-		msg := truncateRunes(strings.TrimSpace(string(data)), 500)
-		if jsonErr == nil && parsed.Error != nil && parsed.Error.Message != "" {
-			msg = parsed.Error.Message
-		}
-		e := fmt.Errorf("%s API xatosi %d: %s", o.label, resp.StatusCode, msg)
-		if httpx.IsPermanentStatus(resp.StatusCode) {
-			return "", httpx.Permanent(e)
-		}
-		return "", e
-	}
-	if jsonErr != nil {
-		return "", fmt.Errorf("%s javobi JSON emas: %w", o.label, jsonErr)
-	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("%s javobida choices bo'sh", o.label)
-	}
-
-	choice := parsed.Choices[0]
-	if choice.Message.Refusal != "" {
-		return "", httpx.Permanent(fmt.Errorf("%s so'rovni rad etdi: %s", o.label, choice.Message.Refusal))
-	}
-	switch choice.FinishReason {
-	case "length":
-		// JSON yarmida qirqilgan — parse qilishga urinishning foydasi yo'q.
-		return "", fmt.Errorf("%s javobi uzunlik chegarasida qirqildi (AI_MAX_TOKENS ni oshiring)", o.label)
-	case "content_filter":
-		return "", httpx.Permanent(fmt.Errorf("%s javobi kontent filtri tomonidan bloklandi", o.label))
-	case "insufficient_system_resource":
-		return "", fmt.Errorf("%s serverida resurs yetishmadi (vaqtinchalik)", o.label)
-	}
-	// DeepSeek JSON rejimida ba'zan bo'sh (faqat probellardan iborat) javob qaytaradi —
-	// bu vaqtinchalik holat, qayta urinish yordam beradi.
-	if strings.TrimSpace(choice.Message.Content) == "" {
-		return "", fmt.Errorf("%s bo'sh javob qaytardi (finish reason: %s)", o.label, choice.FinishReason)
-	}
-	return choice.Message.Content, nil
+	return o.client.Chat(ctx, payload)
 }

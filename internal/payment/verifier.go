@@ -5,19 +5,17 @@
 package payment
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"telegram-presentation-bot/internal/httpx"
+	"telegram-presentation-bot/internal/openai"
 )
 
 // Receipt — chekdan o'qilgan qiymatlar.
@@ -45,21 +43,17 @@ type Expectation struct {
 
 // Verifier — OpenAI Chat Completions API (vision) orqali chekni o'qiydi.
 type Verifier struct {
-	http     *http.Client
-	endpoint string
-	apiKey   string
-	model    string
-	timeout  time.Duration
+	client  *openai.Client
+	model   string
+	timeout time.Duration
 }
 
 // NewVerifier yangi klient yaratadi. baseURL — masalan "https://api.openai.com/v1".
 func NewVerifier(baseURL, apiKey, model string, timeout time.Duration) *Verifier {
 	return &Verifier{
-		http:     httpx.Client(),
-		endpoint: strings.TrimRight(baseURL, "/") + "/chat/completions",
-		apiKey:   apiKey,
-		model:    model,
-		timeout:  timeout,
+		client:  openai.New(baseURL, apiKey, "openai vision"),
+		model:   model,
+		timeout: timeout,
 	}
 }
 
@@ -95,30 +89,24 @@ func (v *Verifier) Read(ctx context.Context, image []byte, exp Expectation) (*Re
 	if !strings.HasPrefix(mime, "image/") {
 		mime = "image/jpeg"
 	}
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":           v.model,
 		"response_format": map[string]string{"type": "json_object"},
-		"messages": []any{
-			map[string]any{"role": "system", "content": systemPrompt},
-			map[string]any{"role": "user", "content": []any{
-				map[string]any{"type": "text", "text": fmt.Sprintf(
+		"messages": []openai.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: []openai.Part{
+				openai.TextPart(fmt.Sprintf(
 					"Expected payment: %d UZS to a card ending in %s. Read the receipt in the image and answer in JSON.",
-					exp.Amount, exp.CardLast4)},
-				map[string]any{"type": "image_url", "image_url": map[string]string{
-					"url":    "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(image),
-					"detail": "high",
-				}},
+					exp.Amount, exp.CardLast4)),
+				openai.ImagePart(mime, image, "high"),
 			}},
 		},
-	})
-	if err != nil {
-		return nil, err
 	}
 
 	var r *Receipt
-	err = httpx.Retry(ctx, readAttempts, readRetryBase, func(ctx context.Context) error {
+	err := httpx.Retry(ctx, readAttempts, readRetryBase, func(ctx context.Context) error {
 		var err error
-		r, err = v.do(ctx, body)
+		r, err = v.do(ctx, payload)
 		return err
 	})
 	if err != nil {
@@ -133,67 +121,15 @@ const (
 	readRetryBase = 2 * time.Second
 )
 
-type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-			Refusal string `json:"refusal"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-func (v *Verifier) do(ctx context.Context, body []byte) (*Receipt, error) {
+func (v *Verifier) do(ctx context.Context, payload map[string]any) (*Receipt, error) {
 	ctx, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.endpoint, bytes.NewReader(body))
+	content, err := v.client.Chat(ctx, payload)
 	if err != nil {
-		return nil, httpx.Permanent(err)
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+v.apiKey)
-
-	resp, err := v.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("openai vision so'rovi bajarilmadi: %w", err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return nil, fmt.Errorf("openai javobini o'qib bo'lmadi: %w", err)
-	}
-
-	var parsed chatResponse
-	jsonErr := json.Unmarshal(data, &parsed)
-	if resp.StatusCode != http.StatusOK {
-		msg := strings.TrimSpace(string(data))
-		if len(msg) > 500 {
-			msg = msg[:500]
-		}
-		if jsonErr == nil && parsed.Error != nil && parsed.Error.Message != "" {
-			msg = parsed.Error.Message
-		}
-		e := fmt.Errorf("openai vision API xatosi %d: %s", resp.StatusCode, msg)
-		if httpx.IsPermanentStatus(resp.StatusCode) {
-			return nil, httpx.Permanent(e)
-		}
-		return nil, e
-	}
-	if jsonErr != nil {
-		return nil, fmt.Errorf("openai javobi JSON emas: %w", jsonErr)
-	}
-	if len(parsed.Choices) == 0 {
-		return nil, errors.New("openai javobida choices bo'sh")
-	}
-	ch := parsed.Choices[0]
-	if ch.Message.Refusal != "" {
-		return nil, httpx.Permanent(fmt.Errorf("openai so'rovni rad etdi: %s", ch.Message.Refusal))
-	}
-	return parseReceipt(ch.Message.Content)
+	return parseReceipt(content)
 }
 
 // parseReceipt model javobidan Receipt ni o'qiydi (```json ... ``` o'ramini ham qabul qiladi).
