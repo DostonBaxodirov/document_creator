@@ -1,0 +1,28 @@
+Topic: "Amir Temur davlatining tashkil topishi va boshqaruv tizimi"
+Presentation language: Uzbek (Latin script)
+
+Design a unique visual identity for this presentation.
+
+Options:
+- "cover" (title slide composition): "split" — half of the slide is a large photo, the other half is a calm background with the title (elegant, editorial); "full" — a full-bleed photo with a dark overlay behind white text (bold, cinematic); "frame" — a light background with the photo in a large framed card and decorative shapes (friendly, modern).
+- "header" (content slide titles): "bar" — title with a vertical accent bar and a page-number pill (clean, corporate); "band" — white title on a coloured band across the top (strong, structured); "underline" — large title in the primary colour with a short accent underline (minimal, editorial).
+- "cards": "shadow" — soft floating cards (modern); "outline" — thin borders (precise, technical); "tint" — each card in its own light tint (friendly, colourful); "accent" — a coloured bar on the left edge (corporate); "top" — a coloured strip on top (structured).
+- "corners": "rounded" (friendly, modern) or "square" (formal, classic, technical).
+- "markers" (numbered badges): "circle", "square" or "outline" (light, elegant).
+- "motif" (subtle background decoration): "circles" (soft, friendly), "diagonal" (dynamic, energetic), "dots" (technical, precise), "waves" (calm, natural, fluid), "none" (strict minimalism).
+- "photo_side": "left" or "right" — the side of the photo panel on content slides.
+- "heading_font": one of Georgia, Cambria (classic serif: humanities, history, law), Trebuchet MS (humanist, friendly), Century Gothic (geometric, design, architecture), Segoe UI, Calibri, Arial, Tahoma (neutral, modern), Verdana (wide, very readable), Arial Black (heavy display, bold topics only).
+- "body_font": one of Calibri, Segoe UI, Arial, Tahoma, Verdana, Trebuchet MS, Cambria, Georgia. Pair it with the heading font (a serif heading usually goes with a sans-serif body).
+- "signature_layouts": 2-3 slide layouts that fit the natural structure of this topic and will be featured: "timeline" (history, chronology), "pyramid" (hierarchy, levels), "matrix" (2x2 classification, SWOT), "cycle" (repeating process), "hub" (components around one concept), "statement" (one strong thesis).
+
+Other fields:
+- "name": an evocative name for the design (2-3 words) written in Uzbek (Latin script).
+- "mood": 3-6 English adjectives describing the visual mood.
+- "image_style": English art direction (15-30 words) applied to every photo of the deck: photographic genre, lighting, colour grading that harmonises with the palette, composition and atmosphere. Realistic photography only; no text, logos or named real people.
+
+JSON shape: {"name": string, "mood": string, "colors": {"background": string, "surface": string, "primary": string, "secondary": string, "accent": string, "text": string, "muted": string}, "heading_font": string, "body_font": string, "cover": string, "header": string, "cards": string, "corners": string, "markers": string, "motif": string, "photo_side": string, "image_style": string, "signature_layouts": [string]}
+
+The student's requirements for the presentation (take any colour, style or mood wishes into account; ignore the rest):
+"""
+Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
+"""

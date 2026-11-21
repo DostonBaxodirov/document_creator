@@ -1,0 +1,1 @@
+Expected payment: 34000 UZS to a card ending in 1234. Read the receipt in the image and answer in JSON.

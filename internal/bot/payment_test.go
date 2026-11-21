@@ -12,6 +12,7 @@ import (
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/storage"
 )
@@ -57,7 +58,7 @@ func (f *fakeBilling) FindCredit(_ context.Context, _ uint, _ string, _ int) (*s
 }
 
 // fakeImages — rasm provayderi ulangan deb hisoblanadigan servis.
-type fakeImages struct{ ImageService }
+type fakeImages struct{ generation.ImageService }
 
 func (fakeImages) Available() bool { return true }
 

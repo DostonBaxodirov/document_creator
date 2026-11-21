@@ -14,20 +14,22 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/design"
 	"telegram-presentation-bot/internal/httpx"
 )
 
-// chatServer — OpenAI-mos soxta server: so'rov tanalarini yozib boradi va
-// respond qaytargan status/tanani yuboradi.
+// chatServer — OpenAI-mos soxta server: so'rov tanalarini (manzili va
+// Authorization sarlavhasi bilan) yozib boradi va respond qaytargan
+// status/tanani yuboradi.
 type chatServer struct {
 	*httptest.Server
 	mu     sync.Mutex
 	bodies []map[string]any
 	raws   []string
+	paths  []string
+	auths  []string
 }
 
 const chatOK = `{"choices":[{"message":{"content":"{\"paragraphs\":[\"Matn\"]}"},"finish_reason":"stop"}]}`
@@ -44,6 +46,8 @@ func newChatServer(t *testing.T, respond func(body map[string]any) (int, string)
 		s.mu.Lock()
 		s.bodies = append(s.bodies, body)
 		s.raws = append(s.raws, string(data))
+		s.paths = append(s.paths, r.URL.Path)
+		s.auths = append(s.auths, r.Header.Get("Authorization"))
 		s.mu.Unlock()
 		code, resp := respond(body)
 		w.Header().Set("Content-Type", "application/json")
@@ -183,54 +187,71 @@ func TestJSONObjectProviders(t *testing.T) {
 	}
 }
 
-// TestGeminiResponseJSONSchema — Gemini'ga sxema ResponseJsonSchema orqali
-// (propertyOrdering bilan) yuboriladi, eski ResponseSchema emas.
-func TestGeminiResponseJSONSchema(t *testing.T) {
-	var (
-		mu   sync.Mutex
-		body map[string]any
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		_ = json.Unmarshal(data, &body)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"{\"paragraphs\":[\"Matn\"]}"}]},"finishReason":"STOP"}]}`)
-	}))
-	defer srv.Close()
+// TestGeminiCompatPayload — Gemini OpenAI-mos endpoint orqali ishlaydi:
+// so'rov /chat/completions ga Bearer kalit bilan ketadi, javob formati strict
+// json_schema (AI_OPENAI_STRUCTURED ga bog'liq emas), uzunlik maydoni max_tokens.
+func TestGeminiCompatPayload(t *testing.T) {
+	srv := newChatServer(t, func(map[string]any) (int, string) { return http.StatusOK, chatOK })
 
-	gc, err := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "k", Backend: genai.BackendGeminiAPI, HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL},
-	})
-	if err != nil {
-		t.Fatal(err)
+	temp := float32(0.5)
+	p := newGemini(config.AIConfig{
+		GeminiBaseURL: srv.URL + "/v1beta/openai", GeminiAPIKey: "gk", GeminiModel: "gemini-test",
+		Temperature: &temp, MaxTokens: 1234,
+		OpenAIStructured: false, // Gemini'ga ta'sir qilmaydi
+	}, nil)
+	if p.name() != "gemini/gemini-test" {
+		t.Errorf("name = %q", p.name())
 	}
-	g := &geminiProvider{client: gc, model: "gemini-test"}
-	raw, err := g.complete(context.Background(), task{system: "s", user: "u", schema: deckOutlineSchema(true, design.AllLayouts)})
+	raw, err := p.complete(context.Background(), task{system: "s", user: "u", schema: deckOutlineSchema(true, design.AllLayouts), op: "deck_outline"})
 	if err != nil || !strings.Contains(raw, "paragraphs") {
 		t.Fatalf("javob: %q, %v", raw, err)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	cfg, _ := body["generationConfig"].(map[string]any)
-	if _, ok := cfg["responseSchema"]; ok {
-		t.Error("responseSchema yuborilmasligi kerak")
+	srv.mu.Lock()
+	path, auth := srv.paths[0], srv.auths[0]
+	srv.mu.Unlock()
+	if path != "/v1beta/openai/chat/completions" || auth != "Bearer gk" {
+		t.Errorf("so'rov manzili/kaliti noto'g'ri: path=%q auth=%q", path, auth)
 	}
-	if cfg["responseMimeType"] != "application/json" {
-		t.Errorf("responseMimeType = %v", cfg["responseMimeType"])
+	reqs := srv.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("1 ta so'rov kutilgan edi: %d", len(reqs))
 	}
-	schema, _ := cfg["responseJsonSchema"].(map[string]any)
-	if schema["additionalProperties"] != false {
-		t.Errorf("responseJsonSchema noto'g'ri: %v", schema)
+	body := reqs[0]
+	if body["model"] != "gemini-test" || body["max_tokens"] != float64(1234) || body["temperature"] != float64(0.5) {
+		t.Errorf("model/max_tokens/temperature noto'g'ri: %v %v %v", body["model"], body["max_tokens"], body["temperature"])
 	}
-	order, _ := schema["propertyOrdering"].([]any)
-	if len(order) != 4 || order[0] != "title" || order[3] != "image" {
-		t.Errorf("propertyOrdering = %v", order)
+	if _, ok := body["max_completion_tokens"]; ok {
+		t.Error("max_completion_tokens yuborilmasligi kerak")
 	}
-	slide := schemaItems(schemaProp(schema, "slides"))
-	if o, _ := slide["propertyOrdering"].([]any); len(o) != 5 || o[0] != "n" {
-		t.Errorf("slayd propertyOrdering = %v", slide["propertyOrdering"])
+	format, _ := body["response_format"].(map[string]any)
+	js, _ := format["json_schema"].(map[string]any)
+	if format["type"] != "json_schema" || js["strict"] != true || js["name"] != "deck_outline" {
+		t.Fatalf("response_format = %v", format)
+	}
+	if !strings.Contains(srv.raws[0], `"properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"slides":`) {
+		t.Errorf("sxemadagi xossalar tartibi saqlanmadi:\n%s", srv.raws[0])
+	}
+}
+
+// TestGeminiStructuredFallback — Gemini endpoint'i json_schema'ni rad etsa,
+// provayder json_object ga o'tib, so'rovni darhol qayta yuboradi.
+func TestGeminiStructuredFallback(t *testing.T) {
+	srv := newChatServer(t, func(body map[string]any) (int, string) {
+		if formatType(body) == "json_schema" {
+			return http.StatusBadRequest, `{"error":{"message":"Invalid JSON payload received. Unknown name \"json_schema\" at 'response_format'"}}`
+		}
+		return http.StatusOK, chatOK
+	})
+	p := newGemini(config.AIConfig{GeminiBaseURL: srv.URL, GeminiAPIKey: "gk", GeminiModel: "gemini-test"}, nil)
+	if _, err := p.complete(context.Background(), sectionTask()); err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, b := range srv.requests() {
+		types = append(types, formatType(b))
+	}
+	if got := strings.Join(types, ","); got != "json_schema,json_object" || p.structured.Load() {
+		t.Errorf("so'rovlar formati = %s, structured=%v", got, p.structured.Load())
 	}
 }

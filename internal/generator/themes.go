@@ -187,6 +187,18 @@ func FindTheme(id string) (ThemeInfo, bool) {
 	return ThemeInfo{}, false
 }
 
+// ThemeAccent mavzuning aksent rangini "#RRGGBB" ko'rinishida qaytaradi
+// (noma'lum mavzu uchun — bo'sh satr). scripts/design_preview.py dizaynlar
+// rasmidagi raqamli doiralarni shu rangda chizadi (cmd/preview -accents).
+func ThemeAccent(id string) string {
+	for _, t := range themes {
+		if t.ID == id {
+			return "#" + strings.ToUpper(t.pal.accent)
+		}
+	}
+	return ""
+}
+
 func themeByID(id string) *theme {
 	for _, t := range themes {
 		if t.ID == id {

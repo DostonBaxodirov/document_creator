@@ -1,0 +1,14 @@
+Task: plan the structure of a referat (an academic review essay that summarises and analyses the scholarly literature on the topic).
+Topic: "Raqamli iqtisodiyot"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Return JSON: {"chapters": [{"title": string, "points": [string, ...], "figure": {"caption": string, "prompt": string}}, ...], "references": [string, ...]}
+
+Requirements:
+- "chapters": exactly 3 main chapters. The introduction and the conclusion are written separately — do NOT include them.
+- Chapter titles are specific, 3-10 words, without numbering.
+- "points": 3-5 short phrases per chapter describing what the chapter must cover. Chapters must not overlap.
+- The chapters follow the logic of a referat: theoretical foundations and history of the question → main scientific approaches and viewpoints → current state and practice → problems and prospects.
+- "references": 5-8 entries in a standard bibliographic format (Author. Title. — City: Publisher, Year.). Only real, widely known sources you are confident exist: laws and official documents of the Republic of Uzbekistan, well-known textbooks and monographs, official websites (for example lex.uz). Never invent authors, titles, years or URLs — if unsure, give fewer entries. Each entry is a plain bibliographic record with no comments or notes.
+- "figure": an illustration for the chapter. "caption" — a short figure caption (4-10 words) in the language of the work, without the word "figure" and without numbering. "prompt" — an English description (20-40 words) for an image generator: a realistic photograph or a clean, modern illustration that visualises the main idea of the chapter. The image must contain no text, letters, numbers, charts with labels, logos or named real people.
+

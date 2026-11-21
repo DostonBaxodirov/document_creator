@@ -86,12 +86,45 @@ jobs:
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
+        id: buildx
 
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Dockerfile dagi RUN --mount=type=cache kataloglari (Go modullari va Go
+      # build keshi) har safar yangi runnerda bo'sh bo'ladi — ular actions/cache
+      # orqali saqlanadi. Kalit go.sum ga bog'liq: bog'liqliklar o'zgarmaguncha
+      # oldin kompilyatsiya qilingan paketlar qayta ishlatiladi. Kataloglar
+      # build kontekstiga (.) tushmasligi uchun runner.temp ichida.
+      - name: Go keshini tiklash
+        id: go-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.temp }}/go-cache/pkg-mod
+            ${{ runner.temp }}/go-cache/build
+          key: ${{ runner.os }}-docker-go-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-docker-go-
+
+      # Tiklangan keshni BuildKit cache mount'lariga joylaydi, build'dan keyin
+      # (post-qadamda) yangilangan keshni qaytarib oladi — uni actions/cache
+      # saqlaydi. Kalit to'liq mos kelsa actions/cache baribir saqlamaydi,
+      # shuning uchun qaytarib olish o'tkazib yuboriladi.
+      - name: Keshni BuildKit'ga uzatish
+        uses: reproducible-containers/buildkit-cache-dance@v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          scratch-dir: ${{ runner.temp }}/go-cache/scratch
+          cache-map: |
+            {
+              "${{ runner.temp }}/go-cache/pkg-mod": "/go/pkg/mod",
+              "${{ runner.temp }}/go-cache/build": "/root/.cache/go-build"
+            }
+          skip-extraction: ${{ steps.go-cache.outputs.cache-hit }}
 
       - name: Yig'ish va yuklash
         uses: docker/build-push-action@v6

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"telegram-presentation-bot/internal/ai"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/storage"
 )
@@ -28,7 +29,7 @@ func TestPurchaseText(t *testing.T) {
 	s := sampleSession()
 	paid := &storage.Order{ID: 12, UserID: 3, Kind: storage.KindPhoto, Price: 6000, IsPaid: true}
 	free := &storage.Order{ID: 12, UserID: 3, Kind: storage.KindPhoto, IsFree: true, IsPaid: true}
-	out := &output{fileName: "Sun_iy_intellekt.pptx", summary: "20 ta slayd · 🌊 Okean · 🖼 19/19 rasm (standard, openai/gpt-image-2:low)"}
+	out := &output{Output: generation.Output{FileName: "Sun_iy_intellekt.pptx", Summary: "20 ta slayd · 🌊 Okean · 🖼 19/19 rasm (openai/gpt-image-2:low)"}}
 
 	cases := []struct {
 		name string
@@ -78,7 +79,7 @@ func TestPurchaseTextFitsTelegramLimit(t *testing.T) {
 	s.StudentName, s.University, s.TeacherName = strings.Repeat("A", 128), strings.Repeat("B", 256), strings.Repeat("C", 128)
 	pc := purchase{session: s, order: &storage.Order{ID: 12, Kind: storage.KindPhoto, Price: 15000},
 		payment: &storage.Payment{ID: 99999, Amount: 15000, DetectedAmount: 150000}}
-	out := &output{fileName: strings.Repeat("f", 120) + ".pptx", summary: "50 ta slayd · 🌊 Okean · 🖼 49/49 rasm (premium, gemini/gemini-nano-banana-2.1)"}
+	out := &output{Output: generation.Output{FileName: strings.Repeat("f", 120) + ".pptx", Summary: "50 ta slayd · 🌊 Okean · 🖼 49/49 rasm (openai/gpt-image-2:medium)"}}
 	got := purchaseText(pc, out, time.Hour, time.Now())
 	if n := visibleLen(got); n > 4096 {
 		t.Errorf("xabar %d birlik (chegara 4096)", n)

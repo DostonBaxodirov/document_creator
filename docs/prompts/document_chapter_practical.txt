@@ -1,0 +1,24 @@
+You are writing one part of a practical assignment (amaliy topshiriq).
+Topic: "Python dasturlash tilida saralash algoritmlari"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Plan of the whole work:
+- Introduction
+- Chapter 1: Saralash algoritmlarining nazariy asoslari
+- Chapter 2: Algoritmlarni amalga oshirish
+- Chapter 3: Natijalar tahlili
+- Conclusion
+
+Return JSON: {"paragraphs": [string, ...]}
+
+Rules:
+- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
+- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
+
+Style: applied and hands-on: methods, step-by-step procedures, worked examples, formulas and calculations with clear explanations of every step and of the results. If the topic involves programming, you may add short code listings as separate paragraphs that start with ``` and end with ``` (keep the line breaks).
+
+Write now: Chapter 2 "Algoritmlarni amalga oshirish".
+It must cover: pufakchali saralash; tez saralash.
+Do not write an introduction or a conclusion to the whole work here.
+
+Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.

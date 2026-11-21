@@ -76,6 +76,12 @@ Respond with a single JSON object with exactly these keys:
 - "confidence" (number from 0 to 1): how confident you are in the values above AND that the image is a genuine, unedited receipt.
 - "notes" (string): a short note in Uzbek (Latin script) about anything suspicious: signs of editing, inconsistent fonts, mismatches, unreadable parts. "" if nothing.`
 
+// userPrompt — chek rasmi bilan birga yuboriladigan foydalanuvchi xabari.
+func userPrompt(exp Expectation) string {
+	return fmt.Sprintf("Expected payment: %d UZS to a card ending in %s. Read the receipt in the image and answer in JSON.",
+		exp.Amount, exp.CardLast4)
+}
+
 // Read chek rasmini modelga yuboradi va o'qilgan qiymatlarni qaytaradi.
 // Vaqtinchalik xatolarda (tarmoq, 429, 5xx, buzilgan JSON) bir marta qayta uriniladi.
 func (v *Verifier) Read(ctx context.Context, image []byte, exp Expectation) (*Receipt, error) {
@@ -92,9 +98,7 @@ func (v *Verifier) Read(ctx context.Context, image []byte, exp Expectation) (*Re
 		"messages": []openai.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: []openai.Part{
-				openai.TextPart(fmt.Sprintf(
-					"Expected payment: %d UZS to a card ending in %s. Read the receipt in the image and answer in JSON.",
-					exp.Amount, exp.CardLast4)),
+				openai.TextPart(userPrompt(exp)),
 				openai.ImagePart(mime, image, "high"),
 			}},
 		},

@@ -159,10 +159,10 @@ func purchaseText(pc purchase, out *output, took time.Duration, now time.Time) s
 	b.WriteString(orderDetails(pc.session, maxRequirementsRunes) + "\n\n")
 	b.WriteString(paymentLine(pc) + "\n")
 	if out != nil {
-		fmt.Fprintf(&b, "📦 <b>Natija:</b> %s · %s\n", e(out.fileName), e(out.summary))
+		fmt.Fprintf(&b, "📦 <b>Natija:</b> %s · %s\n", e(out.FileName), e(out.Summary))
 	}
 	fmt.Fprintf(&b, "⏱ <b>Tayyorlandi:</b> %s · 🕒 %s", formatDuration(took),
-		now.In(tz.Tashkent).Format("02.01.2006 15:04"))
+		now.In(tz.Tashkent).Format(dateTimeLayout))
 	return b.String()
 }
 
@@ -230,13 +230,4 @@ func approvedBy(p *storage.Payment) string {
 		return fmt.Sprintf("admin %d tasdiqlagan", *p.ReviewedBy)
 	}
 	return "avtomatik tasdiqlangan"
-}
-
-// formatDuration: "45 s" yoki "1 daq 57 s".
-func formatDuration(d time.Duration) string {
-	sec := int(d.Round(time.Second) / time.Second)
-	if sec < 60 {
-		return fmt.Sprintf("%d s", sec)
-	}
-	return fmt.Sprintf("%d daq %d s", sec/60, sec%60)
 }

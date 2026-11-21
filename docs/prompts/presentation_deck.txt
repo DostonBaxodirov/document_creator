@@ -1,0 +1,30 @@
+Topic: "Sun'iy intellektning ta'limdagi o'rni"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+Number of slides in "slides": exactly 6
+
+Structure:
+1. Slide 1 is the outline: layout "agenda", titled "Reja"; its items name the main sections that follow.
+2. Slides 2-5 are the main sections, covering the topic logically from fundamentals to details; each slide focuses on one idea and they do not overlap. A "definition" slide fits well right after the outline.
+3. Slide 6 is the conclusion: layout "conclusion", titled "Xulosa".
+Choose for each main slide the layout that best fits its content and vary them: use at least 4 different layouts, and never the same layout on more than 2 consecutive slides.
+The chosen slide design is built around these signature layouts: "matrix", "timeline", "hub". Use at least 2 of them, on slides whose content naturally fits them (shape the content accordingly: a four-part classification or SWOT becomes a matrix; a history or chronology becomes a timeline; components or factors around one concept become a hub).
+
+Slide layouts (the "layout" field) — use only these — and the content each one needs:
+- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
+- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
+- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
+- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
+- "process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).
+- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
+- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
+- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
+- "timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.
+- "matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").
+- "hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).
+Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
+Fields a layout does not use are left empty.
+Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.
+
+JSON shape: {"title": string, "subtitle": string, "image": string, "slides": [{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string, "image": string}, ...]}
+The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.
+The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.

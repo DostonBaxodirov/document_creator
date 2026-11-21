@@ -9,7 +9,7 @@
 // Fayllar:
 //   - client.go    — umumiy turlar, qayta urinish mantiqi va taqdimot generatsiyasi;
 //   - document.go  — hujjat generatsiyasi (reja → bo'limlar parallel yoziladi);
-//   - providers.go — Gemini va OpenAI-mos (OpenAI, DeepSeek) API klientlari.
+//   - providers.go — OpenAI-mos API klienti (OpenAI, DeepSeek, Gemini).
 package ai
 
 import (
@@ -98,7 +98,7 @@ func New(ctx context.Context, cfg config.AIConfig, log *zap.Logger) (*Client, er
 	)
 	switch cfg.Provider {
 	case config.ProviderGemini:
-		p, err = newGemini(ctx, cfg)
+		p = newGemini(cfg, log.Named("ai"))
 	case config.ProviderOpenAI:
 		p = newOpenAI(cfg, log.Named("ai"))
 	case config.ProviderDeepSeek:

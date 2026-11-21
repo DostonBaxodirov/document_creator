@@ -120,8 +120,8 @@ func TestStrictSchemas(t *testing.T) {
 	}
 }
 
-// TestSchemaPropertyOrder — xossalar tartibi saqlanadi: "required" da, OpenAI
-// JSON'ida va Gemini'ning propertyOrdering'ida.
+// TestSchemaPropertyOrder — xossalar tartibi saqlanadi: "required" da va
+// provayderlarga (OpenAI, Gemini) yuboriladigan JSON'da.
 func TestSchemaPropertyOrder(t *testing.T) {
 	s := Object(map[string]any{
 		"z":     String(),
@@ -158,30 +158,6 @@ func TestSchemaPropertyOrder(t *testing.T) {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("deck sxemasida %s yo'q:\n%s", want, raw)
 		}
-	}
-
-	g := geminiSchema(deckOutlineSchema(true, design.AllLayouts)).(map[string]any)
-	if got := g["propertyOrdering"]; !slices.Equal(got.([]string), []string{"title", "subtitle", "slides", "image"}) {
-		t.Errorf("Gemini propertyOrdering = %v", got)
-	}
-	if got := slideItem(g)["propertyOrdering"]; !slices.Equal(got.([]string), []string{"n", "title", "layout", "focus", "image"}) {
-		t.Errorf("Gemini slayd propertyOrdering = %v", got)
-	}
-}
-
-// TestGeminiSchemaCopies — Gemini moslamasi asl sxemani o'zgartirmaydi.
-func TestGeminiSchemaCopies(t *testing.T) {
-	s := deckSchema(false, design.AllLayouts)
-	g := geminiSchema(s).(map[string]any)
-	if _, ok := s["propertyOrdering"]; ok {
-		t.Error("asl sxemaga propertyOrdering qo'shilmasligi kerak")
-	}
-	if _, ok := slideItem(s)["propertyOrdering"]; ok {
-		t.Error("asl ichki sxemaga propertyOrdering qo'shilmasligi kerak")
-	}
-	schemaRequired(g)[0] = "o'zgardi"
-	if schemaRequired(s)[0] != "title" {
-		t.Error("nusxaning required ro'yxati asl sxema bilan umumiy bo'lmasligi kerak")
 	}
 }
 

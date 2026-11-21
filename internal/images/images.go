@@ -1,19 +1,14 @@
-// Package images AI rasm modellari yordamida taqdimot slaydlari uchun rasm chizadi.
+// Package images AI rasm modeli yordamida taqdimot slaydlari va Word ishlar
+// uchun rasm chizadi.
 //
-// Rasm modellari ikki tarifga bo'lingan:
-//   - standard (arzon)  — OpenAI gpt-image-2 (low sifat);
-//   - premium (sifatli) — hozircha ham OpenAI; Gemini Nano Banana'ga
-//     IMAGE_PREMIUM_PROVIDER=gemini bilan qaytarish mumkin.
-//
-// Qaysi tarifga qaysi provayder ulanishi konfiguratsiyada belgilanadi
-// (IMAGE_STANDARD_PROVIDER, IMAGE_PREMIUM_PROVIDER). Service so'rovlarni
-// parallel bajaradi, vaqtinchalik xatoda qayta urinadi, kerak bo'lsa boshqa
-// tarif provayderiga o'tadi va natijani JPEG ko'rinishiga keltiradi.
+// Rasm provayderi bitta — OpenAI Images API (gpt-image-*; model va sifat
+// OPENAI_IMAGE_MODEL, OPENAI_IMAGE_QUALITY bilan beriladi). Service
+// so'rovlarni parallel bajaradi, vaqtinchalik xatoda bir marta qayta urinadi
+// va natijani JPEG ko'rinishiga keltiradi.
 //
 // Fayllar:
-//   - images.go — umumiy turlar, Service va tarif marshrutlash;
-//   - openai.go — OpenAI Images API (gpt-image-*) klienti;
-//   - gemini.go — Gemini rasm modeli (Nano Banana) klienti.
+//   - images.go — umumiy turlar va Service;
+//   - openai.go — OpenAI Images API (gpt-image-*) klienti.
 package images
 
 import (
@@ -22,7 +17,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	_ "image/png" // PNG javoblarni o'qish uchun (Gemini PNG qaytaradi)
+	_ "image/png" // PNG javoblarni o'qish uchun (masalan, OpenAI-mos API output_format ni e'tiborsiz qoldirsa)
 	"sync"
 	"time"
 
@@ -32,17 +27,6 @@ import (
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/httpx"
 )
-
-// Tier — rasm sifati tarifi. Qiymatlari bazada (Session.Plan) saqlanadi.
-type Tier string
-
-const (
-	TierStandard Tier = config.TierStandard // arzon
-	TierPremium  Tier = config.TierPremium  // sifatli
-)
-
-// Valid tarif ma'lum qiymatlardan biri ekanini tekshiradi.
-func (t Tier) Valid() bool { return t == TierStandard || t == TierPremium }
 
 // Shape — rasm yo'nalishi.
 type Shape int
@@ -89,135 +73,59 @@ type Generator interface {
 // Service
 // ---------------------------------------------------------------------------
 
-// Service tariflar bo'yicha rasm provayderlarini boshqaradi.
+// Service rasm provayderi bilan ishlaydi: so'rovlarni parallel bajaradi,
+// vaqtinchalik xatoda qayta urinadi va natijani JPEG ga keltiradi.
 // Bir vaqtning o'zida bir nechta goroutine'dan chaqirilishi mumkin.
 type Service struct {
-	tiers    map[Tier]Generator
+	gen      Generator // nil — provayder ulanmagan
 	parallel int
 	timeout  time.Duration
-	fallback bool // asosiy provayder ishlamasa, boshqa tarif provayderiga o'tish
 	log      *zap.Logger
 
 	// retryDelay — vaqtinchalik xatodan keyingi pauza (testlarda qisqartiriladi).
 	retryDelay time.Duration
 }
 
-// NewService berilgan tarif provayderlari bilan Service yaratadi
-// (nil generatorlar e'tiborsiz qoldiriladi).
-func NewService(tiers map[Tier]Generator, parallel int, timeout time.Duration, fallback bool, log *zap.Logger) *Service {
-	t := make(map[Tier]Generator, len(tiers))
-	for tier, g := range tiers {
-		if g != nil {
-			t[tier] = g
-		}
-	}
+// NewService berilgan provayder bilan Service yaratadi (gen nil bo'lsa —
+// provayder ulanmagan, Available() false).
+func NewService(gen Generator, parallel int, timeout time.Duration, log *zap.Logger) *Service {
 	return &Service{
-		tiers:      t,
+		gen:        gen,
 		parallel:   max(1, parallel),
 		timeout:    timeout,
-		fallback:   fallback,
 		log:        log.Named("images"),
 		retryDelay: 2 * time.Second,
 	}
 }
 
-// New konfiguratsiyaga ko'ra provayderlarni yaratadi. Kaliti berilmagan
-// provayder ulanmaydi; birorta ham provayder ulanmasa, Available() false.
-func New(ctx context.Context, ai config.AIConfig, cfg config.ImagesConfig, log *zap.Logger) (*Service, error) {
-	built := make(map[string]Generator)
-	build := func(provider string) (Generator, error) {
-		if g, ok := built[provider]; ok {
-			return g, nil
-		}
-		var g Generator
-		switch provider {
-		case config.ImageProviderOpenAI:
-			if ai.OpenAIAPIKey == "" {
-				log.Warn("OPENAI_API_KEY berilmagan — OpenAI rasm provayderi ulanmadi")
-				return nil, nil
-			}
-			g = NewOpenAI(ai.OpenAIBaseURL, ai.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIQuality, cfg.Timeout)
-		case config.ImageProviderGemini:
-			if ai.GeminiAPIKey == "" {
-				log.Warn("GEMINI_API_KEY berilmagan — Gemini rasm provayderi ulanmadi")
-				return nil, nil
-			}
-			gm, err := NewGemini(ctx, ai.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiSize)
-			if err != nil {
-				return nil, err
-			}
-			g = gm
-		default: // config.ImageProviderNone
-			return nil, nil
-		}
-		built[provider] = g
-		return g, nil
+// New konfiguratsiyaga ko'ra OpenAI rasm provayderini yaratadi. OPENAI_API_KEY
+// berilmagan bo'lsa, provayder ulanmaydi va Available() false.
+func New(ai config.AIConfig, cfg config.ImagesConfig, log *zap.Logger) (*Service, error) {
+	var gen Generator
+	if ai.OpenAIAPIKey == "" {
+		log.Warn("OPENAI_API_KEY berilmagan — OpenAI rasm provayderi ulanmadi")
+	} else {
+		gen = NewOpenAI(ai.OpenAIBaseURL, ai.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIQuality, cfg.Timeout)
 	}
 
-	tiers := make(map[Tier]Generator, 2)
-	for tier, provider := range map[Tier]string{TierStandard: cfg.StandardProvider, TierPremium: cfg.PremiumProvider} {
-		g, err := build(provider)
-		if err != nil {
-			return nil, fmt.Errorf("images: %w", err)
-		}
-		if g != nil {
-			tiers[tier] = g
-		}
+	s := NewService(gen, cfg.Parallel, cfg.Timeout, log)
+	provider := "-"
+	if gen != nil {
+		provider = gen.Name()
 	}
-
-	s := NewService(tiers, cfg.Parallel, cfg.Timeout, cfg.Fallback, log)
-	log.Info("image service initialised",
-		zap.String("standard", s.Provider(TierStandard)),
-		zap.String("premium", s.Provider(TierPremium)),
-		zap.String("default_tier", cfg.DefaultTier),
-		zap.Bool("fallback", cfg.Fallback))
+	log.Info("image service initialised", zap.String("provider", provider))
 	return s, nil
 }
 
-// Available kamida bitta rasm provayderi ulanganini bildiradi.
-func (s *Service) Available() bool { return s != nil && len(s.tiers) > 0 }
-
-// Provider tarif uchun asosiy provayder nomini qaytaradi ("-" — ulanmagan).
-func (s *Service) Provider(tier Tier) string {
-	if c := s.chain(tier); len(c) > 0 {
-		return c[0].Name()
-	}
-	return "-"
-}
-
-// chain tarif uchun provayderlar ketma-ketligi: avval o'z provayderi
-// (bo'lmasa — boshqa tarifniki), so'ng zaxira sifatida boshqa tarif provayderi.
-func (s *Service) chain(tier Tier) []Generator {
-	if s == nil {
-		return nil
-	}
-	var out []Generator
-	add := func(g Generator) {
-		for _, x := range out {
-			if x == g {
-				return
-			}
-		}
-		out = append(out, g)
-	}
-	if g, ok := s.tiers[tier]; ok {
-		add(g)
-	}
-	for _, t := range []Tier{TierStandard, TierPremium} {
-		if g, ok := s.tiers[t]; ok {
-			add(g)
-		}
-	}
-	return out
-}
+// Available rasm provayderi ulanganini bildiradi.
+func (s *Service) Available() bool { return s != nil && s.gen != nil }
 
 // Generate so'rovlarni ko'pi bilan parallel tadan bajaradi. Natijalar
 // so'rovlar tartibida qaytariladi; chizilmagan rasm o'rnida Data nil bo'ladi.
 // onDone (ixtiyoriy) har bir rasm tugaganda chaqiriladi.
-func (s *Service) Generate(ctx context.Context, tier Tier, reqs []Request, onDone func(done, total int)) []Result {
+func (s *Service) Generate(ctx context.Context, reqs []Request, onDone func(done, total int)) []Result {
 	out := make([]Result, len(reqs))
-	chain := s.chain(tier)
-	if len(chain) == 0 || len(reqs) == 0 {
+	if !s.Available() || len(reqs) == 0 {
 		return out
 	}
 
@@ -245,7 +153,7 @@ func (s *Service) Generate(ctx context.Context, tier Tier, reqs []Request, onDon
 				return nil
 			}
 
-			out[i] = s.one(ctx, chain, r)
+			out[i] = s.one(ctx, r)
 			if onDone != nil {
 				mu.Lock()
 				done++
@@ -260,41 +168,34 @@ func (s *Service) Generate(ctx context.Context, tier Tier, reqs []Request, onDon
 }
 
 // one bitta rasmni chizadi: vaqtinchalik xatoda bir marta qayta urinadi,
-// doimiy xatoda (yoki ikkinchi muvaffaqiyatsizlikda) keyingi provayderga o'tadi.
-func (s *Service) one(ctx context.Context, chain []Generator, r Request) Result {
-	for i, g := range chain {
-		if i > 0 && !s.fallback {
-			break
+// doimiy xatoda qayta urinmaydi (chizilmagan rasm — Data nil).
+func (s *Service) one(ctx context.Context, r Request) Result {
+	g := s.gen
+	log := s.log.With(zap.String("provider", g.Name()), zap.String("shape", r.Shape.String()))
+	for attempt := range 2 {
+		if attempt > 0 && !httpx.Sleep(ctx, httpx.Backoff(attempt, s.retryDelay, s.retryDelay)) {
+			return Result{}
 		}
-		log := s.log.With(zap.String("provider", g.Name()), zap.String("shape", r.Shape.String()))
-		for attempt := range 2 {
-			if attempt > 0 && !httpx.Sleep(ctx, httpx.Backoff(attempt, s.retryDelay, s.retryDelay)) {
-				return Result{}
+		started := time.Now()
+		data, err := s.call(ctx, g, r)
+		if err == nil {
+			var jpg []byte
+			if jpg, err = toJPEG(data); err == nil {
+				log.Info("image generated",
+					zap.Int("attempt", attempt+1),
+					zap.Int("bytes", len(jpg)),
+					zap.Duration("took", time.Since(started)))
+				return Result{Data: jpg, Provider: g.Name()}
 			}
-			started := time.Now()
-			data, err := s.call(ctx, g, r)
-			if err == nil {
-				var jpg []byte
-				if jpg, err = toJPEG(data); err == nil {
-					log.Info("image generated",
-						zap.Int("attempt", attempt+1),
-						zap.Int("bytes", len(jpg)),
-						zap.Duration("took", time.Since(started)))
-					return Result{Data: jpg, Provider: g.Name()}
-				}
-				err = httpx.Permanent(fmt.Errorf("rasm formati noto'g'ri: %w", err))
-			}
-			log.Warn("image generation failed",
-				zap.Int("attempt", attempt+1),
-				zap.Duration("took", time.Since(started)),
-				zap.Bool("permanent", httpx.IsPermanent(err)),
-				zap.Error(err))
-			if ctx.Err() != nil {
-				return Result{}
-			}
-			if httpx.IsPermanent(err) {
-				break
-			}
+			err = httpx.Permanent(fmt.Errorf("rasm formati noto'g'ri: %w", err))
+		}
+		log.Warn("image generation failed",
+			zap.Int("attempt", attempt+1),
+			zap.Duration("took", time.Since(started)),
+			zap.Bool("permanent", httpx.IsPermanent(err)),
+			zap.Error(err))
+		if ctx.Err() != nil || httpx.IsPermanent(err) {
+			return Result{}
 		}
 	}
 	return Result{}

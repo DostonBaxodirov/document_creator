@@ -13,6 +13,8 @@ import (
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
+
+	"telegram-presentation-bot/internal/generation"
 )
 
 // progressInterval — jarayon xabari ko'pi bilan shu oraliqda bir marta
@@ -20,8 +22,9 @@ import (
 const progressInterval = 2 * time.Second
 
 // progressBoard butun ish davomidagi jarayon holatini bitta xabarda
-// ko'rsatadi: bir vaqtda bir nechta bosqich (masalan, matn yozish va rasm
-// chizish) faol bo'lishi mumkin, har biri xabarda alohida qator bo'lib turadi.
+// ko'rsatadi (generation.Progress ning Telegram'dagi ko'rinishi): bir vaqtda
+// bir nechta bosqich (masalan, matn yozish va rasm chizish) faol bo'lishi
+// mumkin, har biri xabarda alohida qator bo'lib turadi.
 //
 // Xabar birinchi holatda yuboriladi, keyin tahrirlanadi, Close chaqirilganda
 // (yoki ish konteksti bekor qilinganda) esa o'chiriladi. Telegram'ga faqat
@@ -45,9 +48,11 @@ type progressBoard struct {
 	finished  chan struct{}
 }
 
+var _ generation.Progress = (*progressBoard)(nil)
+
 // progressLine — bitta bosqich qatori.
 type progressLine struct {
-	stage  progressStage
+	stage  generation.Stage
 	value  atomic.Pointer[[2]int] // {done, total}; nil — hali holat kelmagan
 	closed atomic.Bool
 }
@@ -74,7 +79,7 @@ func newProgressBoard(ctx context.Context, bot *tele.Bot, chat *tele.Chat, log *
 // report AI va rasm goroutine'laridan chaqiriladi: u hech qachon bloklanmaydi
 // (faqat eng so'nggi holat saqlanadi) va bir vaqtda ko'p goroutine'dan
 // chaqirilishi mumkin. done bir necha marta chaqirilsa ham xavfsiz.
-func (b *progressBoard) Stage(st progressStage) (report func(done, total int), done func()) {
+func (b *progressBoard) Stage(st generation.Stage) (report func(done, total int), done func()) {
 	l := &progressLine{stage: st}
 	b.mu.Lock()
 	b.lines = append(b.lines, l)
@@ -205,24 +210,8 @@ func (b *progressBoard) run(ctx context.Context) {
 	}
 }
 
-// progressStage — jarayon xabaridagi belgi va bosqichlar nomlari.
-type progressStage struct {
-	icon    string
-	first   string // done == 0
-	writing string // 0 < done < total
-	last    string // done == total
-}
-
-// textStage — AI matn yozish bosqichlari (writing — "Bo'limlar yozilmoqda..." kabi).
-func textStage(writing string) progressStage {
-	return progressStage{icon: "✍️", first: "Reja tuzilmoqda...", writing: writing, last: "Fayl tayyorlanmoqda..."}
-}
-
-// imageStage — rasmli dizaynda rasmlarni chizish bosqichi.
-var imageStage = progressStage{icon: "🖼", first: "Rasmlar chizilmoqda...", writing: "Rasmlar chizilmoqda...", last: "Slaydlar tayyorlanmoqda..."}
-
 // progressText bitta bosqich qatori: "✍️ Bo'limlar yozilmoqda... ▰▰▰▱▱▱▱▱▱▱ 3/8".
-func progressText(done, total int, st progressStage) string {
+func progressText(done, total int, st generation.Stage) string {
 	total = max(total, 1)
 	done = min(max(done, 0), total)
 
@@ -230,12 +219,12 @@ func progressText(done, total int, st progressStage) string {
 	filled := done * width / total
 	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", width-filled)
 
-	stage := st.writing
+	stage := st.Writing
 	switch {
 	case done == 0:
-		stage = st.first
+		stage = st.First
 	case done == total:
-		stage = st.last
+		stage = st.Last
 	}
-	return fmt.Sprintf("%s <b>%s</b> %s %d/%d", st.icon, stage, bar, done, total)
+	return fmt.Sprintf("%s <b>%s</b> %s %d/%d", st.Icon, stage, bar, done, total)
 }

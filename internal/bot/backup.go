@@ -19,11 +19,6 @@ import (
 	"telegram-presentation-bot/internal/tz"
 )
 
-// Backuper — bazaning zaxira nusxasini oluvchi (internal/backup.Dumper).
-type Backuper interface {
-	Dump(ctx context.Context, now time.Time) (*backup.File, error)
-}
-
 // BackupOptions — kunlik nusxa sozlamalari.
 type BackupOptions struct {
 	Dumper Backuper // nil — kunlik nusxa va /backup o'chirilgan
@@ -39,9 +34,6 @@ const (
 
 	titleDailyBackup  = "Kunlik backup"
 	titleManualBackup = "Backup"
-	msgBackupOff      = "💾 Backup o'chirilgan (BACKUP_ENABLED=false yoki serverda pg_dump topilmadi)."
-	msgBackupBusy     = "⏳ Backup allaqachon tayyorlanmoqda, biroz kuting."
-	msgBackupWait     = "⏳ Backup tayyorlanmoqda…"
 )
 
 // nextBackup now dan keyingi hour:minute vaqti (Toshkent). Aynan shu daqiqada
@@ -184,17 +176,5 @@ func backupCaption(title string, f *backup.File, now time.Time) string {
 	return fmt.Sprintf("💾 <b>%s</b> — %s\n📦 %s\n\n"+
 		"<i>Bazaning to'liq nusxasi (foydalanuvchilar, buyurtmalar, to'lovlar). "+
 		"Maxfiy ma'lumot — hech kimga yubormang. Tiklash: docs/DEPLOY.md.</i>",
-		title, now.In(tz.Tashkent).Format("02.01.2006 15:04"), formatBytes(f.Size))
-}
-
-// formatBytes: 512 B, 3.4 KB, 12.5 MB.
-func formatBytes(n int64) string {
-	switch {
-	case n < 1024:
-		return fmt.Sprintf("%d B", n)
-	case n < 1024*1024:
-		return fmt.Sprintf("%.1f KB", float64(n)/1024)
-	default:
-		return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
-	}
+		title, now.In(tz.Tashkent).Format(dateTimeLayout), formatBytes(f.Size))
 }

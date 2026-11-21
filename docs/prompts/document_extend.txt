@@ -1,0 +1,34 @@
+You are expanding one part of a independent study work (mustaqil ish).
+Topic: "Raqamli iqtisodiyot"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Plan of the whole work:
+- Introduction
+- Chapter 1: Raqamli iqtisodiyot tushunchasi
+- Chapter 2: O'zbekistonda raqamlashtirish
+- Chapter 3: Muammolar va istiqbollar
+- Conclusion
+
+Part to expand: Chapter 2 "O'zbekistonda raqamlashtirish".
+It must cover: davlat dasturlari; elektron xizmatlar; raqamli to'lovlar.
+
+Current text of this part:
+<<<
+(bo'limning hozirgi paragraflari)
+>>>
+
+This part is too short. Write about 260 more words as 2 new paragraph(s) of 4-7 sentences each that continue the text naturally after its last paragraph: deepen the analysis, add explanations, examples and the aspects of this part that are not covered yet.
+Return JSON with the new paragraphs only: {"paragraphs": [string, ...]}
+
+Rules:
+- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
+- Do not repeat, paraphrase or summarise what is already written, and do not start the part again.
+- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
+- Do not write an introduction or a conclusion to the whole work here.
+
+Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
+
+Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
+"""
+O'zbekiston misolida
+"""

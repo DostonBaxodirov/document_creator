@@ -43,6 +43,14 @@ services:
         condition: service_healthy
     # SHUTDOWN_TIMEOUT (60s) + zaxira: ishlayotgan generatsiyalar yakunlanishiga ulgursin.
     stop_grace_period: 90s
+    # Xotira chegarasi: oshib ketsa konteyner OOM bilan to'xtatiladi va qayta
+    # ishga tushadi. Haqiqiy sarfni `docker stats presentation-bot` bilan
+    # (ayniqsa bir nechta katta rasmli taqdimot parallel yaratilayotganda)
+    # o'lchab, kerak bo'lsa moslang.
+    deploy:
+      resources:
+        limits:
+          memory: 768M
     logging:
       driver: json-file
       options:

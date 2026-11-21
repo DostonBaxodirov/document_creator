@@ -1,0 +1,28 @@
+You are writing one part of a independent study work (mustaqil ish).
+Topic: "Raqamli iqtisodiyot"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Plan of the whole work:
+- Introduction
+- Chapter 1: Raqamli iqtisodiyot tushunchasi
+- Chapter 2: O'zbekistonda raqamlashtirish
+- Chapter 3: Muammolar va istiqbollar
+- Conclusion
+
+Return JSON: {"paragraphs": [string, ...]}
+
+Rules:
+- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
+- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
+
+Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
+
+Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
+"""
+O'zbekiston misolida
+"""
+
+Write now: the Introduction.
+It must cover: the relevance of the topic, the aim and the tasks of the work, the object and the subject of the study, and a short overview of the chapters.
+
+Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.

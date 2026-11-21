@@ -2,75 +2,57 @@ package bot
 
 // custom.go — AI maxsus dizayn: foydalanuvchi tayyor dizaynlar o'rniga
 // "✨ Maxsus dizayn" ni tanlaydi va tarifni (Standart, Optimal, Premium)
-// belgilaydi. Generatsiyada AI avval mavzuga mos dizayn konsepsiyasini
-// (ranglar, shriftlar, kompozitsiya, rasmlar uslubi) yaratadi, so'ng tarif
-// modeli slaydlarni yozadi va tarif sifatida AI rasmlar chiziladi.
+// belgilaydi. Generatsiyada (internal/generation) AI avval mavzuga mos dizayn
+// konsepsiyasini (ranglar, shriftlar, kompozitsiya, rasmlar uslubi) yaratadi,
+// so'ng tarif modeli slaydlarni yozadi va tarif sifatida AI rasmlar chiziladi.
 //
-// Har bir tarif — o'z matn modeli (ContentGenerator), rasm xizmati
-// (ImageService, kvadrat rasmlar) va bitta slayd narxi.
+// Har bir tarif — o'z matn modeli, rasm xizmati (kvadrat rasmlar) va narxi
+// (bitta slayd va bitta sahifa narxi — shu paketda).
 
 import (
-	"context"
 	"fmt"
 	"html"
-	"math"
-	"runtime/debug"
 	"strings"
-	"time"
 
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	tele "gopkg.in/telebot.v3"
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
-	"telegram-presentation-bot/internal/generator"
-	"telegram-presentation-bot/internal/images"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/textutil"
 )
 
-// CustomTariff — AI maxsus dizayn tarifi.
+// CustomTariff — AI maxsus dizayn tarifi: narxlari va generatsiya sozlamalari
+// (matn modeli, rasm xizmati, rasmlar foizi).
 type CustomTariff struct {
 	PriceSlide int // bitta slayd narxi, so'm
 	PricePage  int // Word ish (mustaqil ish, referat): bitta sahifa narxi, so'm
-	// ImagePercent — rasmlar soni: taqdimotda slaydlar sonining (titul rasmi
-	// bilan), Word ishda boblar sonining necha foizi.
-	ImagePercent int
-	// AI — dizayn konsepsiyasi va slaydlarni yozadigan model.
-	AI ContentGenerator
-	// Images — rasm xizmati (images.TierStandard orqali chaqiriladi). nil
-	// bo'lsa — rasmlarsiz (dizayn rasm o'rnida bezakli fon bilan chiqadi).
-	Images ImageService
-	// Admin xabari va loglar uchun.
-	TextModel, ImageModel, ImageQuality string
+	generation.Tariff
 }
 
-// tariffView — tarifning foydalanuvchiga ko'rinishi.
+// tariffView — tarifning foydalanuvchiga ko'rinishi (belgi va nom —
+// generation'dagi yagona manbadan).
 type tariffView struct {
 	emoji, name, about string
 }
 
-var tariffViews = map[string]tariffView{
-	config.TariffStandard: {"🥉", "Standart", "tez va tejamkor — aniq tuzilma, toza dizayn, mavzuga mos rasmlar"},
-	config.TariffOptimal:  {"🥈", "Optimal", "narx va sifat muvozanati — boyroq va chuqurroq matn, yuqori sifatli rasmlar"},
-	config.TariffPremium:  {"🥇", "Premium", "maksimal sifat — eng chuqur va puxta matn, HD rasmlar"},
+// newTariffView tarif ko'rinishini tavsifi bilan yaratadi.
+func newTariffView(tariff, about string) tariffView {
+	emoji, name := generation.TariffLabel(tariff)
+	return tariffView{emoji: emoji, name: name, about: about}
 }
 
-// tariffName — "🥇 Premium" (noma'lum tarif — o'zi).
-func tariffName(t string) string {
-	if v, ok := tariffViews[t]; ok {
-		return v.emoji + " " + v.name
-	}
-	return t
+var tariffViews = map[string]tariffView{
+	config.TariffStandard: newTariffView(config.TariffStandard, "tez va tejamkor — aniq tuzilma, toza dizayn, mavzuga mos rasmlar"),
+	config.TariffOptimal:  newTariffView(config.TariffOptimal, "narx va sifat muvozanati — boyroq va chuqurroq matn, yuqori sifatli rasmlar"),
+	config.TariffPremium:  newTariffView(config.TariffPremium, "maksimal sifat — eng chuqur va puxta matn, HD rasmlar"),
 }
 
 const (
-	cbTariff       = "tariff"
-	tariffBack     = "back" // tarif tugmasi: tayyor dizaynlar ro'yxatiga qaytish
-	customLabel    = "✨ Maxsus dizayn"
-	msgTariffHint  = "👇 Iltimos, quyidagi tugmalardan biri bilan tarifni tanlang."
-	msgNoCustomCfg = "Maxsus dizayn hozircha mavjud emas. Tayyor dizaynlardan birini tanlang."
+	cbTariff    = "tariff"
+	tariffBack  = "back" // tarif tugmasi: tayyor dizaynlar ro'yxatiga qaytish
+	customLabel = "✨ Maxsus dizayn"
 )
 
 // customOn AI maxsus dizayn yoqilganini bildiradi.
@@ -96,61 +78,12 @@ func (h *Handler) customTariffs() []string {
 // isCustom buyurtma maxsus dizaynda (taqdimot yoki mustaqil ish/referat)
 // ekanini bildiradi.
 func isCustom(s *storage.Session) bool {
-	w := ai.WorkType(s.WorkType)
-	return s.Design == generator.ThemeCustom && (!w.IsDocument() || w.HasDesigns())
+	return generation.IsCustom(ai.WorkType(s.WorkType), s.Design)
 }
 
-// customDocImageCount Word ishdagi rasmlar soni: taxminiy boblar sonining
-// percent foizi, kamida 1 (percent 0 bo'lsa — rasmsiz).
-func customDocImageCount(contentWords, percent int) int {
-	if percent <= 0 {
-		return 0
-	}
-	chapters := ai.PlanChapters(contentWords)
-	return min(chapters, max(1, int(math.Round(float64(chapters)*float64(percent)/100))))
-}
-
-// docPlan maxsus dizayndagi Word ish uchun matn hajmi (so'zlarda) va rasmlar
-// soni. Rasmlar matn o'rnini egallaydi, shuning uchun matn qisqartiriladi;
-// qisqargan matnda boblar kamroq bo'lishi mumkin — rasmlar soni boblar
-// sonidan oshmaydi (tarif matnida ko'rsatilgan son hujjatdagiga teng bo'lsin).
-func docPlan(contentWords, figureWords, percent int) (words, figures int) {
-	figures = customDocImageCount(contentWords, percent)
-	if figures == 0 {
-		return contentWords, 0
-	}
-	shrink := func(n int) int { return max(contentWords/2, contentWords-n*figureWords) }
-	figures = min(figures, ai.PlanChapters(shrink(figures)))
-	return shrink(figures), figures
-}
-
-// docImagesOn maxsus dizayndagi Word ishga rasm chizish mumkinligini bildiradi.
-func (h *Handler) docImagesOn(t CustomTariff) bool {
-	return t.Images != nil && t.Images.Available() && h.builders.Papers != nil
-}
-
-// customDocImages Word ish uchun rasmlar soni (rasm xizmati ulanmagan bo'lsa — 0).
-func (h *Handler) customDocImages(s *storage.Session, t CustomTariff) int {
-	if !h.docImagesOn(t) {
-		return 0
-	}
-	b := h.builders.Papers
-	_, n := docPlan(b.ContentWords(s.Volume), b.FigureWords(), t.ImagePercent)
-	return n
-}
-
-// customPrice maxsus dizayndagi buyurtma narxi (tarif tugmalari va matni uchun).
-func (h *Handler) customPrice(s *storage.Session, t CustomTariff) int {
-	if ai.WorkType(s.WorkType).IsDocument() {
-		return t.PricePage * max(s.Volume, 1)
-	}
-	return t.PriceSlide * max(s.Volume, 1)
-}
-
-// customImageCount taqdimotdagi AI rasmlar soni (titul rasmi bilan): slaydlar
-// sonining percent foizi, kamida 1 (titul).
-func customImageCount(slides, percent int) int {
-	return max(1, int(math.Round(float64(slides)*float64(percent)/100)))
+// customPrice maxsus dizayndagi buyurtma narxi (tarif tugmalari uchun; hisob — priceFor).
+func (h *Handler) customPrice(s *storage.Session, tariff string) int {
+	return h.priceFor(s.WorkType, s.Volume, storage.AIKind(tariff)).Total
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +93,7 @@ func customImageCount(slides, percent int) int {
 // tariffPrompt tarif tanlash xabari: har bir tarif narxi (slaydlar soni
 // bo'yicha), tavsifi va rasmlar soni.
 func (h *Handler) tariffPrompt(s *storage.Session) string {
-	doc := ai.WorkType(s.WorkType).IsDocument()
+	doc := isDoc(s)
 	var b strings.Builder
 	b.WriteString("✨ <b>Maxsus dizayn</b>\n\n")
 	topic := html.EscapeString(textutil.TruncateHard(s.Topic, 120))
@@ -176,20 +109,15 @@ func (h *Handler) tariffPrompt(s *storage.Session) string {
 		fmt.Fprintf(&b, "<b>Tarifni tanlang</b> (%d ta slayd):\n", s.Volume)
 	}
 	for _, name := range h.customTariffs() {
-		t, _ := h.customTariff(name)
 		v := tariffViews[name]
 		fmt.Fprintf(&b, "\n%s <b>%s</b>", v.emoji, v.name)
 		if h.paymentsOn() {
-			rate, unit := t.PriceSlide, "slayd"
-			if doc {
-				rate, unit = t.PricePage, "sahifa"
-			}
-			fmt.Fprintf(&b, " — %s/%s → <b>%s</b>", formatSum(rate), unit, formatSum(h.customPrice(s, t)))
+			p := h.priceFor(s.WorkType, s.Volume, storage.AIKind(name))
+			fmt.Fprintf(&b, " — %s/%s → <b>%s</b>", formatSum(p.Rate), p.Unit, formatSum(p.Total))
 		}
-		images := customImageCount(s.Volume, t.ImagePercent)
-		if doc {
-			images = h.customDocImages(s, t)
-		}
+		// Rasmlar soni generatsiyadagi bilan bir xil hisoblanadi (Word ishda —
+		// rasm xizmati ulanmagan bo'lsa 0).
+		images := h.gen.CustomImages(ai.WorkType(s.WorkType), s.Volume, name)
 		if images > 0 {
 			fmt.Fprintf(&b, "\n     %s; %d ta rasm\n", v.about, images)
 		} else {
@@ -208,10 +136,9 @@ func (h *Handler) tariffKeyboard(s *storage.Session) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	var rows []tele.Row
 	for _, name := range h.customTariffs() {
-		t, _ := h.customTariff(name)
-		label := tariffName(name)
+		label := generation.TariffName(name)
 		if h.paymentsOn() {
-			label += " — " + formatSum(h.customPrice(s, t))
+			label += " — " + formatSum(h.customPrice(s, name))
 		}
 		rows = append(rows, m.Row(m.Data(label, cbTariff, name)))
 	}
@@ -261,326 +188,6 @@ func (h *Handler) onTariff(c tele.Context) error {
 	}
 
 	_ = c.Respond(&tele.CallbackResponse{Text: tariffViews[name].name})
-	h.edit(c, fmt.Sprintf("🎨 Dizayn: <b>%s</b> · tarif: <b>%s</b>", customLabel, tariffName(name)))
+	h.edit(c, fmt.Sprintf("🎨 Dizayn: <b>%s</b> · tarif: <b>%s</b>", customLabel, generation.TariffName(name)))
 	return h.ask(c, s, StateStudent)
-}
-
-// ---------------------------------------------------------------------------
-// Generatsiya
-// ---------------------------------------------------------------------------
-
-// designStage — dizayn konsepsiyasini yaratish bosqichi.
-var designStage = progressStage{icon: "🎨", first: "Mavzuga mos dizayn yaratilmoqda...", writing: "Dizayn yaratilmoqda...", last: "Dizayn tayyor"}
-
-// customDesign AI dan dizayn konsepsiyasini oladi va uni generator
-// spetsifikatsiyasiga aylantiradi.
-func (h *Handler) customDesign(ctx context.Context, progress *progressBoard, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.Design, *generator.CustomSpec, error) {
-	report, stop := progress.Stage(designStage)
-	report(0, 1)
-	started := time.Now()
-	d, err := t.AI.GenerateDesign(ctx, ai.DesignRequest{Topic: s.Topic, Language: language, Requirements: s.Requirements})
-	stop()
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: dizayn: %w", errAI, err)
-	}
-	log.Info("custom design generated",
-		zap.String("name", d.Name),
-		zap.String("mood", d.Mood),
-		zap.String("cover", d.Cover),
-		zap.String("header", d.Header),
-		zap.String("background", d.Colors.Background),
-		zap.String("primary", d.Colors.Primary),
-		zap.Duration("took", time.Since(started)))
-	spec := d.Spec()
-	return d, &spec, nil
-}
-
-// picturePlan — taqdimotga qaysi rasmlar qanday chizilishi.
-type picturePlan struct {
-	design generator.Design
-	svc    ImageService
-	tier   images.Tier
-	// limit > 0 — rasmlar soni chegarasi (titul rasmi bilan; AI maxsus
-	// dizayn): rasmlar slaydlarga teng taqsimlanadi va kvadrat chiziladi.
-	// 0 — rasm sig'adigan barcha slaydlarga (tayyor rasmli dizaynlar).
-	limit int
-}
-
-// coverShape titul rasmi shakli: AI maxsus dizaynda — kvadrat, aks holda yotiq.
-func (p picturePlan) coverShape() images.Shape {
-	if p.limit > 0 {
-		return images.Square
-	}
-	return images.Landscape
-}
-
-// customPhotoTargets AI maxsus dizaynda rasm qo'yiladigan slaydlar:
-// rasm tavsifi bor slaydlardan n tasi (dizayn tanlaydi — yon panelga
-// sig'adiganlari ustuvor, teng oraliqda).
-func customPhotoTargets(design generator.Design, pres *ai.Presentation, deck *generator.Deck, n int) []int {
-	var (
-		cand  []generator.Slide
-		index []int
-	)
-	for i, sl := range pres.Slides {
-		if sl.Image != "" && i < len(deck.Slides) {
-			cand = append(cand, deck.Slides[i])
-			index = append(index, i)
-		}
-	}
-	picked := design.PhotoSlides(cand, n)
-	out := make([]int, len(picked))
-	for k, i := range picked {
-		out[k] = index[i]
-	}
-	return out
-}
-
-// customCaption fayl izohidagi dizayn nomi: "✨ Chuqur okean (maxsus dizayn, 🥇 Premium)".
-func customCaption(d *ai.Design, tariff string) string {
-	name := ""
-	if d != nil {
-		name = d.Name
-	}
-	return customCaptionName(name, tariff)
-}
-
-// docCustomCaption — Word ishdagi maxsus dizayn nomi (customCaption kabi).
-func docCustomCaption(d *ai.DocDesign, tariff string) string {
-	name := ""
-	if d != nil {
-		name = d.Name
-	}
-	return customCaptionName(name, tariff)
-}
-
-func customCaptionName(name, tariff string) string {
-	if name != "" {
-		return fmt.Sprintf("✨ %s (maxsus dizayn, %s)", name, tariffName(tariff))
-	}
-	return fmt.Sprintf("✨ Maxsus dizayn (%s)", tariffName(tariff))
-}
-
-// customDocDesign AI dan Word dizayni konsepsiyasini oladi va uni generator
-// spetsifikatsiyasiga aylantiradi.
-func (h *Handler) customDocDesign(ctx context.Context, progress *progressBoard, log *zap.Logger, s *storage.Session, t CustomTariff, language string) (*ai.DocDesign, *generator.DocSpec, error) {
-	report, stop := progress.Stage(designStage)
-	report(0, 1)
-	started := time.Now()
-	d, err := t.AI.GenerateDocDesign(ctx, ai.DesignRequest{Topic: s.Topic, Language: language, Requirements: s.Requirements})
-	stop()
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: dizayn: %w", errAI, err)
-	}
-	log.Info("custom doc design generated",
-		zap.String("name", d.Name),
-		zap.String("title", d.Title),
-		zap.String("heading", d.Heading),
-		zap.String("border", d.Border),
-		zap.String("primary", d.Primary),
-		zap.Duration("took", time.Since(started)))
-	spec := d.Spec()
-	return d, &spec, nil
-}
-
-// customPaper — maxsus dizayndagi Word ish uchun AI natijalari.
-type customPaper struct {
-	doc    *ai.Document
-	design *ai.DocDesign
-	spec   *generator.DocSpec
-	// figures — matn bilan parallel chizilgan rasmlar; nil — chizish
-	// boshlanmagan (rasmlar so'ralmagan yoki generator OnOutline ni chaqirmagan).
-	figures *docFigures
-}
-
-// writeCustomPaper maxsus dizayndagi Word ishning AI bosqichlarini parallel
-// bajaradi:
-//   - dizayn konsepsiyasi matnga bog'liq emas — matn bilan bir vaqtda yaratiladi;
-//   - rasm g'oyalari rejada bo'ladi: reja tayyor bo'lishi bilan (OnOutline)
-//     rasmlar bo'limlar yozilishini kutmasdan chiziladi — faqat rasm uslubi
-//     uchun dizayn tayyor bo'lishi kutiladi.
-//
-// Birorta bosqich xato bilan tugasa, qolganlari to'xtatiladi va birinchi
-// sodir bo'lgan xato qaytariladi (AI xatolari errAI bilan belgilangan).
-func (h *Handler) writeCustomPaper(ctx context.Context, progress *progressBoard, log *zap.Logger, s *storage.Session,
-	t CustomTariff, req ai.DocumentRequest, figures int) (*customPaper, error) {
-	g, gctx := errgroup.WithContext(ctx)
-	out := &customPaper{}
-
-	// Matn — eng uzun bosqich: uning qatori jarayon xabarida birinchi turadi,
-	// dizayn va rasmlar qatorlari ostida paydo bo'lib, tugagach yo'qoladi.
-	report, stopText := progress.Stage(textStage("Bo'limlar yozilmoqda..."))
-	defer stopText()
-
-	// Dizayn konsepsiyasi.
-	designDone := make(chan struct{})
-	goRecover(g, log, "dizayn", func() error {
-		defer close(designDone)
-		d, spec, err := h.customDocDesign(gctx, progress, log, s, t, req.Language)
-		if err != nil {
-			return err
-		}
-		out.design, out.spec = d, spec
-		return nil
-	})
-
-	// Rasmlar: reja tayyor bo'lgach boshlanadi (bitta goroutine).
-	if figures > 0 {
-		req.OnOutline = func(ideas []*ai.FigureIdea) {
-			f := planDocFigures(ideas, len(ideas), figures)
-			out.figures = f
-			if len(f.targets) == 0 {
-				log.Warn("AI returned no figure ideas")
-				return
-			}
-			goRecover(g, log, "rasmlar", func() error {
-				// Rasm uslubi dizayndan olinadi — dizayn tayyor bo'lishini kutamiz.
-				select {
-				case <-designDone:
-				case <-gctx.Done():
-					return nil
-				}
-				// Dizayn (yoki boshqa bosqich) xatosi guruhda qayd etilgan — rasmlar chizilmaydi.
-				if out.design == nil || gctx.Err() != nil {
-					return nil
-				}
-				f.draw(gctx, progress, t.Images, out.design.ImageStyle)
-				return nil
-			})
-		}
-	}
-
-	// Matn — asosiy yo'lda.
-	req.OnProgress = report
-	doc, err := t.AI.GenerateDocument(gctx, req)
-	stopText()
-	if err != nil {
-		// Matn xatosi ham guruhga beriladi: qolgan bosqichlar to'xtatiladi va
-		// birinchi sodir bo'lgan xato qaytariladi (dizayn xatosi tufayli matn
-		// yozish bekor qilingan bo'lsa — dizayn xatosi).
-		g.Go(func() error { return fmt.Errorf("%w: %w", errAI, err) })
-		return nil, g.Wait()
-	}
-	// Dizayn va (boshlangan bo'lsa) rasmlar tugashini kutamiz.
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-	out.doc = doc
-	return out, nil
-}
-
-// goRecover fn ni guruhda ishga tushiradi va undagi panic'ni xatoga aylantiradi:
-// errgroup panic'ni Wait ga uzatmaydi, goroutine'dagi panic esa butun botni
-// to'xtatib qo'yardi (runJob dagi recover faqat o'z goroutine'ini himoya qiladi).
-func goRecover(g *errgroup.Group, log *zap.Logger, stage string, fn func() error) {
-	g.Go(func() (err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error("panic recovered in paper stage", zap.String("stage", stage),
-					zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
-				err = fmt.Errorf("%s bosqichida panic: %v", stage, r)
-			}
-		}()
-		return fn()
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Qo'llanma (birinchi /start va /help)
-// ---------------------------------------------------------------------------
-
-// guideText foydalanish va tariflar bo'yicha to'liq qo'llanma (joriy narx va
-// sozlamalar bilan). Telegram xabari chegarasiga (4096) sig'adi.
-func (h *Handler) guideText() string {
-	l := h.opts.Limits
-	p := h.opts.Payment
-	var b strings.Builder
-	sec := 2 // 1- va 2-bo'lim qotirilgan; qolganlari to'lov va AI dizayn yoqilganiga bog'liq
-	section := func(title string) {
-		sec++
-		fmt.Fprintf(&b, "<b>%d. %s</b>\n", sec, title)
-	}
-	b.WriteString("📖 <b>Botdan foydalanish bo'yicha qo'llanma</b>\n\n")
-
-	b.WriteString("<b>1. Nima tayyorlab beraman?</b>\n")
-	fmt.Fprintf(&b, "📊 <b>Taqdimot</b> — PowerPoint (.pptx), %d–%d slayd\n", l.MinSlides, l.MaxSlides)
-	fmt.Fprintf(&b, "📚 <b>Mustaqil ish</b>, 📝 <b>referat</b> va 🛠 <b>amaliy topshiriq</b> — Word (.docx), %d–%d sahifa\n", l.MinPages, l.MaxPages)
-	b.WriteString("🌐 Tillar: o'zbekcha (lotin va kirill), ruscha, inglizcha\n\n")
-
-	b.WriteString("<b>2. Buyurtma berish tartibi</b>\n")
-	b.WriteString("1️⃣ /start → ish turini va tilini tanlang\n")
-	b.WriteString("2️⃣ Mavzuni yozing va hajmni (slaydlar yoki sahifalar soni) kiriting\n")
-	fmt.Fprintf(&b, "3️⃣ Dizayn: taqdimotga %d ta, mustaqil ish va referatga %d ta tayyor dizayn", len(generator.Themes()), len(generator.DocThemes()))
-	if h.customOn() {
-		b.WriteString(" yoki <b>" + customLabel + "</b>")
-	}
-	b.WriteString("\n4️⃣ Ism-familiya, universitet, o'qituvchi va qo'shimcha talablar (masalan: «ko'proq misollar»)\n")
-	b.WriteString("5️⃣ Ma'lumotlarni tasdiqlang")
-	if h.paymentsOn() {
-		b.WriteString(" va to'lang")
-	}
-	b.WriteString(" — tayyor fayl 1–5 daqiqada keladi\n\n")
-
-	if h.paymentsOn() {
-		section("Narxlar")
-		fmt.Fprintf(&b, "📊 Tayyor dizayndagi taqdimot: har bir slayd — %s (📷 rasmli dizaynda — %s)\n",
-			formatSum(p.PriceSlidePlain), formatSum(p.PriceSlidePhoto))
-		fmt.Fprintf(&b, "📚 Mustaqil ish va referat: har bir sahifa — %s\n", formatSum(p.PricePage))
-		fmt.Fprintf(&b, "🛠 Amaliy topshiriq: %s\n", formatSum(p.PriceDocument))
-		// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
-		// if p.FreePhoto > 0 || p.FreePlain > 0 {
-		// 	fmt.Fprintf(&b, "🎁 Birinchi %d ta rasmli va %d ta rasmsiz ish — <b>bepul</b>\n", p.FreePhoto, p.FreePlain)
-		// }
-		b.WriteString("\n")
-	}
-
-	if h.customOn() {
-		section("✨ Maxsus dizayn — tariflar")
-		b.WriteString("Mavzungizga mos noyob dizayn noldan yaratiladi: ranglar, shriftlar, kompozitsiya va mavzuga mos rasmlar " +
-			"(taqdimot, mustaqil ish va referat uchun).\n")
-		const sample = 20
-		var examples []string
-		for _, name := range h.customTariffs() {
-			t, _ := h.customTariff(name)
-			v := tariffViews[name]
-			fmt.Fprintf(&b, "%s <b>%s</b>", v.emoji, v.name)
-			if h.paymentsOn() {
-				fmt.Fprintf(&b, " — %s/slayd, %s/sahifa", formatSum(t.PriceSlide), formatSum(t.PricePage))
-				examples = append(examples, fmt.Sprintf("%s — %s", v.name, formatSum(t.PriceSlide*sample)))
-			}
-			fmt.Fprintf(&b, "\n     %s; slaydlar yoki boblarning ~%d%% ida rasm\n", v.about, t.ImagePercent)
-		}
-		if len(examples) > 0 {
-			fmt.Fprintf(&b, "<i>Masalan, %d slayd: %s.</i>\n", sample, strings.Join(examples, ", "))
-			// b.WriteString("<i>Maxsus dizayn bepul urinishlarga kirmaydi.</i>\n") — bepul urinishlar hozircha o'chirilgan
-		}
-		b.WriteString("\n")
-	}
-
-	if h.paymentsOn() {
-		b.WriteString("<b>💳 To'lov</b>\n")
-		b.WriteString("Ko'rsatilgan kartaga o'tkazing va chek skrinshotini yuboring — chek avtomatik tekshiriladi, tasdiqlangach ish darhol tayyorlanadi. " +
-			"Biror xato bo'lsa, to'lovingiz saqlanib qoladi: «Qayta urinish» tugmasini bosing yoki keyingi buyurtmada ishlatiladi.\n\n")
-	}
-
-	b.WriteString("<b>Buyruqlar:</b> /start — yangi buyurtma, /cancel — bekor qilish, /help — shu qo'llanma")
-	return b.String()
-}
-
-// sendGuideOnce qo'llanmani foydalanuvchiga birinchi marta yuboradi va
-// yuborilgan vaqtni sessiyaga yozadi (saqlash chaqiruvchining vazifasi emas —
-// shu yerda saqlanadi).
-func (h *Handler) sendGuideOnce(ctx context.Context, c tele.Context, s *storage.Session) {
-	if s.GuideSentAt != nil {
-		return
-	}
-	if err := c.Send(h.guideText(), removeKeyboard()); err != nil {
-		h.log.Warn("failed to send guide", zap.Int64("user_id", s.UserID), zap.Error(err))
-		return
-	}
-	now := time.Now().UTC()
-	s.GuideSentAt = &now
-	if err := h.sessions.Save(ctx, s); err != nil {
-		h.log.Warn("failed to save guide flag", zap.Int64("user_id", s.UserID), zap.Error(err))
-	}
 }
