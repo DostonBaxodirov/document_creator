@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
+	"gorm.io/gorm"
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/generation"
@@ -22,23 +23,44 @@ import (
 // Buyruqlar
 // ---------------------------------------------------------------------------
 
-// onStart yangi buyurtmani boshlaydi.
+// onStart yangi buyurtmani boshlaydi. "/start ref_<ID>" — do'stining taklif
+// havolasi orqali kirish (referral.go).
 func (h *Handler) onStart(c tele.Context) error {
 	defer h.lock(c.Sender().ID)()
 	ctx, cancel := requestContext()
 	defer cancel()
 
+	// Taklif faqat botga birinchi marta kirgan foydalanuvchiga hisoblanadi,
+	// shuning uchun sessiya yaratilishidan oldin tekshiriladi.
+	referrerTG, viaReferral := parseRefPayload(c.Message().Payload)
+	viaReferral = viaReferral && h.referralOn()
+	isNew := false
+	if viaReferral {
+		_, err := h.sessions.Get(ctx, c.Sender().ID)
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			isNew = true
+		case err != nil:
+			return err
+		}
+	}
+
 	s, err := h.loadSession(ctx, c)
 	if err != nil {
 		return err
+	}
+	if viaReferral {
+		h.handleReferralStart(ctx, c, referrerTG, isNew)
 	}
 	switch State(s.State) {
 	case StateGenerating:
 		return c.Send(msgBusy)
 	case StateReview:
 		return h.replyInReview(ctx, c, s)
-	case StatePayment:
-		h.cancelPendingOrder(ctx, s)
+	case StatePayment, StateConfirm:
+		// Tashlab ketilgan buyurtma: to'lov kutilayotgan yoki bonus hisobidan
+		// bepul, lekin tayyorlanmay qolgan bo'lsa — bekor qilinadi (bonus qaytadi).
+		h.releaseOrder(ctx, s)
 	}
 	if err := h.beginFlow(ctx, s); err != nil {
 		return err
@@ -61,7 +83,7 @@ func (h *Handler) onStart(c tele.Context) error {
 	if first {
 		h.sendGuideOnce(ctx, c, s)
 	}
-	return c.Send(msgChooseWorkType, workTypeKeyboard())
+	return c.Send(msgChooseWorkType, h.workTypeKeyboard())
 }
 
 // onHelp to'liq qo'llanmani (foydalanish tartibi va tariflar) yuboradi.
@@ -110,8 +132,8 @@ func (h *Handler) cancelFlow(c tele.Context) string {
 	case StateReview:
 		// Pul allaqachon o'tkazilgan — chek tekshiruvi tugashini kutamiz.
 		return msgReviewWait
-	case StatePayment:
-		h.cancelPendingOrder(ctx, s)
+	case StatePayment, StateConfirm:
+		h.releaseOrder(ctx, s)
 	}
 
 	if err := h.resetToIdle(ctx, s); err != nil {
@@ -153,7 +175,7 @@ func (h *Handler) onText(c tele.Context) error {
 	case StateIdle, "":
 		return c.Send(msgIdle, removeKeyboard())
 	case StateWorkType:
-		return c.Send(msgPressButton, workTypeKeyboard())
+		return c.Send(msgPressButton, h.workTypeKeyboard())
 	case StateLanguage:
 		return c.Send(msgPressButton, languageKeyboard())
 	case StateDesign:
@@ -332,8 +354,8 @@ func (h *Handler) onRestart(c tele.Context) error {
 		return c.Respond(&tele.CallbackResponse{Text: "Ishingiz allaqachon tayyorlanmoqda."})
 	case StateReview:
 		return c.Respond(&tele.CallbackResponse{Text: "Chekingiz tekshirilmoqda."})
-	case StatePayment:
-		h.cancelPendingOrder(ctx, s)
+	case StatePayment, StateConfirm:
+		h.releaseOrder(ctx, s)
 	}
 	if err := h.beginFlow(ctx, s); err != nil {
 		return err
@@ -341,15 +363,21 @@ func (h *Handler) onRestart(c tele.Context) error {
 
 	_ = c.Respond()
 	h.removeButtons(c)
-	return c.Send(msgChooseWorkType, workTypeKeyboard())
+	return c.Send(msgChooseWorkType, h.workTypeKeyboard())
 }
 
 // onConfirm ma'lumotlar tasdiqlanganda (yoki "Qayta urinish" bosilganda) generatsiyani boshlaydi.
+func (h *Handler) onConfirm(c tele.Context) error { return h.confirm(c, false) }
+
+// onConfirmBonus «🎁 Bonus bilan tasdiqlash» — buyurtma taklif bonusi hisobidan.
+func (h *Handler) onConfirmBonus(c tele.Context) error { return h.confirm(c, true) }
+
+// confirm buyurtmani tasdiqlaydi: to'lovni hal qiladi va generatsiyani boshlaydi.
 //
 // Butun o'tish (CAS, o'qish, to'lov, saqlash) va vazifani ro'yxatga olish
 // foydalanuvchi qulfi ostida bajariladi: aks holda shu oraliqda kelgan
 // /cancel "generating" holatini ko'radi-yu, vazifani topa olmaydi.
-func (h *Handler) onConfirm(c tele.Context) error {
+func (h *Handler) confirm(c tele.Context, useBonus bool) error {
 	userID := c.Sender().ID
 	defer h.lock(userID)()
 	ctx, cancel := requestContext()
@@ -370,11 +398,20 @@ func (h *Handler) onConfirm(c tele.Context) error {
 		return err
 	}
 
-	// To'lov: oldin to'langan buyurtma yoki to'lov so'rash (bepul urinishlar
-	// hozircha o'chirilgan — barcha ishlar pullik).
+	// To'lov: oldin to'langan buyurtma, taklif bonusi yoki to'lov so'rash.
 	note := ""
 	if h.paymentsOn() {
-		proceed, n, err := h.authorize(ctx, c, s)
+		proceed, n, err := h.authorize(ctx, c, s, useBonus)
+		if errors.Is(err, storage.ErrNoCredits) {
+			// Eskirgan tugma yoki bonus boshqa buyurtmaga ishlatilgan: xulosa
+			// yangi narx va tugmalar bilan qayta yuboriladi.
+			if _, err := h.cas(ctx, userID, StateGenerating, StateConfirm); err != nil {
+				return err
+			}
+			_ = c.Respond(&tele.CallbackResponse{Text: msgNoCredits, ShowAlert: true})
+			h.removeButtons(c)
+			return h.sendSummary(c, s)
+		}
 		if err != nil {
 			_, _ = h.cas(ctx, userID, StateGenerating, StateConfirm)
 			return err
@@ -424,13 +461,15 @@ func (h *Handler) ask(c tele.Context, s *storage.Session, state State) error {
 	return c.Send(st.prompt(h.opts.Limits, s), markup)
 }
 
-// sendSummary yig'ilgan ma'lumotlarni tasdiqlash tugmalari bilan yuboradi.
+// sendSummary yig'ilgan ma'lumotlarni tasdiqlash tugmalari bilan yuboradi
+// (taklif bonusi bo'lsa — «🎁 Bonus bilan» va «💳 To'lab» tugmalari).
 func (h *Handler) sendSummary(c tele.Context, s *storage.Session) error {
 	text := summaryText(s)
-	if line := h.priceLine(c, s); line != "" {
-		text += "\n" + line
+	q := h.summaryQuote(c, s)
+	if q != nil {
+		text += "\n" + q.line()
 	}
-	return c.Send(text+"\n\nHammasi to'g'rimi?", confirmKeyboard())
+	return c.Send(text+"\n\nHammasi to'g'rimi?", confirmKeyboard(q))
 }
 
 // edit callback xabarini tahrirlaydi (inline tugmalar ham olib tashlanadi).

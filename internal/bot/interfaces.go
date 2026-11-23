@@ -40,6 +40,13 @@ type BillingStore interface {
 	ReceiptSeen(ctx context.Context, transactionID, fileUniqueID string) (bool, error)
 	ListPayments(ctx context.Context, since *time.Time) ([]storage.Payment, error)
 	ListPaymentsByStatus(ctx context.Context, status string, limit int) ([]storage.Payment, int, error)
+
+	// Do'stlarni taklif qilish (referral.go).
+	AttachReferral(ctx context.Context, referrerTG, refereeTG int64, username, firstName string) (*storage.User, error)
+	RewardReferral(ctx context.Context, refereeUserID, orderID uint) (*storage.ReferralReward, error)
+	ReferralStats(ctx context.Context, userID uint) (invited, rewarded int, err error)
+	CreateBonusOrder(ctx context.Context, o *storage.Order) (remaining int, err error)
+	ReleaseOrder(ctx context.Context, id uint) (bool, error)
 }
 
 // ReceiptVerifier — chek rasmini o'qiydigan AI (internal/payment).
@@ -53,6 +60,19 @@ type StatsStore interface {
 	Overview(ctx context.Context, sinces []time.Time) (all storage.PeriodStats, periods []storage.PeriodStats, err error)
 	DailyStats(ctx context.Context, from time.Time, days int) ([]storage.DayStats, error)
 	ListUsers(ctx context.Context, since *time.Time) ([]storage.UserSummary, error)
+	ReferralTotals(ctx context.Context) (storage.ReferralTotals, error)
+}
+
+// BroadcastStore — admin e'lonlari ombori (internal/storage.BroadcastRepository).
+type BroadcastStore interface {
+	Start(ctx context.Context, kind string, adminID int64, total int) (*storage.Broadcast, error)
+	SetMessage(ctx context.Context, id uint, messageID int) error
+	SaveProgress(ctx context.Context, b *storage.Broadcast) error
+	Finish(ctx context.Context, b *storage.Broadcast, status string) error
+	Running(ctx context.Context) ([]storage.Broadcast, error)
+	Last(ctx context.Context, kind string) (*storage.Broadcast, error)
+	CountRecipients(ctx context.Context) (int, error)
+	Recipients(ctx context.Context, afterUserID int64, limit int) ([]storage.Recipient, error)
 }
 
 // Backuper — bazaning zaxira nusxasini oluvchi (internal/backup.Dumper).

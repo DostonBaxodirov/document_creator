@@ -74,6 +74,7 @@ func run() error {
 	sessions := storage.NewSessionRepository(db)
 	billing := storage.NewBillingRepository(db)
 	stats := storage.NewStatsRepository(db, tz.Tashkent)
+	broadcasts := storage.NewBroadcastRepository(db)
 
 	// 4. AI klient va fayl generatorlari: taqdimot — .pptx (shablon asosida),
 	// mustaqil ish, referat va amaliy topshiriq — .docx.
@@ -154,6 +155,8 @@ func run() error {
 		Billing:          billing,
 		Verifier:         verifier,
 		Payment:          cfg.Payment,
+		Referral:         cfg.Referral,
+		Broadcasts:       broadcasts,
 		Custom:           customTariffs,
 		Stats:            stats,
 		Backup:           backupOpts,
@@ -174,7 +177,8 @@ func run() error {
 	}
 	handler.Register(b)
 
-	// Oldingi ishga tushirishda yakunlanmay qolgan generatsiyalarni tiklash.
+	// Oldingi ishga tushirishda yakunlanmay qolgan generatsiyalar va admin
+	// e'lonlarini tiklash.
 	handler.RecoverInterrupted(ctx)
 	// Adminlar menyusidagi buyruqlarni joriy ro'yxat bilan yangilash.
 	handler.RefreshAdminCommands(ctx)
@@ -202,6 +206,8 @@ func run() error {
 	log.Info("shutdown signal received, stopping bot")
 
 	b.Stop() // yangi update'lar qabul qilinmaydi
+	// E'lonlar kutilmaydi: jarayoni saqlanadi va keyingi ishga tushishda davom etadi.
+	handler.PauseBroadcasts()
 
 	if !handler.Wait(cfg.Telegram.ShutdownTimeout) {
 		log.Warn("shutdown timeout reached, cancelling running jobs")

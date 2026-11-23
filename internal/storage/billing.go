@@ -68,6 +68,11 @@ type User struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// FreeCredits — do'stlarni taklif qilib yig'ilgan bepul imkoniyatlar
+	// (bonuslar) balansi. Ustun 00002 migratsiyasida qo'shilgan, shuning
+	// uchun jadval oxirida turadi.
+	FreeCredits int `gorm:"not null;default:0"`
 }
 
 // Order — tasdiqlangan buyurtma nusxasi (to'lov qaysi ish uchun ekanini
@@ -98,7 +103,18 @@ type Order struct {
 	DeliveredAt *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	// Discount — taklif bonusi qoplagan summa, so'mda (bonussiz buyurtmada 0).
+	// Bonusli buyurtmada Price — foydalanuvchi to'laydigan qism, buyurtmaning
+	// to'liq qiymati — Price + Discount. Ustun 00002 migratsiyasida qo'shilgan.
+	Discount int `gorm:"not null;default:0"`
 }
+
+// Value buyurtmaning to'liq qiymati: to'langan qism va bonus qoplagan qism.
+func (o *Order) Value() int { return o.Price + o.Discount }
+
+// Bonus buyurtma taklif bonusi bilan rasmiylashtirilganini bildiradi.
+func (o *Order) Bonus() bool { return o.Discount > 0 }
 
 // Payment — foydalanuvchi yuborgan bitta to'lov cheki va uni tekshirish natijasi.
 type Payment struct {
@@ -155,8 +171,13 @@ func NewBillingRepository(db *gorm.DB) *BillingRepository {
 // RETURNING * bilan yozuvning bazadagi barcha ustunlarini (ID, is_admin,
 // admin_since, created_at) struct'ga qaytaradi — konflikt holatida ham.
 func (r *BillingRepository) EnsureUser(ctx context.Context, telegramID int64, username, firstName string) (*User, error) {
+	return ensureUser(r.db.WithContext(ctx), telegramID, username, firstName)
+}
+
+// ensureUser — EnsureUser ning tanasi: berilgan ulanish yoki tranzaksiyada bajariladi.
+func ensureUser(db *gorm.DB, telegramID int64, username, firstName string) (*User, error) {
 	u := User{TelegramUserID: telegramID, Username: username, FirstName: firstName}
-	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+	err := db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "telegram_user_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"username", "first_name", "updated_at"}),
 	}, clause.Returning{}).Create(&u).Error
@@ -221,13 +242,14 @@ func (r *BillingRepository) CountFreeUsed(ctx context.Context, userID uint, kind
 
 // FindCredit to'langan, lekin hali yetkazilmagan buyurtmani qaytaradi
 // (generatsiya xato bilan tugagan yoki foydalanuvchi uni bekor qilgan bo'lsa).
-// Bepul buyurtma faqat o'z toifasiga, pullik buyurtma esa narxi yetadigan
-// istalgan toifaga ishlatiladi. Topilmasa nil qaytaradi.
+// Bepul (sinov) buyurtma faqat o'z toifasiga, pullik buyurtma esa to'liq
+// qiymati (to'langan qism + taklif bonusi) yetadigan istalgan toifaga
+// ishlatiladi. Topilmasa nil qaytaradi.
 func (r *BillingRepository) FindCredit(ctx context.Context, userID uint, kind string, price int) (*Order, error) {
 	var o Order
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND status = ?", userID, OrderPaid).
-		Where(r.db.Where("is_free = ? AND kind = ?", true, kind).Or("is_free = ? AND price >= ?", false, price)).
+		Where(r.db.Where("is_free = ? AND kind = ?", true, kind).Or("is_free = ? AND price + discount >= ?", false, price)).
 		Order("id").First(&o).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
@@ -205,10 +206,22 @@ type quote struct {
 	price  int
 	detail string // narx tarkibi: "10 slayd × 300 so'm", "15 sahifa × 200 so'm" (amaliy topshiriqda — bo'sh)
 	credit *storage.Order
+
+	// Taklif bonusi (faqat quotePaid da va taklif tizimi yoqilgan bo'lsa).
+	credits int // foydalanuvchining bepul imkoniyatlari soni
+	cover   int // bonus shu buyurtmaning qancha qismini qoplaydi (0 — qoplamaydi)
 }
 
-// line tasdiqlash xulosasidagi narx qatori.
-func (q *quote) line() string {
+// bonusOK buyurtmani bonus bilan tasdiqlash mumkinligini bildiradi (q nil bo'lishi mumkin).
+func (q *quote) bonusOK() bool {
+	return q != nil && q.mode == quotePaid && q.credits > 0 && q.cover > 0
+}
+
+// bonusPrice bonus bilan tasdiqlanganda to'lanadigan qolgan summa.
+func (q *quote) bonusPrice() int { return max(0, q.price-q.cover) }
+
+// priceLine narx qatori: "💰 Narx: 3 000 so'm (10 slayd × 300 so'm)".
+func (q *quote) priceLine() string {
 	switch q.mode {
 	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
 	// case quoteFree:
@@ -223,11 +236,50 @@ func (q *quote) line() string {
 	return line
 }
 
-// quote foydalanuvchi uchun joriy buyurtma narxini aniqlaydi.
+// line tasdiqlash xulosasidagi narx qatori; bonus bo'lsa — bonus bilan
+// qancha bo'lishi ham ko'rsatiladi.
+func (q *quote) line() string {
+	line := q.priceLine()
+	if q.mode != quotePaid || q.credits <= 0 {
+		return line
+	}
+	if !q.bonusOK() {
+		return line + fmt.Sprintf("\n🎁 Sizda %d ta bepul imkoniyat bor, lekin u bu buyurtmaga ishlatilmaydi.", q.credits)
+	}
+	offer := "<b>bepul</b>"
+	if p := q.bonusPrice(); p > 0 {
+		offer = fmt.Sprintf("<b>%s</b> (🎁 %s chegirma)", formatSum(p), formatSum(q.cover))
+	}
+	return line + fmt.Sprintf("\n🎁 <b>Bonus bilan:</b> %s · sizda %d ta bepul imkoniyat bor", offer, q.credits)
+}
+
+// chargeLine to'lov so'ralganda xulosadagi narx qatori: bonusli buyurtmada
+// to'liq narx, chegirma va to'lanadigan summa.
+func (q *quote) chargeLine(o *storage.Order) string {
+	if !o.Bonus() {
+		return q.priceLine()
+	}
+	return fmt.Sprintf("💰 <b>Narx:</b> %s − 🎁 %s bonus = <b>%s</b>", formatSum(o.Value()), formatSum(o.Discount), formatSum(o.Price))
+}
+
+// quote foydalanuvchi uchun joriy buyurtma narxini aniqlaydi. Tartib:
+//  1. sessiyadagi buyurtma allaqachon to'langan (yoki bonus hisobidan
+//     rasmiylashtirilgan) — masalan, generatsiya xato bilan tugagach
+//     «Qayta urinish» bosilganda: o'sha buyurtma ishlatiladi;
+//  2. oldin to'langan, lekin yetkazilmagan boshqa buyurtma (FindCredit);
+//  3. pullik buyurtma — foydalanuvchida taklif bonusi bo'lsa, u bilan
+//     tasdiqlash imkoniyati ham hisoblanadi.
 func (h *Handler) quote(ctx context.Context, s *storage.Session, u *storage.User) (*quote, error) {
 	kind := h.kindOf(s)
 	p := h.priceFor(s.WorkType, s.Volume, kind)
 	q := &quote{kind: kind, price: p.Total, detail: p.detail()}
+	if s.OrderID != nil {
+		// O'qib bo'lmasa (masalan, yozuv yo'q) — oddiy hisobga o'tiladi.
+		if o, err := h.billing.GetOrder(ctx, *s.OrderID); err == nil && o.UserID == u.ID && o.Status == storage.OrderPaid {
+			q.mode, q.credit = quoteCredit, o
+			return q, nil
+		}
+	}
 	credit, err := h.billing.FindCredit(ctx, u.ID, kind, q.price)
 	if err != nil {
 		return nil, err
@@ -244,6 +296,9 @@ func (h *Handler) quote(ctx context.Context, s *storage.Session, u *storage.User
 	// if used < h.freeLimit(kind) {
 	// 	q.mode = quoteFree
 	// }
+	if h.referralOn() && u.FreeCredits > 0 {
+		q.credits, q.cover = u.FreeCredits, h.bonusCover(kind, q.price)
+	}
 	return q, nil
 }
 
@@ -252,11 +307,11 @@ func (h *Handler) ensureUser(ctx context.Context, c tele.Context) (*storage.User
 	return h.billing.EnsureUser(ctx, u.ID, u.Username, u.FirstName)
 }
 
-// priceLine tasdiqlash xulosasi uchun narx qatori (to'lov o'chirilgan yoki
-// xato bo'lsa — bo'sh satr; xulosa narxsiz ham ko'rsatiladi).
-func (h *Handler) priceLine(c tele.Context, s *storage.Session) string {
+// summaryQuote tasdiqlash xulosasi uchun narx (to'lov o'chirilgan yoki xato
+// bo'lsa — nil; xulosa narxsiz ham ko'rsatiladi).
+func (h *Handler) summaryQuote(c tele.Context, s *storage.Session) *quote {
 	if !h.paymentsOn() {
-		return ""
+		return nil
 	}
 	ctx, cancel := requestContext()
 	defer cancel()
@@ -264,18 +319,20 @@ func (h *Handler) priceLine(c tele.Context, s *storage.Session) string {
 	if err == nil {
 		var q *quote
 		if q, err = h.quote(ctx, s, u); err == nil {
-			return q.line()
+			return q
 		}
 	}
 	h.log.Warn("failed to quote order", zap.Int64("user_id", s.UserID), zap.Error(err))
-	return ""
+	return nil
 }
 
 // authorize tasdiqlangan buyurtma uchun to'lovni hal qiladi (sessiya
 // "generating" holatida). true qaytarsa — generatsiyani boshlash mumkin
 // (s.OrderID qo'yilgan va saqlangan); false — to'lov so'raldi va sessiya
-// "await_payment" holatiga o'tkazildi.
-func (h *Handler) authorize(ctx context.Context, c tele.Context, s *storage.Session) (proceed bool, note string, err error) {
+// "await_payment" holatiga o'tkazildi. useBonus — foydalanuvchi «🎁 Bonus
+// bilan tasdiqlash» ni bosgan: bonus qolmagan bo'lsa storage.ErrNoCredits
+// qaytariladi (sessiya holati o'zgarmaydi).
+func (h *Handler) authorize(ctx context.Context, c tele.Context, s *storage.Session, useBonus bool) (proceed bool, note string, err error) {
 	u, err := h.ensureUser(ctx, c)
 	if err != nil {
 		return false, "", err
@@ -285,8 +342,8 @@ func (h *Handler) authorize(ctx context.Context, c tele.Context, s *storage.Sess
 		return false, "", err
 	}
 
-	switch q.mode {
-	case quoteCredit:
+	switch {
+	case q.mode == quoteCredit:
 		o := q.credit
 		fillOrder(o, s)
 		if err := h.billing.SaveOrder(ctx, o); err != nil {
@@ -294,6 +351,30 @@ func (h *Handler) authorize(ctx context.Context, c tele.Context, s *storage.Sess
 		}
 		s.OrderID = &o.ID
 		note = "✅ Oldin to'langan buyurtmangiz hisobidan."
+		if o.Bonus() && o.Price == 0 {
+			note = "🎁 Bepul imkoniyatingiz hisobidan."
+		}
+	case useBonus:
+		if !q.bonusOK() {
+			return false, "", storage.ErrNoCredits
+		}
+		o := newOrder(u, s, q.kind, q.bonusPrice())
+		o.Discount = q.cover
+		if o.Price == 0 {
+			now := time.Now().UTC()
+			o.IsPaid, o.Status, o.PaidAt = true, storage.OrderPaid, &now
+		}
+		left, err := h.billing.CreateBonusOrder(ctx, o)
+		if err != nil {
+			return false, "", err
+		}
+		h.log.Info("referral bonus used", zap.Int64("user_id", s.UserID), zap.Uint("order_id", o.ID),
+			zap.String("kind", o.Kind), zap.Int("discount", o.Discount), zap.Int("price", o.Price), zap.Int("credits_left", left))
+		if o.Price > 0 {
+			return false, "", h.requestPayment(ctx, c, s, o, q)
+		}
+		s.OrderID = &o.ID
+		note = fmt.Sprintf("🎁 Bepul imkoniyatingiz hisobidan (qoldi: %d ta).", left)
 	// Bepul urinishlar hozircha o'chirilgan — barcha ishlar pullik.
 	// case quoteFree:
 	// 	now := time.Now().UTC()
@@ -309,25 +390,33 @@ func (h *Handler) authorize(ctx context.Context, c tele.Context, s *storage.Sess
 		if err := h.billing.CreateOrder(ctx, o); err != nil {
 			return false, "", err
 		}
-		s.OrderID = &o.ID
-		s.State = string(StatePayment)
-		if err := h.sessions.Save(ctx, s); err != nil {
-			if _, cerr := h.billing.SetOrderStatus(ctx, o.ID, storage.OrderPending, storage.OrderCancelled); cerr != nil {
-				h.log.Warn("failed to cancel orphan order", zap.Uint("order_id", o.ID), zap.Error(cerr))
-			}
-			return false, "", err
-		}
-		h.log.Info("payment requested", zap.Int64("user_id", s.UserID), zap.Uint("order_id", o.ID),
-			zap.String("kind", o.Kind), zap.Int("price", o.Price))
-		_ = c.Respond(&tele.CallbackResponse{Text: "To'lov kerak 💳"})
-		h.edit(c, summaryText(s)+"\n"+q.line())
-		return false, "", c.Send(h.paymentText(o, true), paymentKeyboard())
+		return false, "", h.requestPayment(ctx, c, s, o, q)
 	}
 
 	if err := h.sessions.Save(ctx, s); err != nil {
 		return false, "", err
 	}
 	return true, note, nil
+}
+
+// requestPayment yaratilgan buyurtma uchun to'lov so'raydi: sessiya
+// "await_payment" holatiga o'tkaziladi va karta ma'lumotlari yuboriladi.
+// Sessiyani saqlab bo'lmasa, buyurtma bekor qilinadi (bonus ishlatilgan
+// bo'lsa — qaytariladi).
+func (h *Handler) requestPayment(ctx context.Context, c tele.Context, s *storage.Session, o *storage.Order, q *quote) error {
+	s.OrderID = &o.ID
+	s.State = string(StatePayment)
+	if err := h.sessions.Save(ctx, s); err != nil {
+		if _, rerr := h.billing.ReleaseOrder(ctx, o.ID); rerr != nil {
+			h.log.Warn("failed to cancel orphan order", zap.Uint("order_id", o.ID), zap.Error(rerr))
+		}
+		return err
+	}
+	h.log.Info("payment requested", zap.Int64("user_id", s.UserID), zap.Uint("order_id", o.ID),
+		zap.String("kind", o.Kind), zap.Int("price", o.Price), zap.Int("discount", o.Discount))
+	_ = c.Respond(&tele.CallbackResponse{Text: "To'lov kerak 💳"})
+	h.edit(c, summaryText(s)+"\n"+q.chargeLine(o))
+	return c.Send(h.paymentText(o, true), paymentKeyboard())
 }
 
 func newOrder(u *storage.User, s *storage.Session, kind string, price int) *storage.Order {

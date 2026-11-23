@@ -179,6 +179,14 @@ func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *za
 		if _, err := h.billing.SetOrderStatus(ctx, *s.OrderID, storage.OrderPaid, storage.OrderDelivered); err != nil {
 			log.Error("failed to mark order delivered", zap.Uint("order_id", *s.OrderID), zap.Error(err))
 		}
+		// Zaxira: to'lov tasdiqlanganda taklif qilganga mukofot berilmay qolgan
+		// bo'lsa (masalan, bot shu orada qayta ishga tushgan) — hozir beriladi.
+		// Mukofot bir martalik, takroriy chaqiruv hech narsa qilmaydi.
+		if h.referralOn() {
+			if o, err := h.billing.GetOrder(ctx, *s.OrderID); err == nil {
+				h.rewardReferrer(o)
+			}
+		}
 	}
 	// Xabar sessiya tozalanishidan oldin tayyorlanadi (buyurtma ma'lumotlari kerak).
 	notice := h.purchaseNotice(ctx, s, out, took, log)
@@ -189,7 +197,11 @@ func (h *Handler) finishWithSuccess(s *storage.Session, chat *tele.Chat, log *za
 	if err := h.resetToIdle(ctx, s); err != nil {
 		log.Error("failed to save session after success", zap.Error(err))
 	}
-	if _, err := h.bot.Send(chat, msgDone); err != nil {
+	var doneOpts []any
+	if kb := h.referralKeyboard(); kb != nil {
+		doneOpts = append(doneOpts, kb)
+	}
+	if _, err := h.bot.Send(chat, msgDone, doneOpts...); err != nil {
 		log.Warn("failed to send done message", zap.Error(err))
 	}
 	if notice != "" {
@@ -210,8 +222,10 @@ func (h *Handler) finishWithError(s *storage.Session, chat *tele.Chat, log *zap.
 
 	if byUser {
 		// To'langan buyurtma "paid" holatida qoladi va keyingi buyurtmada
-		// qayta to'lovsiz ishlatiladi (FindCredit).
+		// qayta to'lovsiz ishlatiladi (FindCredit). Bonus hisobidan to'liq
+		// bepul buyurtma esa bekor qilinadi — bonus balansga qaytadi.
 		log.Info("generation cancelled by user")
+		h.releaseOrder(ctx, s)
 		if err := h.resetToIdle(ctx, s); err != nil {
 			log.Error("failed to save session after cancel", zap.Error(err))
 		}
@@ -303,4 +317,5 @@ func (h *Handler) RecoverInterrupted(ctx context.Context) {
 		h.log.Info("recovered interrupted jobs", zap.Int("count", recovered))
 	}
 	h.recoverReviews(ctx)
+	h.resumeBroadcasts(ctx)
 }

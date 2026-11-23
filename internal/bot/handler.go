@@ -53,6 +53,10 @@ type Options struct {
 	Verifier ReceiptVerifier
 	// Payment — narxlar, karta va admin paroli (bepul urinishlar hozircha o'chirilgan).
 	Payment config.PaymentConfig
+	// Referral — do'stlarni taklif qilish tizimi (faqat to'lov yoqilgan bo'lsa ishlaydi).
+	Referral config.ReferralConfig
+	// Broadcasts — admin e'lonlari ombori (ixtiyoriy). nil bo'lsa, /taklif_elon ishlamaydi.
+	Broadcasts BroadcastStore
 
 	// Custom — AI maxsus dizayn tariflari (config.Tariff* → sozlamalar).
 	// Bo'sh bo'lsa, "✨ Maxsus dizayn" tugmasi ko'rsatilmaydi.
@@ -81,7 +85,9 @@ type Handler struct {
 	verifier ReceiptVerifier
 	stats    StatsStore
 	visits   visitTracker // bugun tashrifi yozilgan foydalanuvchilar
-	backupMu sync.Mutex   // bir vaqtda faqat bitta nusxa olinadi
+	bcast    BroadcastStore
+	bcRuns   sync.Map   // e'lon ID -> *broadcastRun (yuborilayotgan e'lonlar)
+	backupMu sync.Mutex // bir vaqtda faqat bitta nusxa olinadi
 
 	jobsCtx context.Context // barcha generatsiyalar uchun ota kontekst (to'xtashda bekor qilinadi)
 	slots   chan struct{}   // semafor: bir vaqtdagi generatsiyalar sonini cheklaydi
@@ -134,6 +140,7 @@ func NewHandler(jobsCtx context.Context, sessions SessionStore, aiClient generat
 		billing:  billing,
 		verifier: opts.Verifier,
 		stats:    opts.Stats,
+		bcast:    opts.Broadcasts,
 		jobsCtx:  jobsCtx,
 		slots:    make(chan struct{}, opts.MaxConcurrentJobs),
 	}
@@ -155,6 +162,8 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle("/statistika", h.onStats)
 	b.Handle("/foydalanuvchilar", h.onUsers)
 	b.Handle("/backup", h.onBackup)
+	b.Handle("/taklif", h.onReferral)
+	b.Handle("/taklif_elon", h.onBroadcast)
 	b.Handle(tele.OnText, h.onText)
 	b.Handle(tele.OnPhoto, h.onPhoto)       // to'lov cheki
 	b.Handle(tele.OnDocument, h.onDocument) // fayl ko'rinishidagi chek
@@ -165,6 +174,11 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle(&tele.Btn{Unique: cbDesign}, h.onDesign)
 	b.Handle(&tele.Btn{Unique: cbTariff}, h.onTariff)
 	b.Handle(&tele.Btn{Unique: cbConfirm}, h.onConfirm)
+	b.Handle(&tele.Btn{Unique: cbConfirmBonus}, h.onConfirmBonus)
+	b.Handle(&tele.Btn{Unique: cbReferral}, h.onReferral)
+	b.Handle(&tele.Btn{Unique: cbBcStart}, h.onBroadcastStart)
+	b.Handle(&tele.Btn{Unique: cbBcCancel}, h.onBroadcastCancel)
+	b.Handle(&tele.Btn{Unique: cbBcStop}, h.onBroadcastStop)
 	b.Handle(&tele.Btn{Unique: cbRestart}, h.onRestart)
 	b.Handle(&tele.Btn{Unique: cbCancel}, h.onCancelButton)
 	b.Handle(&tele.Btn{Unique: cbPayApprove}, h.onPayApprove)
@@ -174,13 +188,22 @@ func (h *Handler) Register(b *tele.Bot) {
 	b.Handle(&tele.Btn{Unique: cbUsersPeriod}, h.onUsersPeriod)
 	b.Handle(&tele.Btn{Unique: cbUsersFormat}, h.onUsersFormat)
 
-	if err := b.SetCommands([]tele.Command{
+	if err := b.SetCommands(h.userCommands()); err != nil {
+		h.log.Warn("failed to set bot commands", zap.Error(err))
+	}
+}
+
+// userCommands oddiy foydalanuvchilar buyruqlar menyusi.
+func (h *Handler) userCommands() []tele.Command {
+	cmds := []tele.Command{
 		{Text: "start", Description: "Yangi ish buyurtma qilish"},
 		{Text: "cancel", Description: "Joriy jarayonni bekor qilish"},
 		{Text: "help", Description: "Qo'llanma va tariflar"},
-	}); err != nil {
-		h.log.Warn("failed to set bot commands", zap.Error(err))
 	}
+	if h.referralOn() {
+		cmds = append(cmds, tele.Command{Text: "taklif", Description: "Do'stlarni taklif qilish — bepul hujjat"})
+	}
+	return cmds
 }
 
 // OnError telebot handlerlari qaytargan xatolarni qayta ishlaydi

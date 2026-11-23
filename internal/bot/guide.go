@@ -86,6 +86,13 @@ func (h *Handler) guideText() string {
 		b.WriteString("\n")
 	}
 
+	if h.referralOn() {
+		section("🎁 Do'stlarni taklif qilish")
+		b.WriteString("/taklif — shaxsiy havolangizni oling va do'stlaringizga yuboring. Do'stingiz shu havola orqali botga kirib, " +
+			"buyurtmasini to'lasa — sizga <b>1 ta bepul hujjat</b> beriladi (nechta do'st — shuncha).\n")
+		b.WriteString(h.bonusTerms() + "\n\n")
+	}
+
 	if h.paymentsOn() {
 		b.WriteString("<b>💳 To'lov</b>\n")
 		b.WriteString("Ko'rsatilgan kartaga o'tkazing va chek skrinshotini yuboring — chek avtomatik tekshiriladi, tasdiqlangach ish darhol tayyorlanadi. " +
@@ -93,6 +100,9 @@ func (h *Handler) guideText() string {
 	}
 
 	b.WriteString("<b>Buyruqlar:</b> /start — yangi buyurtma, /cancel — bekor qilish, /help — shu qo'llanma")
+	if h.referralOn() {
+		b.WriteString(", /taklif — do'stlarni taklif qilish")
+	}
 	return b.String()
 }
 

@@ -215,14 +215,24 @@ func paymentLine(pc purchase) string {
 		// 	line += fmt.Sprintf(" (%d/%d)", pc.freeUsed, pc.freeLimit)
 		// }
 		return line
+	case o.Bonus() && o.Price == 0:
+		return label + "🎁 taklif bonusi — to'liq bepul (qiymati " + formatSum(o.Discount) + ")"
 	case p == nil:
-		return label + "<b>" + formatSum(o.Price) + "</b> · to'langan"
+		return label + "<b>" + formatSum(o.Price) + "</b> · to'langan" + bonusSuffix(o)
 	}
 	line := fmt.Sprintf("%s<b>%s</b> · chek #%d · %s", label, formatSum(p.Amount), p.ID, approvedBy(p))
 	if p.DetectedAmount > 0 && p.DetectedAmount != p.Amount {
 		line += " · chekda " + formatSum(p.DetectedAmount)
 	}
-	return line + fmt.Sprintf(" · /chek_%d", p.ID)
+	return line + bonusSuffix(o) + fmt.Sprintf(" · /chek_%d", p.ID)
+}
+
+// bonusSuffix qisman bonus bilan to'langan buyurtmada: " + 🎁 bonus 15 000 so'm".
+func bonusSuffix(o *storage.Order) string {
+	if !o.Bonus() {
+		return ""
+	}
+	return " + 🎁 bonus " + formatSum(o.Discount)
 }
 
 func approvedBy(p *storage.Payment) string {

@@ -10,11 +10,16 @@ import (
 	"telegram-presentation-bot/internal/lang"
 )
 
-func workTypeKeyboard() *tele.ReplyMarkup {
+// workTypeKeyboard ish turi tugmalari; taklif tizimi yoqilgan bo'lsa —
+// oxirgi qatorda "🎁 Do'stlarni taklif qilish" tugmasi.
+func (h *Handler) workTypeKeyboard() *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
-	rows := make([]tele.Row, 0, len(workTypes))
+	rows := make([]tele.Row, 0, len(workTypes)+1)
 	for _, o := range workTypes {
 		rows = append(rows, m.Row(m.Data(o.Button, cbWorkType, string(o.Type))))
+	}
+	if h.referralOn() {
+		rows = append(rows, m.Row(m.Data(referralButton, cbReferral)))
 	}
 	m.Inline(rows...)
 	return m
@@ -66,12 +71,26 @@ func docDesignKeyboard(custom bool) *tele.ReplyMarkup {
 	return m
 }
 
-func confirmKeyboard() *tele.ReplyMarkup {
+// confirmKeyboard tasdiqlash tugmalari. Buyurtmani taklif bonusi bilan
+// tasdiqlash mumkin bo'lsa (q.bonusOK), foydalanuvchi tanlaydi: bonus bilan
+// yoki to'lab (bonusni boshqa buyurtmaga saqlab qo'yish uchun). q nil
+// bo'lishi mumkin (to'lov o'chirilgan yoki narxni hisoblab bo'lmadi).
+func confirmKeyboard(q *quote) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
-	m.Inline(
-		m.Row(m.Data("✅ Tasdiqlash", cbConfirm)),
-		m.Row(m.Data("🔄 Qaytadan to'ldirish", cbRestart), m.Data("❌ Bekor qilish", cbCancel)),
-	)
+	var rows []tele.Row
+	if q.bonusOK() {
+		bonus := "🎁 Bonus bilan tasdiqlash — bepul"
+		if p := q.bonusPrice(); p > 0 {
+			bonus = "🎁 Bonus bilan tasdiqlash — " + formatSum(p)
+		}
+		rows = append(rows,
+			m.Row(m.Data(bonus, cbConfirmBonus)),
+			m.Row(m.Data("💳 To'lab tasdiqlash — "+formatSum(q.price), cbConfirm)))
+	} else {
+		rows = append(rows, m.Row(m.Data("✅ Tasdiqlash", cbConfirm)))
+	}
+	rows = append(rows, m.Row(m.Data("🔄 Qaytadan to'ldirish", cbRestart), m.Data("❌ Bekor qilish", cbCancel)))
+	m.Inline(rows...)
 	return m
 }
 

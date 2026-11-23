@@ -123,6 +123,11 @@ func (h *Handler) setAdminCommands(chatID int64) {
 		{Text: "foydalanuvchilar", Description: "Foydalanuvchilar ro'yxati"},
 		{Text: "backup", Description: "Bazaning zaxira nusxasi"},
 	}
+	if h.referralOn() {
+		cmds = append(cmds,
+			tele.Command{Text: "taklif", Description: "Do'stlarni taklif qilish"},
+			tele.Command{Text: "taklif_elon", Description: "Taklif e'lonini hammaga yuborish"})
+	}
 	if err := h.bot.SetCommands(cmds, tele.CommandScope{Type: tele.CommandScopeChat, ChatID: chatID}); err != nil {
 		h.log.Warn("failed to set admin commands", zap.Error(err))
 	}

@@ -62,6 +62,7 @@ const (
 		"/tekshiruv — tekshiruvdagi barcha cheklarni ✅/❌ tugmalari bilan qayta olish\n" +
 		"/statistika — tashrif buyuruvchilar soni (bugun, 7 va 30 kun, kunlar bo'yicha)\n" +
 		"/foydalanuvchilar — foydalanuvchilar ro'yxati (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
+		"/taklif_elon — barcha foydalanuvchilarga do'stlarni taklif qilish e'loni (har biriga shaxsiy havola bilan)\n" +
 		"/backup — bazaning zaxira nusxasini hozir olish (har kuni avtomatik ham keladi)\n\n" +
 		"Har bir chek va har bir xarid haqida to'liq ma'lumot shu chatga keladi; " +
 		"shubhali cheklar — ✅/❌ tugmalari bilan."

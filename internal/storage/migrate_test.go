@@ -10,8 +10,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// legacyModels — goose'gacha Migrate AutoMigrate orqali yaratgan modellar.
-var legacyModels = []any{&Session{}, &User{}, &Order{}, &Payment{}, &Visit{}}
+// allModels — barcha modellar: migratsiyalar ularning AutoMigrate sxemasini
+// aynan takrorlashi kerak. Dastlabki beshtasini goose'gacha Migrate
+// AutoMigrate orqali yaratgan (00001_baseline), qolganlari — keyingi
+// migratsiyalarda qo'shilgan.
+var allModels = []any{&Session{}, &User{}, &Order{}, &Payment{}, &Visit{}, &Referral{}, &Broadcast{}}
 
 // TestMigrateEmptySchema: bo'sh sxemada migratsiyalardan keyin har bir
 // modelning jadvali, barcha ustunlari va GORM nomlari bilan indekslari mavjud.
@@ -23,7 +26,7 @@ func TestMigrateEmptySchema(t *testing.T) {
 
 	m := db.Migrator()
 	indexes := 0
-	for _, model := range legacyModels {
+	for _, model := range allModels {
 		stmt := &gorm.Statement{DB: db}
 		if err := stmt.Parse(model); err != nil {
 			t.Fatalf("%T modelini o'qib bo'lmadi: %v", model, err)
@@ -62,7 +65,7 @@ func TestMigrateEmptySchema(t *testing.T) {
 // faqat versiyani yozib qo'yadi.
 func TestMigrateOverAutoMigrate(t *testing.T) {
 	db, _ := emptyTestDB(t)
-	if err := db.AutoMigrate(legacyModels...); err != nil {
+	if err := db.AutoMigrate(allModels...); err != nil {
 		t.Fatalf("AutoMigrate: %v", err)
 	}
 	if err := db.Create(&User{TelegramUserID: 42, Username: "eski"}).Error; err != nil {
@@ -98,7 +101,7 @@ func TestMigrateOverAutoMigrate(t *testing.T) {
 // default'lari, NOT NULL, kalitlar, indekslar va ketma-ketliklar (sequence).
 func TestMigrateMatchesAutoMigrate(t *testing.T) {
 	legacy, _ := emptyTestDB(t)
-	if err := legacy.AutoMigrate(legacyModels...); err != nil {
+	if err := legacy.AutoMigrate(allModels...); err != nil {
 		t.Fatalf("AutoMigrate: %v", err)
 	}
 	migrated, _ := emptyTestDB(t)

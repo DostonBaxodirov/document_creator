@@ -61,7 +61,9 @@ func (h *Handler) onPayDecision(c tele.Context, approve bool) error {
 	h.editCaption(c, reviewCaption(p, o))
 
 	if approve {
-		return h.startPaidJob(o.TelegramUserID, o.ID, msgPaymentByAdmin)
+		err := h.startPaidJob(o.TelegramUserID, o.ID, msgPaymentByAdmin)
+		h.rewardReferrer(o) // taklif qilganga mukofot (ish boshlangach)
+		return err
 	}
 	h.returnToPayment(o, msgReceiptRejected)
 	return nil
@@ -98,6 +100,9 @@ func reviewCaption(p *storage.Payment, o *storage.Order) string {
 			volumeSuffix(o.WorkType, o.Volume), e(textutil.TruncateHard(o.Topic, 80)))
 	}
 	fmt.Fprintf(&b, "💰 Kutilgan summa: <b>%s</b>\n", formatSum(p.Amount))
+	if o != nil && o.Bonus() {
+		fmt.Fprintf(&b, "🎁 Taklif bonusi: −%s (to'liq narx %s)\n", formatSum(o.Discount), formatSum(o.Value()))
+	}
 
 	detected := []string{"summa: " + orDash(p.DetectedAmount > 0, formatSum(p.DetectedAmount))}
 	detected = append(detected, "karta: "+orDash(p.DetectedLast4 != "", "****"+e(p.DetectedLast4)))

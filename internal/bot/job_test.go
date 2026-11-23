@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
+	"gorm.io/gorm"
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
@@ -50,7 +51,8 @@ func (m *memSessions) Get(_ context.Context, userID int64) (*storage.Session, er
 	defer m.mu.Unlock()
 	s, ok := m.rows[userID]
 	if !ok {
-		return nil, errors.New("sessiya topilmadi")
+		// Haqiqiy ombordagi kabi: topilmasa gorm.ErrRecordNotFound o'ralgan xato.
+		return nil, fmt.Errorf("sessiya topilmadi: %w", gorm.ErrRecordNotFound)
 	}
 	return &s, nil
 }
@@ -193,6 +195,9 @@ func (b *blockingBilling) GetOrder(_ context.Context, id uint) (*storage.Order, 
 func (b *blockingBilling) SetOrderStatus(context.Context, uint, string, string) (bool, error) {
 	return true, nil
 }
+
+// ReleaseOrder: oldin to'langan buyurtma bekor qilinmaydi (haqiqiy ombordagi kabi).
+func (b *blockingBilling) ReleaseOrder(context.Context, uint) (bool, error) { return false, nil }
 
 func (b *blockingBilling) OrderPayment(context.Context, uint) (*storage.Payment, error) {
 	return nil, nil

@@ -40,6 +40,7 @@ type Config struct {
 	Generator GeneratorConfig
 	Limits    LimitsConfig
 	Payment   PaymentConfig
+	Referral  ReferralConfig
 	Custom    CustomConfig
 	Backup    BackupConfig
 	// HealthFile — baza javob bersa har 15 soniyada yangilanadigan fayl
@@ -353,6 +354,42 @@ func (c PaymentConfig) validate() []error {
 	return errs
 }
 
+// ReferralConfig — do'stlarni taklif qilish tizimi: taklif havolasi orqali
+// kelgan yangi foydalanuvchi buyurtmani to'lasa, taklif qilganga 1 ta bepul
+// imkoniyat (bonus) beriladi. Faqat to'lov yoqilgan bo'lsa ishlaydi.
+type ReferralConfig struct {
+	Enabled bool
+	// CustomMax — ✨ maxsus dizayndagi buyurtmada bonus qoplaydigan eng katta
+	// summa, so'mda (qolganini foydalanuvchi to'laydi). Tayyor dizaynlarda
+	// bonus buyurtmani to'liq qoplaydi.
+	CustomMax int
+	// MinPayment — mukofot uchun taklif qilingan foydalanuvchi to'lashi kerak
+	// bo'lgan eng kam summa, so'mda (0 — har qanday to'lov).
+	MinPayment int
+}
+
+func referralConfig(p *parser) ReferralConfig {
+	return ReferralConfig{
+		Enabled:    p.bool("REFERRAL_ENABLED", true),
+		CustomMax:  p.int("REFERRAL_CUSTOM_MAX", 15000),
+		MinPayment: p.int("REFERRAL_MIN_PAYMENT", 0),
+	}
+}
+
+func (c ReferralConfig) validate() []error {
+	if !c.Enabled {
+		return nil
+	}
+	var errs []error
+	if c.CustomMax < 0 {
+		errs = append(errs, errors.New("REFERRAL_CUSTOM_MAX manfiy bo'lishi mumkin emas"))
+	}
+	if c.MinPayment < 0 {
+		errs = append(errs, errors.New("REFERRAL_MIN_PAYMENT manfiy bo'lishi mumkin emas"))
+	}
+	return errs
+}
+
 // Load .env faylini (agar mavjud bo'lsa) yuklaydi, muhit o'zgaruvchilarini o'qiydi
 // va konfiguratsiyani tekshiradi. Muhitda allaqachon o'rnatilgan qiymatlar
 // .env dagi qiymatlardan ustun turadi.
@@ -371,11 +408,12 @@ func Load() (*Config, error) {
 			PollTimeout:     p.duration("TELEGRAM_POLL_TIMEOUT", 10*time.Second),
 			ShutdownTimeout: p.duration("SHUTDOWN_TIMEOUT", 60*time.Second),
 		},
-		AI:      aiCfg,
-		Images:  imagesConfig(p),
-		Payment: paymentConfig(p, aiCfg),
-		Custom:  customConfig(p),
-		Backup:  backupConfig(p),
+		AI:       aiCfg,
+		Images:   imagesConfig(p),
+		Payment:  paymentConfig(p, aiCfg),
+		Referral: referralConfig(p),
+		Custom:   customConfig(p),
+		Backup:   backupConfig(p),
 		DB: DBConfig{
 			Host:            p.str("DB_HOST", "localhost"),
 			Port:            p.int("DB_PORT", 5432),
@@ -537,6 +575,7 @@ func (c *Config) validate() error {
 
 	errs = append(errs, c.Images.validate()...)
 	errs = append(errs, c.Payment.validate()...)
+	errs = append(errs, c.Referral.validate()...)
 	errs = append(errs, c.Custom.validate()...)
 
 	if c.DB.Port <= 0 || c.DB.Port > 65535 {

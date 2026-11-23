@@ -230,3 +230,24 @@ func (r *StatsRepository) ListUsers(ctx context.Context, since *time.Time) ([]Us
 	}
 	return out, nil
 }
+
+// ReferralTotals — do'stlarni taklif qilish tizimi ko'rsatkichlari (barcha vaqt).
+type ReferralTotals struct {
+	Joined      int64 // taklif havolasi orqali kelgan yangi foydalanuvchilar
+	Rewarded    int64 // ulardan buyurtmani to'lab, taklif qilganga mukofot keltirganlar
+	BonusOrders int64 // taklif bonusi ishlatilgan (to'langan yoki yetkazilgan) buyurtmalar
+}
+
+// ReferralTotals taklif tizimi ko'rsatkichlarini bitta so'rovda hisoblaydi.
+func (r *StatsRepository) ReferralTotals(ctx context.Context) (ReferralTotals, error) {
+	var t ReferralTotals
+	err := r.db.WithContext(ctx).Raw(`SELECT
+		(SELECT COUNT(*) FROM referrals) AS joined,
+		(SELECT COUNT(*) FROM referrals WHERE rewarded_at IS NOT NULL) AS rewarded,
+		(SELECT COUNT(*) FROM orders WHERE discount > 0 AND status IN (?, ?)) AS bonus_orders`,
+		OrderPaid, OrderDelivered).Scan(&t).Error
+	if err != nil {
+		return ReferralTotals{}, fmt.Errorf("storage: taklif ko'rsatkichlarini o'qib bo'lmadi: %w", err)
+	}
+	return t, nil
+}

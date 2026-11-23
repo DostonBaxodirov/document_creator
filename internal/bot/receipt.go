@@ -51,6 +51,9 @@ func (h *Handler) paymentText(o *storage.Order, intro bool) string {
 	case !ai.WorkType(o.WorkType).IsDocument():
 		fmt.Fprintf(&b, " <i>(%d slayd)</i>", o.Volume)
 	}
+	if o.Bonus() {
+		fmt.Fprintf(&b, "\n🎁 <b>Bonus:</b> −%s <i>(to'liq narx %s)</i>", formatSum(o.Discount), formatSum(o.Value()))
+	}
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "💳 <b>Karta:</b> <code>%s</code>\n", formatCard(p.CardNumber))
 	if p.CardHolder != "" {
@@ -94,16 +97,6 @@ func (h *Handler) replyInReview(ctx context.Context, c tele.Context, s *storage.
 		}
 	}
 	return c.Send(msgReviewWait)
-}
-
-// cancelPendingOrder to'lov kutilayotgan buyurtmani bekor qiladi.
-func (h *Handler) cancelPendingOrder(ctx context.Context, s *storage.Session) {
-	if s.OrderID == nil || h.billing == nil {
-		return
-	}
-	if _, err := h.billing.SetOrderStatus(ctx, *s.OrderID, storage.OrderPending, storage.OrderCancelled); err != nil {
-		h.log.Warn("failed to cancel pending order", zap.Uint("order_id", *s.OrderID), zap.Error(err))
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +324,8 @@ func (h *Handler) checkReceipt(j *receiptJob) {
 		if err := h.startPaidJob(j.userID, j.order.ID, msgPaymentApproved); err != nil {
 			log.Error("failed to start paid job", zap.Error(err))
 		}
+		// Taklif qilinganning to'lovi — taklif qilganga mukofot (ish boshlangach).
+		h.rewardReferrer(j.order)
 	case payment.Suspicious:
 		if _, err := h.bot.Send(chat, msgReceiptToAdmin); err != nil {
 			log.Warn("failed to notify user about review", zap.Error(err))
@@ -426,7 +421,8 @@ func (h *Handler) returnToPayment(o *storage.Order, text string) {
 		}
 		return
 	}
-	if _, err := h.billing.SetOrderStatus(ctx, o.ID, storage.OrderPending, storage.OrderCancelled); err != nil {
+	// Bonus bilan qisman to'lanadigan buyurtmada bonus qaytariladi.
+	if _, err := h.billing.ReleaseOrder(ctx, o.ID); err != nil {
 		log.Warn("failed to cancel order", zap.Error(err))
 	}
 	if _, err := h.bot.Send(chat, fmt.Sprintf("❌ Buyurtma #%d bo'yicha chek tasdiqlanmadi.", o.ID)); err != nil {

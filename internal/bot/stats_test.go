@@ -51,6 +51,10 @@ func (f *fakeStats) Overview(_ context.Context, sinces []time.Time) (storage.Per
 	return all, periods, nil
 }
 
+func (f *fakeStats) ReferralTotals(context.Context) (storage.ReferralTotals, error) {
+	return storage.ReferralTotals{Joined: 12, Rewarded: 5, BonusOrders: 3}, nil
+}
+
 func (f *fakeStats) DailyStats(_ context.Context, from time.Time, days int) ([]storage.DayStats, error) {
 	f.from, f.days = from, days
 	out := make([]storage.DayStats, days)

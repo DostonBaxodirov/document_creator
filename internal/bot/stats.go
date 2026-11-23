@@ -111,10 +111,11 @@ type periodRow struct {
 
 // statsReport — /statistika ma'lumotlari.
 type statsReport struct {
-	now     time.Time
-	all     storage.PeriodStats // barcha vaqt (NewUsers — jami foydalanuvchilar)
-	periods []periodRow
-	days    []storage.DayStats // eskisidan yangisiga
+	now      time.Time
+	all      storage.PeriodStats // barcha vaqt (NewUsers — jami foydalanuvchilar)
+	periods  []periodRow
+	days     []storage.DayStats      // eskisidan yangisiga
+	referral *storage.ReferralTotals // taklif tizimi (o'chirilgan bo'lsa — nil)
 }
 
 // onStats /statistika — tashrif buyuruvchilar statistikasi (faqat admin).
@@ -156,6 +157,13 @@ func (h *Handler) collectStats(ctx context.Context, now time.Time) (statsReport,
 	}
 	if rep.days, err = h.stats.DailyStats(ctx, today.AddDate(0, 0, 1-statsDays), statsDays); err != nil {
 		return rep, err
+	}
+	if h.referralOn() {
+		t, err := h.stats.ReferralTotals(ctx)
+		if err != nil {
+			return rep, err
+		}
+		rep.referral = &t
 	}
 	return rep, nil
 }
@@ -212,6 +220,11 @@ func statsText(r statsReport) string {
 				padLeft(formatCount(d.NewUsers), 6), padLeft(formatCount(d.ActiveUsers), 6))
 		}
 		b.WriteString("</pre>\n")
+	}
+
+	if t := r.referral; t != nil {
+		fmt.Fprintf(&b, "\n🎁 <b>Do'stlarni taklif qilish</b>\nHavola orqali kelganlar: <b>%s</b> · to'lov qilganlar: <b>%s</b> · ishlatilgan bonuslar: <b>%s</b>\n",
+			formatCount(t.Joined), formatCount(t.Rewarded), formatCount(t.BonusOrders))
 	}
 
 	b.WriteString("\n<i>Yangi — botga birinchi marta kirganlar. Faol — botga yozgan yoki tugma bosganlar " +

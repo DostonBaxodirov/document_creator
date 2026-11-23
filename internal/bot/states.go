@@ -61,6 +61,13 @@ const (
 	cbRestart  = "restart"
 	cbCancel   = "cancel"
 
+	cbConfirmBonus = "confirm_b" // tasdiqlash taklif bonusi hisobidan
+	cbReferral     = "ref"       // do'stlarni taklif qilish ekrani (havola va bonuslar)
+
+	cbBcStart  = "bc_go"   // admin: taklif e'lonini hammaga yuborish
+	cbBcCancel = "bc_no"   // admin: e'lonni yubormaslik
+	cbBcStop   = "bc_stop" // admin: yuborilayotgan e'lonni to'xtatish (data — e'lon ID)
+
 	cbPayApprove   = "pay_ok"  // admin: shubhali chekni tasdiqlash (data — payment ID)
 	cbPayReject    = "pay_no"  // admin: shubhali chekni rad etish (data — payment ID)
 	cbReportPeriod = "rep_per" // admin: hisobot davri (data — reportPeriod)

@@ -290,3 +290,26 @@ func TestHealthFile(t *testing.T) {
 		}
 	}
 }
+
+func TestReferralConfig(t *testing.T) {
+	for _, k := range []string{"REFERRAL_ENABLED", "REFERRAL_CUSTOM_MAX", "REFERRAL_MIN_PAYMENT"} {
+		t.Setenv(k, "")
+	}
+	p := &parser{}
+	c := referralConfig(p)
+	if len(p.errs) > 0 {
+		t.Fatal(p.errs)
+	}
+	if !c.Enabled || c.CustomMax != 15000 || c.MinPayment != 0 {
+		t.Errorf("standart qiymatlar noto'g'ri: %+v", c)
+	}
+	if errs := c.validate(); len(errs) > 0 {
+		t.Errorf("standart qiymatlar xato berdi: %v", errs)
+	}
+	if errs := (ReferralConfig{Enabled: true, CustomMax: -1, MinPayment: -1}).validate(); len(errs) != 2 {
+		t.Errorf("manfiy qiymatlar uchun 2 ta xato kutilgan edi: %v", errs)
+	}
+	if errs := (ReferralConfig{CustomMax: -1}).validate(); len(errs) != 0 {
+		t.Errorf("o'chirilgan sozlama tekshirilmasligi kerak: %v", errs)
+	}
+}
