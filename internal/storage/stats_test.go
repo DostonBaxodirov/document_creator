@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func TestStatsRepository(t *testing.T) {
@@ -56,27 +58,19 @@ func TestStatsRepository(t *testing.T) {
 		}
 	}
 
-	if total, err := r.TotalUsers(ctx); err != nil || total != 3 {
-		t.Fatalf("jami: %d %v", total, err)
+	overall, periods, err := r.Overview(ctx, []time.Time{today, today.AddDate(0, 0, -6)})
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	cases := []struct {
-		name  string
-		since *time.Time
-		want  PeriodStats
-	}{
-		{"bugun", ptr(today), PeriodStats{NewUsers: 1, ActiveUsers: 3, Customers: 1, Delivered: 1}},
-		{"7 kun", ptr(today.AddDate(0, 0, -6)), PeriodStats{NewUsers: 2, ActiveUsers: 3, Customers: 1, Delivered: 1}},
-		{"barcha", nil, PeriodStats{NewUsers: 3, ActiveUsers: 3, Customers: 1, Delivered: 2}},
+	if want := (PeriodStats{NewUsers: 3, ActiveUsers: 3, Customers: 1, Delivered: 2}); overall != want {
+		t.Errorf("barcha vaqt: %+v, kutilgan %+v", overall, want)
 	}
-	for _, c := range cases {
-		got, err := r.PeriodStats(ctx, c.since)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != c.want {
-			t.Errorf("%s: %+v, kutilgan %+v", c.name, got, c.want)
-		}
+	wantPeriods := []PeriodStats{
+		{NewUsers: 1, ActiveUsers: 3, Customers: 1, Delivered: 1}, // bugun
+		{NewUsers: 2, ActiveUsers: 3, Customers: 1, Delivered: 1}, // 7 kun
+	}
+	if !slices.Equal(periods, wantPeriods) {
+		t.Errorf("davrlar: %+v, kutilgan %+v", periods, wantPeriods)
 	}
 
 	days, err := r.DailyStats(ctx, today.AddDate(0, 0, -3), 4)
@@ -201,44 +195,73 @@ func TestRecordVisitIdempotent(t *testing.T) {
 	}
 }
 
-func TestPeriodStatsBoundaries(t *testing.T) {
+// queryCounter — bajarilgan SQL so'rovlarni sanaydigan gorm logger.
+type queryCounter struct {
+	gormlogger.Interface
+	n atomic.Int64
+}
+
+func (q *queryCounter) Trace(context.Context, time.Time, func() (string, int64), error) { q.n.Add(1) }
+
+// TestOverview: bir nechta davr bitta chaqiruvda, aynan since ga to'g'ri
+// keladigan yozuvlar davrga kiradi, 1 mikrosoniya oldingisi — kirmaydi.
+// Kutilgan qiymatlar qo'lda hisoblangan; har bir davrda to'rtala ko'rsatkich
+// har xil — ustunlar adashib ketsa, test buni ushlaydi.
+func TestOverview(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 	r := NewStatsRepository(db, tashkent)
 
-	since := time.Date(2026, 11, 18, 0, 0, 0, 0, tashkent)
-	justBefore := since.Add(-time.Microsecond)
+	d18 := time.Date(2026, 11, 18, 0, 0, 0, 0, tashkent) // UTC: 17-noyabr 19:00
+	d12 := d18.AddDate(0, 0, -6)
+	b18 := d18.Add(-time.Microsecond) // 17-noyabr 23:59:59.999999 Toshkent
+	b12 := d12.Add(-time.Microsecond) // 11-noyabr 23:59:59.999999 Toshkent
 
-	// Yangi foydalanuvchilar: since dan oldin (1) — davrga kirmaydi, aynan since (2) — kiradi.
-	mkSession(t, db, 1, justBefore)
-	mkSession(t, db, 2, since)
-	mkSession(t, db, 3, since.Add(5*time.Hour))
+	// Yangi foydalanuvchilar: d12 dan oldin 2 ta, [d12, d18) — 2 ta, d18 dan keyin — 4 ta.
+	for id, created := range []time.Time{
+		d12.AddDate(0, 0, -2), b12, // faqat barcha vaqt
+		d12, b18, // + d12
+		d18, d18.Add(5 * time.Hour), d18.AddDate(0, 0, 1), d18.AddDate(0, 0, 2), // + d18
+	} {
+		mkSession(t, db, int64(id+1), created)
+	}
 
-	// Faol foydalanuvchilar: 1 — ikkala kunda, 2 — davrda ikki kun (bir marta sanaladi),
-	// 4 — faqat davrdan oldin.
+	// Faol foydalanuvchilar (kunlar Toshkent vaqtida):
+	//   1 — 11-noyabr va 18-noyabr 00:00 (UTC da hali 17-noyabr) → hamma davrda;
+	//   2 — 12, 13, 17-noyabr → barcha vaqt, d12 (bir marta sanaladi);
+	//   3 — 11-noyabr → faqat barcha vaqt;
+	//   4 — 17-noyabr 23:59:59.999999 → barcha vaqt, d12;
+	//   5 — 10-noyabr → faqat barcha vaqt;
+	//   6 — 14-noyabr → barcha vaqt, d12.
 	for _, v := range []struct {
 		user int64
 		at   time.Time
 	}{
-		{1, justBefore}, {1, since.Add(time.Hour)},
-		{2, since}, {2, since.AddDate(0, 0, 1)},
-		{4, justBefore},
+		{1, b12}, {1, d18},
+		{2, d12}, {2, b18}, {2, d12.AddDate(0, 0, 1)},
+		{3, b12},
+		{4, b18},
+		{5, d12.AddDate(0, 0, -2)},
+		{6, d12.AddDate(0, 0, 2)},
 	} {
 		if err := r.RecordVisit(ctx, v.user, v.at); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// Yetkazilgan ishlar: 10 — davrda ikki ish, 11 — davrdan oldin,
-	// 12 — yetkazilmagan, 13 — davrda bitta ish.
+	// Yetkazilgan ishlar: 20 — d12 dan oldin va d18 dan keyin, 21 — d12 dan oldin,
+	// 22 — [d12, d18) da ikki ish (aynan d12 va d18 dan 1 mks oldin),
+	// 23 — aynan d18 va bir soatdan keyin, 24 — yetkazilmagan.
 	for _, o := range []struct {
 		tg        int64
 		delivered *time.Time
 	}{
-		{10, ptr(since)}, {10, ptr(since.Add(time.Hour))},
-		{11, ptr(justBefore)},
-		{12, nil},
-		{13, ptr(since.AddDate(0, 0, 2))},
+		{20, ptr(b12)},
+		{21, ptr(d12.AddDate(0, 0, -3))},
+		{22, ptr(d12)}, {22, ptr(b18)},
+		{23, ptr(d18)}, {23, ptr(d18.Add(time.Hour))},
+		{20, ptr(d18.AddDate(0, 0, 2))},
+		{24, nil},
 	} {
 		status := OrderDelivered
 		if o.delivered == nil {
@@ -251,23 +274,52 @@ func TestPeriodStatsBoundaries(t *testing.T) {
 		}
 	}
 
-	inPeriod := PeriodStats{NewUsers: 2, ActiveUsers: 2, Customers: 2, Delivered: 3}
-	for _, c := range []struct {
-		name  string
-		since *time.Time
-		want  PeriodStats
-	}{
-		{"since Toshkent", ptr(since), inPeriod},
-		{"since UTC", ptr(since.UTC()), inPeriod},
-		{"barcha vaqt", nil, PeriodStats{NewUsers: 3, ActiveUsers: 3, Customers: 3, Delivered: 4}},
-	} {
-		got, err := r.PeriodStats(ctx, c.since)
-		if err != nil {
-			t.Fatal(err)
+	// So'rovlar sonini sanash uchun alohida logger'li sessiya.
+	counter := &queryCounter{Interface: gormlogger.Default.LogMode(gormlogger.Silent)}
+	counted := NewStatsRepository(db.Session(&gorm.Session{Logger: counter}), tashkent)
+
+	// Davrlar ataylab tartibsiz: natija sinces tartibida qaytishi kerak.
+	sinces := []time.Time{
+		d18,
+		d12,
+		d18.UTC(),            // xuddi shu payt UTC da: kun Toshkent bo'yicha hisoblanadi
+		d18.AddDate(0, 0, 3), // barcha yozuvlardan keyin
+	}
+	inD18 := PeriodStats{NewUsers: 4, ActiveUsers: 1, Customers: 2, Delivered: 3}
+	wantAll := PeriodStats{NewUsers: 8, ActiveUsers: 6, Customers: 4, Delivered: 7}
+	wantPeriods := []PeriodStats{
+		inD18,
+		{NewUsers: 6, ActiveUsers: 4, Customers: 3, Delivered: 5},
+		inD18,
+		{},
+	}
+
+	all, periods, err := counted.Overview(ctx, sinces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all != wantAll {
+		t.Errorf("barcha vaqt: %+v, kutilgan %+v", all, wantAll)
+	}
+	if len(periods) != len(wantPeriods) {
+		t.Fatalf("davrlar soni %d, kutilgan %d", len(periods), len(wantPeriods))
+	}
+	for i, w := range wantPeriods {
+		if periods[i] != w {
+			t.Errorf("since=%v: %+v, kutilgan %+v", sinces[i], periods[i], w)
 		}
-		if got != c.want {
-			t.Errorf("%s: %+v, kutilgan %+v", c.name, got, c.want)
-		}
+	}
+	if n := counter.n.Load(); n != 3 {
+		t.Errorf("so'rovlar soni %d, kutilgan 3", n)
+	}
+
+	// Davrlarsiz: faqat barcha vaqt.
+	all, periods, err = counted.Overview(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all != wantAll || len(periods) != 0 {
+		t.Errorf("davrlarsiz: %+v %+v, kutilgan %+v []", all, periods, wantAll)
 	}
 }
 

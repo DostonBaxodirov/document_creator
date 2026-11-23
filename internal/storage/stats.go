@@ -7,6 +7,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -68,40 +69,64 @@ func (r *StatsRepository) RecordVisit(ctx context.Context, userID int64, at time
 	return nil
 }
 
-// TotalUsers botdan foydalangan barcha foydalanuvchilar soni.
-func (r *StatsRepository) TotalUsers(ctx context.Context) (int64, error) {
-	var n int64
-	if err := r.db.WithContext(ctx).Model(&Session{}).Count(&n).Error; err != nil {
-		return 0, fmt.Errorf("storage: foydalanuvchilar sonini o'qib bo'lmadi: %w", err)
+// Overview barcha vaqt (all) va har bir since dan boshlab (periods[i] —
+// sinces[i] uchun) ko'rsatkichlarni 3 ta so'rovda hisoblaydi: har bir jadval
+// bir marta o'qiladi, davrlar FILTER bilan ajratiladi. since kun boshi
+// bo'lishi kerak: faol foydalanuvchilar kunlar bo'yicha sanaladi.
+func (r *StatsRepository) Overview(ctx context.Context, sinces []time.Time) (all PeriodStats, periods []PeriodStats, err error) {
+	periods = make([]PeriodStats, len(sinces))
+	var users, visits, delivered countQuery
+	users.add("COUNT(*)", &all.NewUsers)
+	visits.add("COUNT(DISTINCT user_id)", &all.ActiveUsers)
+	delivered.add("COUNT(*)", &all.Delivered)
+	delivered.add("COUNT(DISTINCT telegram_user_id)", &all.Customers)
+	for i, since := range sinces {
+		p := &periods[i]
+		users.addSince("COUNT(*)", "created_at", since, &p.NewUsers)
+		visits.addSince("COUNT(DISTINCT user_id)", "day", r.date(since), &p.ActiveUsers)
+		delivered.addSince("COUNT(*)", "delivered_at", since, &p.Delivered)
+		delivered.addSince("COUNT(DISTINCT telegram_user_id)", "delivered_at", since, &p.Customers)
 	}
-	return n, nil
+
+	db := r.db.WithContext(ctx)
+	if err := users.scan(db, "sessions"); err != nil {
+		return PeriodStats{}, nil, fmt.Errorf("storage: yangi foydalanuvchilarni o'qib bo'lmadi: %w", err)
+	}
+	if err := visits.scan(db, "visits"); err != nil {
+		return PeriodStats{}, nil, fmt.Errorf("storage: faol foydalanuvchilarni o'qib bo'lmadi: %w", err)
+	}
+	if err := delivered.scan(db, "orders WHERE delivered_at IS NOT NULL"); err != nil {
+		return PeriodStats{}, nil, fmt.Errorf("storage: yetkazilgan ishlarni o'qib bo'lmadi: %w", err)
+	}
+	return all, periods, nil
 }
 
-// PeriodStats since dan boshlab (nil — barcha vaqt) ko'rsatkichlar. since
-// kun boshi bo'lishi kerak: faol foydalanuvchilar kunlar bo'yicha sanaladi.
-func (r *StatsRepository) PeriodStats(ctx context.Context, since *time.Time) (PeriodStats, error) {
-	db := r.db.WithContext(ctx)
-	var st PeriodStats
+// countQuery — bitta jadval bo'yicha bir nechta sanoqni bitta so'rovda
+// o'qiydi. Ustun nomlari va agregatlar faqat kod ichidagi o'zgarmaslar;
+// qiymatlar (since) SQL matniga qo'shilmaydi — faqat placeholder orqali
+// uzatiladi.
+type countQuery struct {
+	cols []string
+	args []any
+	dest []any
+}
 
-	users := db.Model(&Session{})
-	visits := db.Model(&Visit{})
-	delivered := db.Model(&Order{}).Where("delivered_at IS NOT NULL")
-	if since != nil {
-		users = users.Where("created_at >= ?", *since)
-		visits = visits.Where("day >= ?", r.date(*since))
-		delivered = delivered.Where("delivered_at >= ?", *since)
-	}
-	if err := users.Count(&st.NewUsers).Error; err != nil {
-		return st, fmt.Errorf("storage: yangi foydalanuvchilarni o'qib bo'lmadi: %w", err)
-	}
-	if err := visits.Distinct("user_id").Count(&st.ActiveUsers).Error; err != nil {
-		return st, fmt.Errorf("storage: faol foydalanuvchilarni o'qib bo'lmadi: %w", err)
-	}
-	if err := delivered.Select("COUNT(DISTINCT telegram_user_id), COUNT(*)").
-		Row().Scan(&st.Customers, &st.Delivered); err != nil {
-		return st, fmt.Errorf("storage: yetkazilgan ishlarni o'qib bo'lmadi: %w", err)
-	}
-	return st, nil
+// add filtrsiz agregat qo'shadi (barcha vaqt).
+func (q *countQuery) add(agg string, dest *int64) {
+	q.cols = append(q.cols, agg)
+	q.dest = append(q.dest, dest)
+}
+
+// addSince faqat col >= since bo'lgan qatorlar bo'yicha agregat qo'shadi.
+func (q *countQuery) addSince(agg, col string, since time.Time, dest *int64) {
+	q.cols = append(q.cols, agg+" FILTER (WHERE "+col+" >= ?)")
+	q.args = append(q.args, since)
+	q.dest = append(q.dest, dest)
+}
+
+// scan so'rovni bajaradi va natijalarni dest larga yozadi.
+func (q *countQuery) scan(db *gorm.DB, from string) error {
+	return db.Raw("SELECT "+strings.Join(q.cols, ", ")+" FROM "+from, q.args...).Row().Scan(q.dest...)
 }
 
 // DailyStats from kunidan boshlab ketma-ket days kunning ko'rsatkichlari

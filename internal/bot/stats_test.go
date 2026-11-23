@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,8 @@ import (
 type fakeStats struct {
 	visits     []int64
 	err        error
-	sinces     []*time.Time
+	overviews  int // Overview chaqiruvlari soni
+	sinces     []time.Time
 	from       time.Time
 	days       int
 	users      []storage.UserSummary
@@ -37,15 +39,16 @@ func (f *fakeStats) RecordVisit(_ context.Context, userID int64, _ time.Time) er
 	return nil
 }
 
-func (f *fakeStats) TotalUsers(context.Context) (int64, error) { return 1234, nil }
-
-func (f *fakeStats) PeriodStats(_ context.Context, since *time.Time) (storage.PeriodStats, error) {
-	f.sinces = append(f.sinces, since)
-	if since == nil {
-		return storage.PeriodStats{NewUsers: 1234, ActiveUsers: 1234, Customers: 310, Delivered: 845}, nil
+func (f *fakeStats) Overview(_ context.Context, sinces []time.Time) (storage.PeriodStats, []storage.PeriodStats, error) {
+	f.overviews++
+	f.sinces = slices.Clone(sinces)
+	all := storage.PeriodStats{NewUsers: 1234, ActiveUsers: 1234, Customers: 310, Delivered: 845}
+	periods := make([]storage.PeriodStats, len(sinces))
+	for i := range periods {
+		n := int64(i + 2) // 2, 3, 4 — TestStatsText dagi kutilgan qiymatlar shulardan
+		periods[i] = storage.PeriodStats{NewUsers: 10 * n, ActiveUsers: 40 * n, Customers: 3 * n, Delivered: 5 * n}
 	}
-	n := int64(len(f.sinces))
-	return storage.PeriodStats{NewUsers: 10 * n, ActiveUsers: 40 * n, Customers: 3 * n, Delivered: 5 * n}, nil
+	return all, periods, nil
 }
 
 func (f *fakeStats) DailyStats(_ context.Context, from time.Time, days int) ([]storage.DayStats, error) {
@@ -109,16 +112,19 @@ func TestCollectStatsPeriods(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.total != 1234 || len(rep.periods) != 3 || len(rep.days) != statsDays {
+	if rep.all.NewUsers != 1234 || len(rep.periods) != 3 || len(rep.days) != statsDays {
 		t.Fatalf("hisobot to'liq emas: %+v", rep)
+	}
+	if fs.overviews != 1 {
+		t.Errorf("Overview bir marta chaqirilishi kerak, chaqirildi: %d", fs.overviews)
 	}
 	today := time.Date(2026, 11, 19, 0, 0, 0, 0, tz.Tashkent)
 	want := []time.Time{today, today.AddDate(0, 0, -6), today.AddDate(0, 0, -29)}
-	if fs.sinces[0] != nil {
-		t.Error("barcha vaqt uchun since nil bo'lishi kerak")
+	if len(fs.sinces) != len(want) {
+		t.Fatalf("davrlar soni %d, kutilgan %d", len(fs.sinces), len(want))
 	}
 	for i, w := range want {
-		if got := fs.sinces[i+1]; got == nil || !got.Equal(w) {
+		if got := fs.sinces[i]; !got.Equal(w) {
 			t.Errorf("%s davri boshi %v, kutilgan %v", statsPeriods[i].title, got, w)
 		}
 	}

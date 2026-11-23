@@ -23,8 +23,7 @@ import (
 // StatsStore — tashriflar ombori (internal/storage.StatsRepository).
 type StatsStore interface {
 	RecordVisit(ctx context.Context, userID int64, at time.Time) error
-	TotalUsers(ctx context.Context) (int64, error)
-	PeriodStats(ctx context.Context, since *time.Time) (storage.PeriodStats, error)
+	Overview(ctx context.Context, sinces []time.Time) (all storage.PeriodStats, periods []storage.PeriodStats, err error)
 	DailyStats(ctx context.Context, from time.Time, days int) ([]storage.DayStats, error)
 	ListUsers(ctx context.Context, since *time.Time) ([]storage.UserSummary, error)
 }
@@ -122,8 +121,7 @@ type periodRow struct {
 // statsReport — /statistika ma'lumotlari.
 type statsReport struct {
 	now     time.Time
-	total   int64
-	all     storage.PeriodStats // barcha vaqt
+	all     storage.PeriodStats // barcha vaqt (NewUsers — jami foydalanuvchilar)
 	periods []periodRow
 	days    []storage.DayStats // eskisidan yangisiga
 }
@@ -153,20 +151,17 @@ func (h *Handler) collectStats(ctx context.Context, now time.Time) (statsReport,
 	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, tz.Tashkent)
 	rep := statsReport{now: now}
 
-	var err error
-	if rep.total, err = h.stats.TotalUsers(ctx); err != nil {
+	sinces := make([]time.Time, len(statsPeriods))
+	for i, p := range statsPeriods {
+		sinces[i] = today.AddDate(0, 0, 1-p.days)
+	}
+	all, periods, err := h.stats.Overview(ctx, sinces)
+	if err != nil {
 		return rep, err
 	}
-	if rep.all, err = h.stats.PeriodStats(ctx, nil); err != nil {
-		return rep, err
-	}
-	for _, p := range statsPeriods {
-		since := today.AddDate(0, 0, 1-p.days)
-		st, err := h.stats.PeriodStats(ctx, &since)
-		if err != nil {
-			return rep, err
-		}
-		rep.periods = append(rep.periods, periodRow{title: p.title, stats: st})
+	rep.all = all
+	for i, p := range statsPeriods {
+		rep.periods = append(rep.periods, periodRow{title: p.title, stats: periods[i]})
 	}
 	if rep.days, err = h.stats.DailyStats(ctx, today.AddDate(0, 0, 1-statsDays), statsDays); err != nil {
 		return rep, err
@@ -180,7 +175,7 @@ func statsText(r statsReport) string {
 	var b strings.Builder
 	b.WriteString("👥 <b>Tashrif buyuruvchilar statistikasi</b>\n")
 	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", r.now.In(tz.Tashkent).Format("02.01.2006 15:04"))
-	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.total))
+	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.all.NewUsers))
 	fmt.Fprintf(&b, "📦 Jami tayyor ishlar: <b>%s</b> ta (%s kishi)\n\n", formatCount(r.all.Delivered), formatCount(r.all.Customers))
 
 	if len(r.periods) > 0 {
