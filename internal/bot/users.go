@@ -25,8 +25,6 @@ import (
 	"telegram-presentation-bot/internal/tz"
 )
 
-const msgNoUserStats = "Foydalanuvchilar ro'yxati hozircha mavjud emas."
-
 // onUsers /foydalanuvchilar — davr tanlash tugmalari.
 func (h *Handler) onUsers(c tele.Context) error {
 	if ok, err := h.requireAdmin(c); !ok {
@@ -40,7 +38,7 @@ func (h *Handler) onUsers(c tele.Context) error {
 
 // onUsersPeriod davr tanlanganda — format tanlash tugmalari.
 func (h *Handler) onUsersPeriod(c tele.Context) error {
-	if ok, err := h.requireAdminCallback(c); !ok {
+	if ok, err := h.requireAdmin(c); !ok {
 		return err
 	}
 	p, ok := findPeriod(c.Data())
@@ -57,7 +55,7 @@ func (h *Handler) onUsersPeriod(c tele.Context) error {
 
 // onUsersFormat format tanlanganda ro'yxatni yuboradi.
 func (h *Handler) onUsersFormat(c tele.Context) error {
-	if ok, err := h.requireAdminCallback(c); !ok {
+	if ok, err := h.requireAdmin(c); !ok {
 		return err
 	}
 	args := c.Args()
@@ -126,7 +124,7 @@ func usersText(list []storage.UserSummary, p reportPeriod, now time.Time) string
 	st := computeUserStats(list)
 	var b strings.Builder
 	fmt.Fprintf(&b, "👥 <b>Foydalanuvchilar — %s</b>\n", p.Title)
-	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(tz.Tashkent).Format("02.01.2006 15:04"))
+	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(tz.Tashkent).Format(dateTimeLayout))
 	fmt.Fprintf(&b, "👤 Jami: <b>%s</b>\n", formatCount(st.total))
 	fmt.Fprintf(&b, "📦 Ish olgan: <b>%s</b>\n", formatCount(st.customers))
 	fmt.Fprintf(&b, "💰 To'lov qilgan: <b>%s</b> · %s\n", formatCount(st.payers), formatSum(int(st.paidSum)))

@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,14 +18,6 @@ import (
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/tz"
 )
-
-// StatsStore — tashriflar ombori (internal/storage.StatsRepository).
-type StatsStore interface {
-	RecordVisit(ctx context.Context, userID int64, at time.Time) error
-	Overview(ctx context.Context, sinces []time.Time) (all storage.PeriodStats, periods []storage.PeriodStats, err error)
-	DailyStats(ctx context.Context, from time.Time, days int) ([]storage.DayStats, error)
-	ListUsers(ctx context.Context, since *time.Time) ([]storage.UserSummary, error)
-}
 
 const (
 	visitTimeout = 3 * time.Second // tashrifni yozish uchun baza amali vaqti
@@ -174,19 +165,14 @@ func (h *Handler) collectStats(ctx context.Context, now time.Time) (statsReport,
 func statsText(r statsReport) string {
 	var b strings.Builder
 	b.WriteString("👥 <b>Tashrif buyuruvchilar statistikasi</b>\n")
-	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", r.now.In(tz.Tashkent).Format("02.01.2006 15:04"))
-	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.all.NewUsers))
+	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", r.now.In(tz.Tashkent).Format(dateTimeLayout))
+	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.total))
 	fmt.Fprintf(&b, "📦 Jami tayyor ishlar: <b>%s</b> ta (%s kishi)\n\n", formatCount(r.all.Delivered), formatCount(r.all.Customers))
 
 	if len(r.periods) > 0 {
 		const label, gap = 10, "  "
-		rows := []struct {
-			name string
-			val  func(storage.PeriodStats) int64
-		}{
 			{"Yangi", func(s storage.PeriodStats) int64 { return s.NewUsers }},
 			{"Faol", func(s storage.PeriodStats) int64 { return s.ActiveUsers }},
-			{"Ish olgan", func(s storage.PeriodStats) int64 { return s.Customers }},
 			{"Tayyor ish", func(s storage.PeriodStats) int64 { return s.Delivered }},
 		}
 		widths := make([]int, len(r.periods))
@@ -226,23 +212,4 @@ func statsText(r statsReport) string {
 	b.WriteString("\n<i>Yangi — botga birinchi marta kirganlar. Faol — botga yozgan yoki tugma bosganlar " +
 		"(davr ichida har biri bir marta sanaladi). Ish olgan — tayyor fayl olgan foydalanuvchilar.</i>")
 	return b.String()
-}
-
-// formatCount sonni minglar bo'yicha ajratadi: 12345 → "12 345".
-func formatCount(n int64) string {
-	return groupDigits(strconv.FormatInt(n, 10), 3, true)
-}
-
-func padLeft(s string, width int) string {
-	if n := len([]rune(s)); n < width {
-		return strings.Repeat(" ", width-n) + s
-	}
-	return s
-}
-
-func padRight(s string, width int) string {
-	if n := len([]rune(s)); n < width {
-		return s + strings.Repeat(" ", width-n)
-	}
-	return s
 }

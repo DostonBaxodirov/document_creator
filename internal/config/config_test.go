@@ -1,14 +1,14 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestImagesConfigDefaultsAndValidation(t *testing.T) {
-	for _, k := range []string{"IMAGE_STANDARD_PROVIDER", "IMAGE_PREMIUM_PROVIDER", "IMAGE_DEFAULT_TIER",
-		"OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "GEMINI_IMAGE_MODEL", "GEMINI_IMAGE_SIZE",
-		"IMAGE_TIMEOUT", "IMAGE_PARALLEL_REQUESTS", "IMAGE_FALLBACK"} {
+	for _, k := range []string{"OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "IMAGE_TIMEOUT", "IMAGE_PARALLEL_REQUESTS"} {
 		t.Setenv(k, "")
 	}
 	p := &parser{}
@@ -16,25 +16,51 @@ func TestImagesConfigDefaultsAndValidation(t *testing.T) {
 	if len(p.errs) > 0 || len(c.validate()) > 0 {
 		t.Fatalf("standart sozlamalar yaroqli bo'lishi kerak: %v %v", p.errs, c.validate())
 	}
-	if c.StandardProvider != ImageProviderOpenAI || c.PremiumProvider != ImageProviderOpenAI ||
-		c.DefaultTier != TierStandard || c.OpenAIModel != "gpt-image-2" || c.OpenAIQuality != "low" || !c.Fallback {
-		t.Errorf("standart qiymatlar noto'g'ri: %+v", c)
+	want := ImagesConfig{OpenAIModel: "gpt-image-2", OpenAIQuality: "low", Timeout: 90 * time.Second, Parallel: 4}
+	if c != want {
+		t.Errorf("standart qiymatlar noto'g'ri: %+v, kutilgan %+v", c, want)
 	}
 
-	t.Setenv("IMAGE_STANDARD_PROVIDER", "midjourney")
-	t.Setenv("IMAGE_DEFAULT_TIER", "gold")
 	t.Setenv("OPENAI_IMAGE_QUALITY", "ultra")
-	t.Setenv("GEMINI_IMAGE_SIZE", "8k")
+	t.Setenv("IMAGE_TIMEOUT", "0s")
 	t.Setenv("IMAGE_PARALLEL_REQUESTS", "0")
 	errs := imagesConfig(&parser{}).validate()
 	joined := ""
 	for _, e := range errs {
 		joined += e.Error() + "\n"
 	}
-	for _, want := range []string{"IMAGE_STANDARD_PROVIDER", "IMAGE_DEFAULT_TIER", "OPENAI_IMAGE_QUALITY", "GEMINI_IMAGE_SIZE", "IMAGE_PARALLEL_REQUESTS"} {
+	for _, want := range []string{"OPENAI_IMAGE_QUALITY", "IMAGE_TIMEOUT", "IMAGE_PARALLEL_REQUESTS"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("%s xatosi kutilgan edi:\n%s", want, joined)
 		}
+	}
+}
+
+// TestImagesConfigIgnoresLegacyKeys — olib tashlangan rasm tariflari
+// sozlamalari eski .env da qolgan bo'lsa (hatto noto'g'ri qiymat bilan),
+// e'tiborsiz qoldiriladi: xato bermaydi va natijaga ta'sir qilmaydi.
+func TestImagesConfigIgnoresLegacyKeys(t *testing.T) {
+	for _, k := range []string{"OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "IMAGE_TIMEOUT", "IMAGE_PARALLEL_REQUESTS"} {
+		t.Setenv(k, "")
+	}
+	clean := imagesConfig(&parser{})
+	for k, v := range map[string]string{
+		"IMAGE_STANDARD_PROVIDER": "midjourney",
+		"IMAGE_PREMIUM_PROVIDER":  "gemini",
+		"IMAGE_DEFAULT_TIER":      "gold",
+		"GEMINI_IMAGE_MODEL":      "gemini-nano-banana-2.1",
+		"GEMINI_IMAGE_SIZE":       "8k",
+		"IMAGE_FALLBACK":          "ha",
+	} {
+		t.Setenv(k, v)
+	}
+	p := &parser{}
+	c := imagesConfig(p)
+	if errs := append(p.errs, c.validate()...); len(errs) > 0 {
+		t.Errorf("eski kalitlar xato bermasligi kerak: %v", errs)
+	}
+	if c != clean {
+		t.Errorf("eski kalitlar natijaga ta'sir qilmasligi kerak: %+v, kutilgan %+v", c, clean)
 	}
 }
 
@@ -49,6 +75,19 @@ func TestAIOpenAIStructured(t *testing.T) {
 	p = &parser{}
 	if c := aiConfig(p); len(p.errs) > 0 || c.OpenAIStructured {
 		t.Fatalf("false berilganda o'chishi kerak: %v", p.errs)
+	}
+}
+
+// TestAIGeminiBaseURL — GEMINI_BASE_URL: standart Gemini'ning OpenAI-mos
+// endpoint'i, oxiridagi "/" olib tashlanadi.
+func TestAIGeminiBaseURL(t *testing.T) {
+	t.Setenv("GEMINI_BASE_URL", "")
+	if c := aiConfig(&parser{}); c.GeminiBaseURL != "https://generativelanguage.googleapis.com/v1beta/openai" {
+		t.Errorf("standart GEMINI_BASE_URL = %q", c.GeminiBaseURL)
+	}
+	t.Setenv("GEMINI_BASE_URL", "http://proxy.local/openai/")
+	if c := aiConfig(&parser{}); c.GeminiBaseURL != "http://proxy.local/openai" {
+		t.Errorf("GEMINI_BASE_URL = %q", c.GeminiBaseURL)
 	}
 }
 
@@ -224,6 +263,30 @@ func TestBackupConfig(t *testing.T) {
 		p = &parser{}
 		if backupConfig(p); len(p.errs) != 1 || !strings.Contains(p.errs[0].Error(), "BACKUP_TIME") {
 			t.Errorf("BACKUP_TIME=%q xato berishi kerak: %v", bad, p.errs)
+		}
+	}
+}
+
+// TestHealthFile — HEALTH_FILE: berilmasa /tmp/healthy, bo'sh yoki "-" —
+// o'chirilgan, aks holda berilgan yo'l.
+func TestHealthFile(t *testing.T) {
+	t.Setenv("HEALTH_FILE", "")
+	if err := os.Unsetenv("HEALTH_FILE"); err != nil {
+		t.Fatal(err)
+	}
+	if got := (&parser{}).strOrDisabled("HEALTH_FILE", DefaultHealthFile); got != DefaultHealthFile {
+		t.Errorf("berilmaganda %q, kutilgan %q", got, DefaultHealthFile)
+	}
+	for raw, want := range map[string]string{
+		"":                 "",
+		"  ":               "",
+		"-":                "",
+		" /run/bot/ok ":    "/run/bot/ok",
+		"/var/tmp/healthy": "/var/tmp/healthy",
+	} {
+		t.Setenv("HEALTH_FILE", raw)
+		if got := (&parser{}).strOrDisabled("HEALTH_FILE", DefaultHealthFile); got != want {
+			t.Errorf("HEALTH_FILE=%q: %q, kutilgan %q", raw, got, want)
 		}
 	}
 }

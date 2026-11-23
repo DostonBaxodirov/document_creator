@@ -23,7 +23,9 @@ import (
 	"telegram-presentation-bot/internal/backup"
 	"telegram-presentation-bot/internal/bot"
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/generator"
+	"telegram-presentation-bot/internal/health"
 	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/payment"
 	"telegram-presentation-bot/internal/storage"
@@ -65,7 +67,8 @@ func run() error {
 			log.Warn("failed to close database", zap.Error(err))
 		}
 	}()
-	if err := storage.Migrate(db); err != nil {
+	// Versiyali migratsiyalar (goose); SIGTERM kelsa qulfni kutish to'xtatiladi.
+	if err := storage.Migrate(db.WithContext(ctx)); err != nil {
 		return err
 	}
 	sessions := storage.NewSessionRepository(db)
@@ -87,17 +90,17 @@ func run() error {
 		return err
 	}
 
-	// Rasmli dizaynlar uchun AI rasm generatsiyasi: arzon tarif (standard) va
-	// sifatli tarif (premium) provayderlari. Kalit bo'lmasa — rasmlarsiz.
-	imageSvc, err := images.New(ctx, cfg.AI, cfg.Images, log)
+	// Rasmli dizaynlar uchun AI rasm generatsiyasi (bitta provayder — OpenAI).
+	// Kalit bo'lmasa — rasmlarsiz.
+	imageSvc, err := images.New(cfg.AI, cfg.Images, log)
 	if err != nil {
 		return err
 	}
-	var imageService bot.ImageService
+	var imageService generation.ImageService
 	if imageSvc.Available() {
 		imageService = imageSvc
 	} else {
-		log.Warn("rasm provayderlari ulanmagan (OPENAI_API_KEY / GEMINI_API_KEY) — rasmli dizaynlar rasmsiz chiqadi")
+		log.Warn("rasm provayderi ulanmagan (OPENAI_API_KEY) — rasmli dizaynlar rasmsiz chiqadi")
 	}
 
 	// AI maxsus dizayn: har bir tarif — o'z OpenAI matn modeli va rasm sifati.
@@ -148,7 +151,6 @@ func run() error {
 		DesignPreview:    filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "designs.png"),
 		DocDesignPreview: filepath.Join(filepath.Dir(cfg.Generator.TemplatePath), "doc_designs.png"),
 		Images:           imageService,
-		DefaultImageTier: images.Tier(cfg.Images.DefaultTier),
 		Billing:          billing,
 		Verifier:         verifier,
 		Payment:          cfg.Payment,
@@ -177,12 +179,23 @@ func run() error {
 	// Adminlar menyusidagi buyruqlarni joriy ro'yxat bilan yangilash.
 	handler.RefreshAdminCommands(ctx)
 
+	// Sog'lik fayli (Docker HEALTHCHECK): baza javob bersa har 15 soniyada
+	// yangilanadi; to'xtash signalida tekshiruv ham to'xtaydi.
+	if cfg.HealthFile != "" {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return fmt.Errorf("health: baza ulanishini olib bo'lmadi: %w", err)
+		}
+		go health.New(sqlDB, cfg.HealthFile, log).Run(ctx)
+	}
+
 	go b.Start()
 	go handler.RunBackups(ctx)
 	log.Info("bot started",
 		zap.String("username", b.Me.Username),
 		zap.String("ai_provider", cfg.AI.Provider),
-		zap.Int("max_concurrent_jobs", cfg.Generator.MaxConcurrentJobs))
+		zap.Int("max_concurrent_jobs", cfg.Generator.MaxConcurrentJobs),
+		zap.String("health_file", cfg.HealthFile))
 
 	// 7. To'xtash signalini kutish.
 	<-ctx.Done()
@@ -222,18 +235,19 @@ func newCustomTariffs(cfg *config.Config, log *zap.Logger) map[string]bot.Custom
 			continue
 		}
 		gen := images.NewOpenAI(cfg.AI.OpenAIBaseURL, cfg.AI.OpenAIAPIKey, cfg.Custom.ImageModel, t.ImageQuality, cfg.Images.Timeout)
-		// Fallback yo'q: boshqa (qimmatroq yoki arzonroq) sifatga o'tib ketmaslik uchun.
-		svc := images.NewService(map[images.Tier]images.Generator{images.TierStandard: gen},
-			cfg.Images.Parallel, cfg.Images.Timeout, false, log.With(zap.String("tariff", name)))
+		// Har bir tarifning o'z xizmati: boshqa (qimmatroq yoki arzonroq) sifatga o'tib ketmaydi.
+		svc := images.NewService(gen, cfg.Images.Parallel, cfg.Images.Timeout, log.With(zap.String("tariff", name)))
 		out[name] = bot.CustomTariff{
-			PriceSlide:   t.PriceSlide,
-			PricePage:    t.PricePage,
-			ImagePercent: t.ImagePercent,
-			AI:           ai.NewOpenAIModel(cfg.AI, t.TextModel, log),
-			Images:       svc,
-			TextModel:    t.TextModel,
-			ImageModel:   cfg.Custom.ImageModel,
-			ImageQuality: t.ImageQuality,
+			PriceSlide: t.PriceSlide,
+			PricePage:  t.PricePage,
+			Tariff: generation.Tariff{
+				ImagePercent: t.ImagePercent,
+				AI:           ai.NewOpenAIModel(cfg.AI, t.TextModel, log),
+				Images:       svc,
+				TextModel:    t.TextModel,
+				ImageModel:   cfg.Custom.ImageModel,
+				ImageQuality: t.ImageQuality,
+			},
 		}
 		log.Info("custom design tariff",
 			zap.String("tariff", name),

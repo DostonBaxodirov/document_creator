@@ -7,8 +7,8 @@ import (
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/generator"
-	"telegram-presentation-bot/internal/images"
 	"telegram-presentation-bot/internal/storage"
 )
 
@@ -86,38 +86,14 @@ func TestDesignPromptAndSummary(t *testing.T) {
 	}
 }
 
-func TestImageTier(t *testing.T) {
-	h := &Handler{opts: Options{DefaultImageTier: images.TierStandard}}
-	cases := map[string]images.Tier{
-		"":          images.TierStandard,
-		"premium":   images.TierPremium,
-		" Premium ": images.TierPremium,
-		"standard":  images.TierStandard,
-		"noma'lum":  images.TierStandard,
-	}
-	for plan, want := range cases {
-		if got := h.imageTier(&storage.Session{Plan: plan}); got != want {
-			t.Errorf("Plan=%q: %s, kutilgan %s", plan, got, want)
-		}
-	}
-	h.opts.DefaultImageTier = images.TierPremium
-	if got := h.imageTier(&storage.Session{}); got != images.TierPremium {
-		t.Errorf("standart tarif premium bo'lsa, Plan bo'sh foydalanuvchi premium olishi kerak: %s", got)
-	}
-	h.opts.DefaultImageTier = ""
-	if got := h.imageTier(&storage.Session{}); got != images.TierStandard {
-		t.Errorf("sozlanmagan holatda standard bo'lishi kerak: %s", got)
-	}
-}
-
 func TestProgressText(t *testing.T) {
-	if got := progressText(0, 5, imageStage); !strings.HasPrefix(got, "🖼 <b>Rasmlar chizilmoqda...</b>") || !strings.HasSuffix(got, "0/5") {
+	if got := progressText(0, 5, generation.ImageStage); !strings.HasPrefix(got, "🖼 <b>Rasmlar chizilmoqda...</b>") || !strings.HasSuffix(got, "0/5") {
 		t.Errorf("rasm bosqichi = %q", got)
 	}
-	if got := progressText(3, 3, textStage("Slaydlar yozilmoqda...")); !strings.Contains(got, "Fayl tayyorlanmoqda") {
+	if got := progressText(3, 3, generation.TextStage("Slaydlar yozilmoqda...")); !strings.Contains(got, "Fayl tayyorlanmoqda") {
 		t.Errorf("yakuniy bosqich = %q", got)
 	}
-	if got := progressText(1, 3, textStage("Slaydlar yozilmoqda...")); !strings.HasPrefix(got, "✍️ <b>Slaydlar yozilmoqda...</b>") {
+	if got := progressText(1, 3, generation.TextStage("Slaydlar yozilmoqda...")); !strings.HasPrefix(got, "✍️ <b>Slaydlar yozilmoqda...</b>") {
 		t.Errorf("yozish bosqichi = %q", got)
 	}
 }

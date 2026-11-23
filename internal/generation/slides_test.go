@@ -1,4 +1,4 @@
-package bot
+package generation
 
 import (
 	"context"
@@ -10,12 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/images"
-	"telegram-presentation-bot/internal/storage"
 )
 
 // captureSlides — taqdimotni faylga yozmasdan, generatorga berilgan Deck ni saqlaydigan builder.
@@ -117,7 +114,7 @@ func newPromptImages() *promptImages {
 
 func (*promptImages) Available() bool { return true }
 
-func (p *promptImages) Generate(_ context.Context, _ images.Tier, reqs []images.Request, onDone func(done, total int)) []images.Result {
+func (p *promptImages) Generate(_ context.Context, reqs []images.Request, onDone func(done, total int)) []images.Result {
 	p.once.Do(func() { close(p.called) })
 	out := make([]images.Result, len(reqs))
 	for i, r := range reqs {
@@ -133,17 +130,14 @@ func (p *promptImages) Generate(_ context.Context, _ images.Tier, reqs []images.
 	return out
 }
 
-// slidesHandler rasmli taqdimot uchun handler (tayyor dizayn, rasm xizmati imgs).
-func slidesHandler(t *testing.T, gen ContentGenerator, imgs ImageService, design string) (*Handler, *captureSlides, *storage.Session, workTypeOption) {
+// slidesService rasmli taqdimot uchun servis (tayyor dizayn, rasm xizmati imgs).
+func slidesService(t *testing.T, gen ContentGenerator, imgs ImageService, design string) (*Service, *captureSlides, Order) {
 	t.Helper()
-	b, _ := fakeTelegram(t, "")
 	cs := &captureSlides{dir: t.TempDir()}
-	h := NewHandler(context.Background(), nil, gen, Builders{Slides: cs}, zap.NewNop(), Options{Images: imgs})
-	h.bot = b
-	s := &storage.Session{WorkType: string(ai.WorkPresentation), Design: design, Topic: "Ipak yo'li tarixi",
+	svc := New(Config{AI: gen, Slides: cs, Images: imgs})
+	o := Order{WorkType: ai.WorkPresentation, Design: design, Topic: "Ipak yo'li tarixi",
 		Volume: len(outlinePlanFixture.Slides) + 2, Language: "uz"}
-	opt, _ := findWorkType(ai.WorkPresentation)
-	return h, cs, s, opt
+	return svc, cs, o
 }
 
 // TestBuildSlidesPicturesFromOutline — rasmli taqdimotda rasmlar reja tayyor
@@ -153,15 +147,15 @@ func slidesHandler(t *testing.T, gen ContentGenerator, imgs ImageService, design
 func TestBuildSlidesPicturesFromOutline(t *testing.T) {
 	gen := &outlineAI{outline: true, release: make(chan struct{})}
 	imgs := newPromptImages()
-	h, cs, s, opt := slidesHandler(t, gen, imgs, generator.ThemeOcean)
+	svc, cs, o := slidesService(t, gen, imgs, generator.ThemeOcean)
 
 	type result struct {
-		out *output
+		out *Output
 		err error
 	}
 	done := make(chan result, 1)
 	go func() {
-		out, err := h.buildSlides(context.Background(), testBoard(t, h.bot), s, opt, zap.NewNop())
+		out, err := svc.Build(context.Background(), o, &testProgress{})
 		done <- result{out, err}
 	}()
 
@@ -186,8 +180,8 @@ func TestBuildSlidesPicturesFromOutline(t *testing.T) {
 	gen.mu.Unlock()
 
 	// Titul + tavsifi bor 4 ta reja slaydi so'raladi; yozilmagan Shaharlar slaydining rasmi tashlanadi.
-	if !strings.Contains(r.out.summary, "🖼 4/5 rasm (standard, fake)") || !strings.Contains(r.out.caption, "🖼 4 ta rasm") {
-		t.Errorf("4/5 rasm joylashishi kerak: %s | %s", r.out.summary, r.out.caption)
+	if !strings.Contains(r.out.Summary, "🖼 4/5 rasm (fake)") || !strings.Contains(r.out.Caption, "🖼 4 ta rasm") {
+		t.Errorf("4/5 rasm joylashishi kerak: %s | %s", r.out.Summary, r.out.Caption)
 	}
 
 	design := generator.DesignFor(generator.ThemeOcean, nil)
@@ -236,14 +230,14 @@ func TestBuildSlidesPicturesFromOutline(t *testing.T) {
 // (kichik taqdimot), rasmlar matndan keyin slaydlardagi tavsiflar bo'yicha chiziladi.
 func TestBuildSlidesFallbackWithoutOutline(t *testing.T) {
 	imgs := newPromptImages()
-	h, cs, s, opt := slidesHandler(t, &outlineAI{}, imgs, generator.ThemeOcean)
-	out, err := h.buildSlides(context.Background(), testBoard(t, h.bot), s, opt, zap.NewNop())
+	svc, cs, o := slidesService(t, &outlineAI{}, imgs, generator.ThemeOcean)
+	out, err := svc.Build(context.Background(), o, &testProgress{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Titul + tavsifi bor 4 ta slayd.
-	if !strings.Contains(out.summary, "🖼 5/5 rasm") {
-		t.Errorf("5 ta rasm joylashishi kerak: %s", out.summary)
+	if !strings.Contains(out.Summary, "🖼 5/5 rasm") {
+		t.Errorf("5 ta rasm joylashishi kerak: %s", out.Summary)
 	}
 	design := generator.DesignFor(generator.ThemeOcean, nil)
 	cs.mu.Lock()
@@ -273,8 +267,8 @@ func TestBuildSlidesPlainNoOutline(t *testing.T) {
 		"rasm xizmati yo'q": {generator.ThemeOcean, nil},
 	} {
 		gen := &outlineAI{outline: true}
-		h, _, s, opt := slidesHandler(t, gen, c.imgs, c.design)
-		if _, err := h.buildSlides(context.Background(), testBoard(t, h.bot), s, opt, zap.NewNop()); err != nil {
+		svc, _, o := slidesService(t, gen, c.imgs, c.design)
+		if _, err := svc.Build(context.Background(), o, &testProgress{}); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if gen.req.Images || gen.req.OnOutline != nil {
@@ -291,7 +285,7 @@ type blockImages struct {
 
 func (*blockImages) Available() bool { return true }
 
-func (b *blockImages) Generate(ctx context.Context, _ images.Tier, reqs []images.Request, _ func(done, total int)) []images.Result {
+func (b *blockImages) Generate(ctx context.Context, reqs []images.Request, _ func(done, total int)) []images.Result {
 	close(b.called)
 	<-ctx.Done()
 	close(b.cancelled)
@@ -303,11 +297,11 @@ func (b *blockImages) Generate(ctx context.Context, _ images.Tier, reqs []images
 func TestBuildSlidesTextErrorStopsPictures(t *testing.T) {
 	gen := &outlineAI{outline: true, release: make(chan struct{}), err: errors.New("slaydlar yozilmadi")}
 	imgs := &blockImages{called: make(chan struct{}), cancelled: make(chan struct{})}
-	h, _, s, opt := slidesHandler(t, gen, imgs, generator.ThemeOcean)
+	svc, _, o := slidesService(t, gen, imgs, generator.ThemeOcean)
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.buildSlides(context.Background(), testBoard(t, h.bot), s, opt, zap.NewNop())
+		_, err := svc.Build(context.Background(), o, &testProgress{})
 		done <- err
 	}()
 	select {
@@ -319,7 +313,7 @@ func TestBuildSlidesTextErrorStopsPictures(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, errAI) || !strings.Contains(err.Error(), "slaydlar yozilmadi") {
+		if !errors.Is(err, ErrAI) || !strings.Contains(err.Error(), "slaydlar yozilmadi") {
 			t.Errorf("AI xatosi qaytishi kerak: %v", err)
 		}
 	case <-time.After(10 * time.Second):
@@ -346,7 +340,7 @@ func TestPlanOutlinePictures(t *testing.T) {
 		{Title: "E", Layout: ai.LayoutTimeline, Image: "e"},
 		{Title: "F", Layout: ai.LayoutConclusion, Image: "f"},
 	}}
-	p := planOutlinePictures(op, picturePlan{design: design, tier: images.TierStandard, limit: 3})
+	p := planOutlinePictures(op, picturePlan{design: design, limit: 3})
 	// Tavsifi bor slaydlar: A, B, D, E, F — yon panelga sig'adiganlari (A, D) ustuvor.
 	if !slices.Equal(p.targets, []int{-1, 0, 3}) {
 		t.Errorf("rasm joylari %v, kutilgan [-1 0 3]", p.targets)
@@ -362,7 +356,7 @@ func TestPlanOutlinePictures(t *testing.T) {
 
 	op.CoverImage = ""
 	ready := generator.DesignFor(generator.ThemePanorama, nil)
-	p = planOutlinePictures(op, picturePlan{design: ready, tier: images.TierStandard})
+	p = planOutlinePictures(op, picturePlan{design: ready})
 	if len(p.reqs) != 6 || p.targets[0] != -1 || p.reqs[0].Prompt != ready.PhotoPrompt("a") || p.reqs[0].Shape != images.Landscape {
 		t.Fatalf("titul rasmi birinchi slayd tavsifidan, yotiq bo'lishi kerak: %+v", p.reqs)
 	}

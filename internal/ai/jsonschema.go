@@ -1,9 +1,9 @@
 package ai
 
 // jsonschema.go — AI javobi sxemasi uchun yagona ko'rinish: JSON Schema
-// map[string]any shaklida. Bitta sxema barcha provayderlarga yuboriladi:
-// Gemini'ga ResponseJsonSchema orqali (propertyOrdering qo'shilgan holda),
-// OpenAI'ga Structured Outputs (response_format json_schema, strict) orqali.
+// map[string]any shaklida. Bitta sxema OpenAI va Gemini'ga (ikkalasi ham
+// OpenAI-mos Chat Completions API orqali) Structured Outputs (response_format
+// json_schema, strict) sifatida yuboriladi.
 //
 // Strict rejim talabi: har bir obyekt barcha xossalarini "required" da
 // sanaydi va "additionalProperties": false. Bo'sh bo'lishi mumkin bo'lgan
@@ -72,38 +72,10 @@ func withProperty(s map[string]any, key string, prop map[string]any) {
 // Provayderga moslash
 // ---------------------------------------------------------------------------
 
-// geminiSchema sxemaning nusxasini qaytaradi: har bir obyektga "required"
-// tartibidagi "propertyOrdering" qo'shiladi. genai SDK so'rovni map orqali
-// qayta yig'adi va kalitlar tartibi yo'qoladi; Gemini maydonlar tartibini shu
-// nostandart xossadan oladi. Asl sxema o'zgarmaydi.
-func geminiSchema(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(x)+1)
-		for k, val := range x {
-			out[k] = geminiSchema(val)
-		}
-		if props, ok := x["properties"].(map[string]any); ok {
-			copied := make(map[string]any, len(props))
-			for k, p := range props {
-				copied[k] = geminiSchema(p)
-			}
-			out["properties"] = copied
-			if req, ok := x["required"].([]string); ok {
-				out["propertyOrdering"] = slices.Clone(req)
-			}
-		}
-		return out
-	case []string:
-		return slices.Clone(x)
-	default:
-		return v
-	}
-}
-
 // marshalSchema sxemani JSON qiladi; obyekt xossalari "required" tartibida
 // yoziladi (encoding/json map kalitlarini alifbo bo'yicha saralaydi, OpenAI
-// esa maydonlarni sxemadagi tartibda yozadi). Boshqa kalitlar — alifbo tartibida.
+// va Gemini esa maydonlarni sxemadagi tartibda yozadi). Boshqa kalitlar —
+// alifbo tartibida.
 func marshalSchema(s map[string]any) (json.RawMessage, error) {
 	var buf bytes.Buffer
 	if err := encodeSchema(&buf, s); err != nil {

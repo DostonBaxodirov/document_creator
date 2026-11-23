@@ -11,6 +11,7 @@ import (
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/generator"
 	"telegram-presentation-bot/internal/storage"
 )
@@ -18,9 +19,9 @@ import (
 // testTariffs — skrinshotdagi narxlar bo'yicha tariflar.
 func testTariffs() map[string]CustomTariff {
 	return map[string]CustomTariff{
-		config.TariffStandard: {PriceSlide: 300, PricePage: 400, ImagePercent: 40, TextModel: "gpt-4o-mini", ImageModel: "gpt-image-1", ImageQuality: "low"},
-		config.TariffOptimal:  {PriceSlide: 500, PricePage: 700, ImagePercent: 40, TextModel: "gpt-4.1-mini", ImageModel: "gpt-image-1", ImageQuality: "medium"},
-		config.TariffPremium:  {PriceSlide: 1700, PricePage: 1500, ImagePercent: 50, TextModel: "gpt-4o", ImageModel: "gpt-image-1", ImageQuality: "high"},
+		config.TariffStandard: {PriceSlide: 300, PricePage: 400, Tariff: generation.Tariff{ImagePercent: 40, TextModel: "gpt-4o-mini", ImageModel: "gpt-image-1", ImageQuality: "low"}},
+		config.TariffOptimal:  {PriceSlide: 500, PricePage: 700, Tariff: generation.Tariff{ImagePercent: 40, TextModel: "gpt-4.1-mini", ImageModel: "gpt-image-1", ImageQuality: "medium"}},
+		config.TariffPremium:  {PriceSlide: 1700, PricePage: 1500, Tariff: generation.Tariff{ImagePercent: 50, TextModel: "gpt-4o", ImageModel: "gpt-image-1", ImageQuality: "high"}},
 	}
 }
 
@@ -137,45 +138,6 @@ func TestCustomSummaryAndKind(t *testing.T) {
 	}
 }
 
-func TestCustomImageCount(t *testing.T) {
-	cases := []struct{ slides, percent, want int }{
-		{20, 40, 8}, {20, 50, 10}, {5, 40, 2}, {50, 50, 25}, {3, 10, 1}, {10, 0, 1},
-	}
-	for _, c := range cases {
-		if got := customImageCount(c.slides, c.percent); got != c.want {
-			t.Errorf("%d slayd × %d%% = %d, kutilgan %d", c.slides, c.percent, got, c.want)
-		}
-	}
-}
-
-func TestCustomPhotoTargets(t *testing.T) {
-	spec := generator.SampleCustomSpecs()[0]
-	deck := generator.SampleCustomDeck(spec)
-	pres := &ai.Presentation{}
-	for i := range deck.Slides {
-		img := "photo"
-		if i == 0 {
-			img = "" // tavsifsiz slayd tanlanmaydi
-		}
-		pres.Slides = append(pres.Slides, ai.Slide{Image: img})
-	}
-	design := generator.DesignFor(generator.ThemeCustom, &spec)
-	got := customPhotoTargets(design, pres, &deck, 4)
-	if len(got) != 4 || slices.Contains(got, 0) || !slices.IsSorted(got) {
-		t.Errorf("rasmli slaydlar: %v", got)
-	}
-}
-
-func TestCustomCaption(t *testing.T) {
-	d := &ai.Design{Name: "Okean"}
-	if c := customCaption(d, config.TariffOptimal); c != "✨ Okean (maxsus dizayn, 🥈 Optimal)" {
-		t.Errorf("customCaption = %q", c)
-	}
-	if c := customCaption(&ai.Design{}, config.TariffStandard); c != "✨ Maxsus dizayn (🥉 Standart)" {
-		t.Errorf("customCaption (nomsiz) = %q", c)
-	}
-}
-
 func TestGuideText(t *testing.T) {
 	h := customHandler(&fakeBilling{})
 	g := h.guideText()
@@ -229,7 +191,6 @@ func TestNoAIMention(t *testing.T) {
 		"docDesign": docDesignPrompt(true),
 		"tariff":    h.tariffPrompt(s),
 		"summary":   summaryText(s),
-		"caption":   customCaption(nil, config.TariffOptimal),
 		"orderName": orderLabel(s.WorkType, storage.AIKind(config.TariffOptimal)),
 	}
 	for st, step := range steps {

@@ -102,7 +102,7 @@ func TestSummaryShowsLanguageAndRequirements(t *testing.T) {
 	}
 }
 
-func TestLanguageKeyboardAndWorkTitles(t *testing.T) {
+func TestLanguageKeyboard(t *testing.T) {
 	kb := languageKeyboard()
 	var n int
 	for _, row := range kb.InlineKeyboard {
@@ -115,20 +115,6 @@ func TestLanguageKeyboardAndWorkTitles(t *testing.T) {
 	}
 	if n != len(lang.All()) {
 		t.Errorf("%d ta til tugmasi, kutilgan %d", n, len(lang.All()))
-	}
-
-	ru := lang.Get(string(lang.Ru))
-	for _, c := range []struct {
-		wt   ai.WorkType
-		want string
-	}{{ai.WorkPresentation, "ПРЕЗЕНТАЦИЯ"}, {ai.WorkIndependent, "САМОСТОЯТЕЛЬНАЯ РАБОТА"}, {ai.WorkPractical, "ПРАКТИЧЕСКОЕ ЗАДАНИЕ"}} {
-		opt, _ := findWorkType(c.wt)
-		if got := opt.Title(ru); got != c.want {
-			t.Errorf("%s: %q, kutilgan %q", c.wt, got, c.want)
-		}
-	}
-	if opt, _ := findWorkType(ai.WorkIndependent); opt.Title(lang.Get("")) != "MUSTAQIL ISH" {
-		t.Errorf("standart nom o'zbekcha bo'lishi kerak")
 	}
 }
 

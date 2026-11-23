@@ -27,20 +27,6 @@ import (
 )
 
 const (
-	msgAdminCommands = "<b>Admin buyruqlari:</b>\n" +
-		"/report — to'lovlar hisoboti (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
-		"/chek ID — chek rasmini ko'rish (masalan: /chek 12)\n" +
-		"/tekshiruv — tekshiruvdagi barcha cheklarni ✅/❌ tugmalari bilan qayta olish\n" +
-		"/statistika — tashrif buyuruvchilar soni (bugun, 7 va 30 kun, kunlar bo'yicha)\n" +
-		"/foydalanuvchilar — foydalanuvchilar ro'yxati (1 kun, 1 hafta, 1 oy yoki hammasi; matn yoki CSV)\n" +
-		"/backup — bazaning zaxira nusxasini hozir olish (har kuni avtomatik ham keladi)\n\n" +
-		"Har bir chek va har bir xarid haqida to'liq ma'lumot shu chatga keladi; " +
-		"shubhali cheklar — ✅/❌ tugmalari bilan."
-	msgAdminWelcome = "👑 <b>Siz admin sifatida saqlandingiz.</b>\n\n" + msgAdminCommands
-	msgAdminAlready = "👑 Siz allaqachon adminsiz.\n\n" + msgAdminCommands
-	msgChekUsage    = "Foydalanish: /chek ID (masalan: /chek 12)"
-	msgNoPending    = "✅ Tekshiruvda chek yo'q."
-
 	// maxReportRunes — matnli hisobot uzunligi (Telegram chegarasi 4096 belgi).
 	maxReportRunes = 3800
 	// maxPendingChecks — /tekshiruv bir martada yuboradigan cheklar soni
@@ -158,11 +144,18 @@ func (h *Handler) RefreshAdminCommands(ctx context.Context) {
 	}
 }
 
-// requireAdmin foydalanuvchi admin ekanini tekshiradi. Admin bo'lmasa, oddiy
-// "noma'lum buyruq" javobi beriladi (admin buyruqlari oshkor qilinmaydi).
+// requireAdmin foydalanuvchi admin ekanini tekshiradi. Admin bo'lmasa, buyruqqa
+// oddiy "noma'lum buyruq" javobi beriladi (admin buyruqlari oshkor qilinmaydi),
+// inline tugmaga esa "faqat admin uchun" bildirishnomasi.
 func (h *Handler) requireAdmin(c tele.Context) (bool, error) {
-	if h.billing == nil {
+	deny := func(resp ...*tele.CallbackResponse) (bool, error) {
+		if c.Callback() != nil {
+			return false, c.Respond(resp...)
+		}
 		return false, c.Send(msgUnknownCommand)
+	}
+	if h.billing == nil {
+		return deny()
 	}
 	ctx, cancel := requestContext()
 	defer cancel()
@@ -171,24 +164,7 @@ func (h *Handler) requireAdmin(c tele.Context) (bool, error) {
 		return false, err
 	}
 	if !ok {
-		return false, c.Send(msgUnknownCommand)
-	}
-	return true, nil
-}
-
-// requireAdminCallback inline tugma uchun admin tekshiruvi.
-func (h *Handler) requireAdminCallback(c tele.Context) (bool, error) {
-	if h.billing == nil {
-		return false, c.Respond()
-	}
-	ctx, cancel := requestContext()
-	defer cancel()
-	ok, err := h.billing.IsAdmin(ctx, c.Sender().ID)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, c.Respond(&tele.CallbackResponse{Text: "Bu amal faqat admin uchun."})
+		return deny(&tele.CallbackResponse{Text: "Bu amal faqat admin uchun."})
 	}
 	return true, nil
 }
@@ -207,7 +183,7 @@ func (h *Handler) onReport(c tele.Context) error {
 
 // onReportPeriod davr tanlanganda — format tanlash tugmalari.
 func (h *Handler) onReportPeriod(c tele.Context) error {
-	if ok, err := h.requireAdminCallback(c); !ok {
+	if ok, err := h.requireAdmin(c); !ok {
 		return err
 	}
 	p, ok := findPeriod(c.Data())
@@ -224,7 +200,7 @@ func (h *Handler) onReportPeriod(c tele.Context) error {
 
 // onReportFormat format tanlanganda hisobotni yuboradi.
 func (h *Handler) onReportFormat(c tele.Context) error {
-	if ok, err := h.requireAdminCallback(c); !ok {
+	if ok, err := h.requireAdmin(c); !ok {
 		return err
 	}
 	args := c.Args()
@@ -327,7 +303,7 @@ func textReport(list []storage.Payment, p reportPeriod, now time.Time) string {
 	st := computeStats(list)
 	var b strings.Builder
 	fmt.Fprintf(&b, "📊 <b>To'lovlar hisoboti — %s</b>\n", p.Title)
-	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(tz.Tashkent).Format("02.01.2006 15:04"))
+	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", now.In(tz.Tashkent).Format(dateTimeLayout))
 	fmt.Fprintf(&b, "✅ Tasdiqlangan: <b>%d</b> ta · <b>%s</b>\n", st.approved.count, formatSum(st.approved.sum))
 	fmt.Fprintf(&b, "     📷 Rasmli: %d ta · %s\n", st.photo.count, formatSum(st.photo.sum))
 	fmt.Fprintf(&b, "     📄 Rasmsiz: %d ta · %s\n", st.plain.count, formatSum(st.plain.sum))
@@ -370,7 +346,7 @@ func reportLine(p storage.Payment) string {
 		user = "@" + html.EscapeString(p.Username) + " · " + user
 	}
 	return fmt.Sprintf("%s #%d · %s · %s · %s · /chek_%d\n", icon, p.ID, formatSum(p.Amount), user,
-		p.CreatedAt.In(tz.Tashkent).Format("02.01.2006 15:04"), p.ID)
+		p.CreatedAt.In(tz.Tashkent).Format(dateTimeLayout), p.ID)
 }
 
 // csvHeader — CSV hisobot ustunlari.

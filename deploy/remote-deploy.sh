@@ -17,7 +17,7 @@ set -euo pipefail
 LOCAL_TAG="telegram-presentation-bot:latest" # docker-compose.yml dagi bot image nomi
 SERVICE="bot"
 CONTAINER="presentation-bot"
-HEALTH_WAIT="${HEALTH_WAIT:-25}" # bot shu vaqt davomida qulamasligi kerak (soniya)
+HEALTH_WAIT="${HEALTH_WAIT:-60}" # bot shu vaqt ichida "healthy" bo'lishi kerak (soniya)
 
 cd "$(dirname "$0")"
 
@@ -41,14 +41,40 @@ PREV_ID="$(docker image inspect -f '{{.Id}}' "$LOCAL_TAG" 2>/dev/null || true)"
 NEW_ID="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
 docker tag "$IMAGE" "$LOCAL_TAG"
 
+# bot_is_up konteyner HEALTHCHECK natijasini (Dockerfile) ko'pi bilan
+# HEALTH_WAIT soniya kutadi: "healthy" — muvaffaqiyat; "unhealthy", konteyner
+# to'xtagani yoki qayta ishga tushgani (RestartCount > 0) — darhol xato.
 bot_is_up() {
-  echo "==> Bot tekshirilmoqda (${HEALTH_WAIT}s)"
-  sleep "$HEALTH_WAIT"
-  local status restarts
-  status="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
-  restarts="$(docker inspect -f '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo 0)"
-  echo "    holat: $status, qayta ishga tushishlar: $restarts"
-  [ "$status" = "running" ] && [ "$restarts" = "0" ]
+  echo "==> Bot sog'lig'i kutilmoqda (ko'pi bilan ${HEALTH_WAIT}s)"
+  local start=$SECONDS status health restarts
+  while :; do
+    status="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER" 2>/dev/null || echo missing)"
+    restarts="$(docker inspect -f '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo 0)"
+
+    if [ "$restarts" != "0" ] || [ "$health" = "unhealthy" ]; then
+      break
+    fi
+    case "$status" in
+      exited | dead | restarting | missing) break ;;
+    esac
+    if [ "$health" = "healthy" ]; then
+      echo "    holat: $status, sog'lik: $health ($((SECONDS - start))s)"
+      return 0
+    fi
+    if [ $((SECONDS - start)) -ge "$HEALTH_WAIT" ]; then
+      echo "    ${HEALTH_WAIT}s ichida \"healthy\" bo'lmadi"
+      # Image'da HEALTHCHECK bo'lmasa — eski tekshiruv: konteyner shu vaqt davomida qulamagan bo'lsin.
+      if [ "$health" = "none" ] && [ "$status" = "running" ]; then
+        echo "    HEALTHCHECK yo'q, konteyner ishlayapti"
+        return 0
+      fi
+      break
+    fi
+    sleep 2
+  done
+  echo "    holat: $status, sog'lik: $health, qayta ishga tushishlar: $restarts"
+  return 1
 }
 
 echo "==> Konteynerlar yangilanmoqda"

@@ -1,0 +1,23 @@
+Topic: "Raqamli iqtisodiyot"
+Language of the work: Uzbek (Latin script)
+
+Design a unique style for this written work.
+
+Options:
+- "title" (title page composition): "classic" — centred, traditional; "band" — the work type on a full-width coloured band (modern, bold); "frame" — the work type and topic inside an elegant double-line box (formal, classic); "sidebar" — left-aligned text with a thick coloured vertical line on the left (modern, editorial).
+- "heading" (chapter headings): "center" — centred coloured heading (classic); "underline" — left-aligned heading with an accent line below (clean, modern); "band" — white heading on a coloured band (bold, structured); "bar" — left-aligned heading with a thick accent bar on its left (editorial).
+- "border" (frame on every page): "none", "single" (thin line), "double" (double line, traditional), "thinthick" (elegant thin-thick line, festive and classic).
+- "ornament" (title page decoration): "none", "line" (a thin rule under the university name), "diamond" (◆ ◆ ◆ under the work type, classic), "dots" (• • • under the work type, light).
+- "heading_font": one of Times New Roman, Cambria, Georgia, Palatino Linotype, Book Antiqua, Garamond (serif: humanities, history, law, literature), Calibri, Arial, Segoe UI, Trebuchet MS, Century Gothic (sans-serif: technology, engineering, economics, modern topics).
+- "primary": the heading and title colour; "accent": lines, frames and ornaments (related to primary or a refined contrasting colour such as gold).
+
+Other fields:
+- "name": an evocative name for the style (2-3 words) written in Uzbek (Latin script).
+- "image_style": English art direction (15-30 words) applied to every illustration of the work: genre (realistic photography or clean modern illustration), lighting, colour grading that harmonises with the colours, composition and atmosphere. No text, logos or named real people.
+
+JSON shape: {"name": string, "primary": string, "accent": string, "heading_font": string, "title": string, "heading": string, "border": string, "ornament": string, "image_style": string}
+
+The student's requirements for the work (take any colour, style or mood wishes into account; ignore the rest):
+"""
+O'zbekiston misolida
+"""

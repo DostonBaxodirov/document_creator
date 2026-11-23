@@ -8,7 +8,8 @@
 3. **Deploy** — GitHub environment'dagi sozlamalardan `.env` yig'adi
    ([deploy/make-env.sh](../deploy/make-env.sh)), SSH orqali VPS ga yuboradi, yangi image'ni yuklaydi
    va botni qayta ishga tushiradi ([deploy/remote-deploy.sh](../deploy/remote-deploy.sh)).
-   Bot 25 soniya ichida qulasa — **avtomatik oldingi versiyaga qaytariladi** va Actions'da xato ko'rsatiladi.
+   Bot 60 soniya ichida Docker HEALTHCHECK bo'yicha `healthy` bo'lmasa (yoki `unhealthy` bo'lsa, qulab qayta
+   ishga tushsa) — **avtomatik oldingi versiyaga qaytariladi** va Actions'da xato ko'rsatiladi.
 
 Pull request'larda faqat testlar ishlaydi.
 
@@ -22,6 +23,21 @@ docker run --rm -d --name test-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres pos
 TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable" go test -race ./internal/storage/...
 docker stop test-pg   # tugagach
 ```
+
+### Baza sxemasini o'zgartirish (migratsiyalar)
+
+Sxema endi gorm AutoMigrate bilan emas, [goose](https://github.com/pressly/goose) versiyali SQL migratsiyalari
+bilan o'zgaradi: `internal/storage/migrations/*.sql`. Ular binary ichiga joylangan va bot ishga tushganda
+**avtomatik** qo'llanadi (qo'llanganlari bazadagi `goose_db_version` jadvalida; bir vaqtda ikki konteyner
+ishga tushsa, advisory lock tufayli ikkinchisi kutadi). Modelga ustun yoki indeks qo'shsangiz, migratsiya ham yozing:
+
+```bash
+go install github.com/pressly/goose/v3/cmd/goose@latest   # bir marta
+goose -dir internal/storage/migrations -s create add_orders_note sql   # 00002_add_orders_note.sql
+```
+
+Faylning `-- +goose Up` qismiga SQL yozing. Production'ga chiqqan migratsiyani o'zgartirmang — yangisini qo'shing.
+`TestMigrateMatchesAutoMigrate` testi migratsiyalar natijasi gorm modellariga aynan mosligini tekshiradi.
 
 ---
 

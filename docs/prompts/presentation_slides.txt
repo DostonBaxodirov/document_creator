@@ -1,0 +1,43 @@
+Topic: "Amir Temur davlatining tashkil topishi va boshqaruv tizimi"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Presentation plan (all slides):
+1. [agenda] Reja — Taqdimotning asosiy bo'limlari
+2. [definition] Davlatning tashkil topishi — 1370-yilda Samarqandda davlat tashkil topishi
+3. [timeline] Hokimiyatga kelish yo'li — 1360-1370 yillardagi asosiy voqealar
+4. [pyramid] Boshqaruv ierarxiyasi — Oliy hukmdordan viloyat hokimlarigacha
+5. [hub] Devon va vazirlar — Markaziy boshqaruv idoralari
+6. [process] Harbiy tizim — Qo'shin tuzilishi va yurishlar tayyorgarligi
+7. [statement] Tuzuklar — Temur tuzuklarining boshqaruvdagi o'rni
+8. [cards] Iqtisodiyot va savdo — Buyuk ipak yo'li va hunarmandchilik
+9. [comparison] Ichki va tashqi siyosat — Ichki barqarorlik va tashqi yurishlar
+10. [conclusion] Xulosa — Asosiy xulosalar
+
+Slide layouts (the "layout" field) — use only these — and the content each one needs:
+- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
+- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
+- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
+- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
+- "process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).
+- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
+- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
+- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
+- "timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.
+- "pyramid": 3-5 levels of a hierarchy, ordered from the top (the narrowest, highest or most specific level) down to the base (the broadest, foundational level): "heading" (1-4 words), "text" (10-18 words).
+- "matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").
+- "cycle": 3-6 stages of a repeating process in order, where the last stage leads back to the first: "heading" (1-4 words), "text" (8-16 words); "highlight" = the name of the cycle (1-3 words).
+- "hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).
+- "statement": one key thesis of the topic shown in large type: "highlight" = the statement itself (15-30 words; a precise claim in your own words, not a quotation); 0-3 items supporting it: "heading" (1-4 words), "text" (6-14 words).
+Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
+Fields a layout does not use are left empty.
+
+JSON shape: {"slides": [{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string}, ...]}
+
+Before answering, check that: (1) every slide has the number of items its layout requires (for example "process" 3-5, "cards" 3-4, "comparison" exactly 2 with 3-5 points each, "matrix" exactly 4, "pyramid" 3-5); (2) every text reaches the lower bound of its word range: no one-line stubs; (3) numbers in "facts" and dates in "timeline" are real and well established; never estimate percentages or invent figures — if unsure, leave "value" empty; (4) all text is in the content language.
+
+Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
+"""
+Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
+"""
+
+Write the full content of slides 6-10 only (5 slides), exactly as planned: same order, titles and layouts. Stay within each slide's focus and do not repeat what other slides cover.

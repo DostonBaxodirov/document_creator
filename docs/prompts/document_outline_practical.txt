@@ -1,0 +1,13 @@
+Task: plan the structure of a practical assignment (amaliy topshiriq).
+Topic: "Python dasturlash tilida saralash algoritmlari"
+Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+
+Return JSON: {"chapters": [{"title": string, "points": [string, ...]}, ...], "references": [string, ...]}
+
+Requirements:
+- "chapters": exactly 3 main chapters. The introduction and the conclusion are written separately — do NOT include them.
+- Chapter titles are specific, 3-10 words, without numbering.
+- "points": 3-5 short phrases per chapter describing what the chapter must cover. Chapters must not overlap.
+- The chapters follow the logic of a practical assignment: theoretical basis → methods and tools → step-by-step execution with worked examples → analysis of the results.
+- "references": 5-8 entries in a standard bibliographic format (Author. Title. — City: Publisher, Year.). Only real, widely known sources you are confident exist: laws and official documents of the Republic of Uzbekistan, well-known textbooks and monographs, official websites (for example lex.uz). Never invent authors, titles, years or URLs — if unsure, give fewer entries. Each entry is a plain bibliographic record with no comments or notes.
+

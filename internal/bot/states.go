@@ -10,6 +10,7 @@ import (
 
 	"telegram-presentation-bot/internal/ai"
 	"telegram-presentation-bot/internal/config"
+	"telegram-presentation-bot/internal/generation"
 	"telegram-presentation-bot/internal/lang"
 	"telegram-presentation-bot/internal/storage"
 	"telegram-presentation-bot/internal/textutil"
@@ -74,29 +75,14 @@ const (
 type workTypeOption struct {
 	Type   ai.WorkType
 	Button string // tugmadagi matn
-	Name   string // xulosada ko'rinadigan nom
+	Name   string // xulosada ko'rinadigan nom (fayl izohidagi bilan bir xil — generation)
 }
 
 var workTypes = []workTypeOption{
-	{Type: ai.WorkPresentation, Button: "📊 Slayd (taqdimot) — PowerPoint", Name: "Slayd (taqdimot)"},
-	{Type: ai.WorkIndependent, Button: "📚 Mustaqil ish — Word", Name: "Mustaqil ish"},
-	{Type: ai.WorkReferat, Button: "📝 Referat — Word", Name: "Referat"},
-	{Type: ai.WorkPractical, Button: "🛠 Amaliy topshiriq — Word", Name: "Amaliy topshiriq"},
-}
-
-// Title ish turining titul slayd/varaqda ko'rinadigan nomi (ish tilida):
-// "TAQDIMOT", "САМОСТОЯТЕЛЬНАЯ РАБОТА" ...
-func (o workTypeOption) Title(l lang.Info) string {
-	switch o.Type {
-	case ai.WorkIndependent:
-		return l.Labels.TitleIndependent
-	case ai.WorkPractical:
-		return l.Labels.TitlePractical
-	case ai.WorkReferat:
-		return l.Labels.TitleReferat
-	default:
-		return l.Labels.TitlePresentation
-	}
+	{Type: ai.WorkPresentation, Button: "📊 Slayd (taqdimot) — PowerPoint", Name: generation.WorkTypeName(ai.WorkPresentation)},
+	{Type: ai.WorkIndependent, Button: "📚 Mustaqil ish — Word", Name: generation.WorkTypeName(ai.WorkIndependent)},
+	{Type: ai.WorkReferat, Button: "📝 Referat — Word", Name: generation.WorkTypeName(ai.WorkReferat)},
+	{Type: ai.WorkPractical, Button: "🛠 Amaliy topshiriq — Word", Name: generation.WorkTypeName(ai.WorkPractical)},
 }
 
 func findWorkType(t ai.WorkType) (workTypeOption, bool) {
@@ -115,7 +101,7 @@ type volumeSpec struct {
 }
 
 func volumeFor(l config.LimitsConfig, s *storage.Session) volumeSpec {
-	if ai.WorkType(s.WorkType).IsDocument() {
+	if isDoc(s) {
 		return volumeSpec{unit: "sahifa", min: l.MinPages, max: l.MaxPages}
 	}
 	return volumeSpec{unit: "slayd", min: l.MinSlides, max: l.MaxSlides}

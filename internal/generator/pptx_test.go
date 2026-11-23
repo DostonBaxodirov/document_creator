@@ -160,6 +160,24 @@ func TestUnknownThemeFallsBack(t *testing.T) {
 	}
 }
 
+// TestThemeAccent har bir mavzu aksent rangini "#RRGGBB" ko'rinishida beradi
+// (scripts/design_preview.py uchun); noma'lum mavzuda — bo'sh satr.
+func TestThemeAccent(t *testing.T) {
+	hexRe := regexp.MustCompile(`^#[0-9A-F]{6}$`)
+	for _, info := range Themes() {
+		got := ThemeAccent(info.ID)
+		if !hexRe.MatchString(got) {
+			t.Errorf("%s: aksent rangi noto'g'ri: %q", info.ID, got)
+		}
+		if want := "#" + strings.ToUpper(themeByID(info.ID).pal.accent); got != want {
+			t.Errorf("%s: %q, kutilgan %q", info.ID, got, want)
+		}
+	}
+	if got := ThemeAccent("mavjud-emas"); got != "" {
+		t.Errorf("noma'lum mavzu: %q, bo'sh satr kutilgan", got)
+	}
+}
+
 // TestStressDeck chekka holatlar: juda uzun matn, maxsus belgilar, kirill
 // alifbosi, ma'lumot yetishmaydigan maketlar va noma'lum maket.
 func TestStressDeck(t *testing.T) {

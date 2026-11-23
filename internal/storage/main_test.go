@@ -60,24 +60,50 @@ func runTests(m *testing.M) int {
 // setupTestSchema tasodifiy sxema yaratadi, unga search_path bilan ulanadi va
 // migratsiyani bajaradi. cleanup ulanishni yopadi va sxemani o'chiradi.
 func setupTestSchema(dsn string) (db *gorm.DB, tables []string, cleanup func(), err error) {
+	db, schema, cleanup, err := openTestSchema(dsn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Poyga testlari (masalan, GetOrCreate) uchun ulanishlar pulda qoladi —
+	// aks holda har bir goroutine yangi ulanish ochib, so'rovlar ketma-ket bo'lib qoladi.
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxIdleConns(testPoolSize)
+	}
+
+	if err := Migrate(db); err != nil {
+		cleanup()
+		return nil, nil, nil, err
+	}
+	// goose_db_version tozalanmaydi: unda qo'llangan migratsiyalar ro'yxati turadi.
+	if err := db.Raw("SELECT tablename FROM pg_tables WHERE schemaname = ? AND tablename <> 'goose_db_version' ORDER BY tablename", schema).
+		Scan(&tables).Error; err != nil || len(tables) == 0 {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("jadvallar ro'yxati: %v (%d ta)", err, len(tables))
+	}
+	return db, tables, cleanup, nil
+}
+
+// openTestSchema tasodifiy nomli bo'sh sxema (test_xxx) yaratadi va unga
+// search_path bilan ulanadi. cleanup ulanishni yopadi va sxemani o'chiradi.
+func openTestSchema(dsn string) (db *gorm.DB, schema string, cleanup func(), err error) {
 	gormCfg := &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)}
 
 	admin, err := gorm.Open(postgres.Open(dsn), gormCfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("ulanish: %w", err)
+		return nil, "", nil, fmt.Errorf("ulanish: %w", err)
 	}
 	closeAdmin := func() { _ = Close(admin) }
 
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
 		closeAdmin()
-		return nil, nil, nil, err
+		return nil, "", nil, err
 	}
 	// Nom faqat hex belgilardan iborat — SQL ga to'g'ridan-to'g'ri qo'yish xavfsiz.
-	schema := "test_" + hex.EncodeToString(suffix)
+	schema = "test_" + hex.EncodeToString(suffix)
 	if err := admin.Exec("CREATE SCHEMA " + schema).Error; err != nil {
 		closeAdmin()
-		return nil, nil, nil, fmt.Errorf("sxema yaratish: %w", err)
+		return nil, "", nil, fmt.Errorf("sxema yaratish: %w", err)
 	}
 	dropSchema := func() {
 		if err := admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error; err != nil {
@@ -89,21 +115,16 @@ func setupTestSchema(dsn string) (db *gorm.DB, tables []string, cleanup func(), 
 	schemaDSN, err := withSearchPath(dsn, schema)
 	if err != nil {
 		dropSchema()
-		return nil, nil, nil, err
+		return nil, "", nil, err
 	}
 	db, err = gorm.Open(postgres.Open(schemaDSN), gormCfg)
 	if err != nil {
 		dropSchema()
-		return nil, nil, nil, fmt.Errorf("sxemaga ulanish: %w", err)
+		return nil, "", nil, fmt.Errorf("sxemaga ulanish: %w", err)
 	}
 	cleanup = func() {
 		_ = Close(db)
 		dropSchema()
-	}
-	// Poyga testlari (masalan, GetOrCreate) uchun ulanishlar pulda qoladi —
-	// aks holda har bir goroutine yangi ulanish ochib, so'rovlar ketma-ket bo'lib qoladi.
-	if sqlDB, err := db.DB(); err == nil {
-		sqlDB.SetMaxIdleConns(testPoolSize)
 	}
 
 	// Ehtiyot chorasi: search_path ishlamasa, testlar boshqa sxemadagi
@@ -111,19 +132,26 @@ func setupTestSchema(dsn string) (db *gorm.DB, tables []string, cleanup func(), 
 	var current string
 	if err := db.Raw("SELECT current_schema()").Scan(&current).Error; err != nil || current != schema {
 		cleanup()
-		return nil, nil, nil, fmt.Errorf("search_path qo'llanmadi: current_schema=%q, kutilgan %q (%v)", current, schema, err)
+		return nil, "", nil, fmt.Errorf("search_path qo'llanmadi: current_schema=%q, kutilgan %q (%v)", current, schema, err)
 	}
+	return db, schema, cleanup, nil
+}
 
-	if err := Migrate(db); err != nil {
-		cleanup()
-		return nil, nil, nil, err
+// emptyTestDB testning o'zi uchun alohida bo'sh sxemaga ulangan bazani
+// qaytaradi (umumiy sxemaga tegmaydi; test tugagach sxema o'chiriladi).
+// TEST_DATABASE_URL berilmagan bo'lsa, test o'tkazib yuboriladi.
+func emptyTestDB(t *testing.T) (*gorm.DB, string) {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL berilmagan")
 	}
-	if err := db.Raw("SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", schema).
-		Scan(&tables).Error; err != nil || len(tables) == 0 {
-		cleanup()
-		return nil, nil, nil, fmt.Errorf("jadvallar ro'yxati: %v (%d ta)", err, len(tables))
+	db, schema, cleanup, err := openTestSchema(dsn)
+	if err != nil {
+		t.Fatalf("test sxemasini tayyorlab bo'lmadi: %v", err)
 	}
-	return db, tables, cleanup, nil
+	t.Cleanup(cleanup)
+	return db, schema
 }
 
 // withSearchPath DSN ga search_path parametrini qo'shadi (URL va

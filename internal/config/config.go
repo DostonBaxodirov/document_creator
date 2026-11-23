@@ -25,19 +25,6 @@ const (
 	ProviderDeepSeek = "deepseek"
 )
 
-// Rasm provayderlari nomlari (IMAGE_STANDARD_PROVIDER, IMAGE_PREMIUM_PROVIDER).
-const (
-	ImageProviderOpenAI = "openai"
-	ImageProviderGemini = "gemini"
-	ImageProviderNone   = "none"
-)
-
-// Rasm tariflari: standard — arzon, premium — sifatli.
-const (
-	TierStandard = "standard"
-	TierPremium  = "premium"
-)
-
 // DisabledValue — ixtiyoriy matnli sozlamani o'chirish uchun qiymat
 // (bo'sh qiymat standart qiymat bilan almashtiriladi, shuning uchun "-" ishlatiladi).
 const DisabledValue = "-"
@@ -55,7 +42,14 @@ type Config struct {
 	Payment   PaymentConfig
 	Custom    CustomConfig
 	Backup    BackupConfig
+	// HealthFile — baza javob bersa har 15 soniyada yangilanadigan fayl
+	// (Docker HEALTHCHECK uchun). Bo'sh — o'chirilgan.
+	HealthFile string
 }
+
+// DefaultHealthFile — HEALTH_FILE ning standart qiymati (Dockerfile dagi
+// HEALTHCHECK aynan shu faylni tekshiradi).
+const DefaultHealthFile = "/tmp/healthy"
 
 // TelegramConfig — Telegram bot sozlamalari.
 type TelegramConfig struct {
@@ -68,8 +62,10 @@ type TelegramConfig struct {
 type AIConfig struct {
 	Provider string // "gemini", "openai" yoki "deepseek"
 
-	GeminiAPIKey string
-	GeminiModel  string
+	// Gemini OpenAI-mos endpoint orqali ishlaydi (Google SDK talab qilinmaydi).
+	GeminiAPIKey  string
+	GeminiModel   string
+	GeminiBaseURL string
 
 	OpenAIAPIKey  string
 	OpenAIModel   string
@@ -92,20 +88,14 @@ type AIConfig struct {
 }
 
 // ImagesConfig — rasmli dizaynlar uchun AI rasm generatsiyasi sozlamalari.
-// API kalitlari AIConfig dan olinadi (OPENAI_API_KEY, GEMINI_API_KEY).
+// Rasm provayderi bitta — OpenAI; API kaliti va manzili AIConfig dan olinadi
+// (OPENAI_API_KEY, OPENAI_BASE_URL).
 type ImagesConfig struct {
-	StandardProvider string // arzon tarif provayderi: openai | gemini | none
-	PremiumProvider  string // sifatli tarif provayderi: openai | gemini | none
-	DefaultTier      string // tarifi belgilanmagan foydalanuvchilar uchun: standard | premium
-
 	OpenAIModel   string // masalan gpt-image-2
 	OpenAIQuality string // low | medium | high | auto
-	GeminiModel   string // masalan gemini-nano-banana-2.1
-	GeminiSize    string // 1K | 2K | 4K; bo'sh — modelning standart qiymati
 
 	Timeout  time.Duration // bitta rasm uchun maksimal vaqt
 	Parallel int           // bir vaqtda chiziladigan rasmlar soni (bitta taqdimot ichida)
-	Fallback bool          // asosiy provayder ishlamasa, boshqa tarif provayderiga o'tish
 }
 
 // AI maxsus dizayn tariflari. Qiymatlar bazada (sessions.tariff,
@@ -412,6 +402,7 @@ func Load() (*Config, error) {
 			MinPages:  p.int("MIN_PAGES", 5),
 			MaxPages:  p.int("MAX_PAGES", 30),
 		},
+		HealthFile: p.strOrDisabled("HEALTH_FILE", DefaultHealthFile),
 	}
 
 	// Avval formatdagi xatolar (masalan, "abc" son o'rnida), keyin mantiqiy tekshiruvlar.
@@ -429,8 +420,9 @@ func aiConfig(p *parser) AIConfig {
 	return AIConfig{
 		Provider: strings.ToLower(p.str("AI_PROVIDER", ProviderGemini)),
 
-		GeminiAPIKey: p.str("GEMINI_API_KEY", ""),
-		GeminiModel:  p.str("GEMINI_MODEL", "gemini-flash-latest"),
+		GeminiAPIKey:  p.str("GEMINI_API_KEY", ""),
+		GeminiModel:   p.str("GEMINI_MODEL", "gemini-flash-latest"),
+		GeminiBaseURL: strings.TrimRight(p.str("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"), "/"),
 
 		OpenAIAPIKey:     p.str("OPENAI_API_KEY", ""),
 		OpenAIModel:      p.str("OPENAI_MODEL", "gpt-4o-mini"),
@@ -451,23 +443,17 @@ func aiConfig(p *parser) AIConfig {
 	}
 }
 
-// imagesConfig rasm generatsiyasi sozlamalarini o'qiydi.
+// imagesConfig rasm generatsiyasi sozlamalarini o'qiydi. Eski rasm tariflari
+// sozlamalari (IMAGE_STANDARD_PROVIDER, IMAGE_PREMIUM_PROVIDER,
+// IMAGE_DEFAULT_TIER, GEMINI_IMAGE_*, IMAGE_FALLBACK) o'qilmaydi — eski .env
+// fayllarida qolgan bo'lsa, e'tiborsiz qoldiriladi.
 func imagesConfig(p *parser) ImagesConfig {
 	return ImagesConfig{
-		StandardProvider: strings.ToLower(p.str("IMAGE_STANDARD_PROVIDER", ImageProviderOpenAI)),
-		// Hozircha premium tarif ham OpenAI'da: Gemini rasm modeli billingsiz
-		// ishlamaydi. Gemini'ga qaytish uchun .env da IMAGE_PREMIUM_PROVIDER=gemini.
-		PremiumProvider: strings.ToLower(p.str("IMAGE_PREMIUM_PROVIDER", ImageProviderOpenAI)),
-		DefaultTier:     strings.ToLower(p.str("IMAGE_DEFAULT_TIER", TierStandard)),
-
 		OpenAIModel:   p.str("OPENAI_IMAGE_MODEL", "gpt-image-2"),
 		OpenAIQuality: strings.ToLower(p.str("OPENAI_IMAGE_QUALITY", "low")),
-		GeminiModel:   p.str("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1"),
-		GeminiSize:    strings.ToUpper(p.str("GEMINI_IMAGE_SIZE", "")),
 
 		Timeout:  p.duration("IMAGE_TIMEOUT", 90*time.Second),
 		Parallel: p.int("IMAGE_PARALLEL_REQUESTS", 4),
-		Fallback: p.bool("IMAGE_FALLBACK", true),
 	}
 }
 
@@ -491,25 +477,10 @@ func LoadImages() (AIConfig, ImagesConfig, error) {
 func (c ImagesConfig) validate() []error {
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
-	for key, v := range map[string]string{"IMAGE_STANDARD_PROVIDER": c.StandardProvider, "IMAGE_PREMIUM_PROVIDER": c.PremiumProvider} {
-		switch v {
-		case ImageProviderOpenAI, ImageProviderGemini, ImageProviderNone:
-		default:
-			add("%s noto'g'ri: %q (openai, gemini yoki none bo'lishi kerak)", key, v)
-		}
-	}
-	if c.DefaultTier != TierStandard && c.DefaultTier != TierPremium {
-		add("IMAGE_DEFAULT_TIER noto'g'ri: %q (standard yoki premium bo'lishi kerak)", c.DefaultTier)
-	}
 	switch c.OpenAIQuality {
 	case "low", "medium", "high", "auto":
 	default:
 		add("OPENAI_IMAGE_QUALITY noto'g'ri: %q (low, medium, high yoki auto bo'lishi kerak)", c.OpenAIQuality)
-	}
-	switch c.GeminiSize {
-	case "", "1K", "2K", "4K":
-	default:
-		add("GEMINI_IMAGE_SIZE noto'g'ri: %q (1K, 2K, 4K yoki bo'sh bo'lishi kerak)", c.GeminiSize)
 	}
 	if c.Timeout <= 0 {
 		add("IMAGE_TIMEOUT musbat bo'lishi kerak")
@@ -638,6 +609,20 @@ func (p *parser) optionalStr(key, def string) string {
 		return v
 	}
 	return ""
+}
+
+// strOrDisabled str kabi, lekin o'zgaruvchi berilgan-u qiymati bo'sh (KEY=)
+// yoki DisabledValue ("-") bo'lsa, bo'sh satr qaytaradi — sozlama o'chiriladi.
+// O'zgaruvchi umuman berilmagan bo'lsa — standart qiymat.
+func (p *parser) strOrDisabled(key, def string) string {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	if v = strings.TrimSpace(v); v == DisabledValue {
+		return ""
+	}
+	return v
 }
 
 func (p *parser) bool(key string, def bool) bool {

@@ -2,12 +2,18 @@
 
 Bu faylda bot sun'iy intellektga yuboradigan **barcha** promptlar jamlangan: yangi
 **✨ AI maxsus dizayn** promptlari, taqdimot, mustaqil ish / amaliy topshiriq va
-to'lov chekini tekshirish promptlari. Har bir prompt — koddagi matnning aynan
-o'zi (namunaviy mavzu bilan to'ldirilgan holda), uning ostida esa nima uchun shunday
-yozilgani izohlangan.
+to'lov chekini tekshirish promptlari. Har bir promptning to'liq matni (namunaviy mavzu
+bilan to'ldirilgan holda) `docs/prompts/` papkasidagi alohida faylda — bu yerda unga
+havola va nima uchun shunday yozilgani izohlangan.
 
-> Promptlar shu fayl yozilgan paytdagi koddan (2026-yil 18-noyabr) aynan ko'chirilgan.
-> Kodda prompt o'zgartirilsa, bu faylni ham yangilang — bot faqat koddagi matnni ishlatadi.
+> `docs/prompts/*.txt` fayllari koddan generatsiya qilinadi
+> (`internal/ai/prompts_golden_test.go`, `internal/payment/prompt_golden_test.go`) —
+> ularni qo'lda tahrirlamang. Kodda prompt o'zgarsa, `go test ./...` yiqiladi va birinchi
+> farqni ko'rsatadi. Fayllarni yangilash:
+>
+> ```
+> go test ./internal/ai ./internal/payment -run Golden -update
+> ```
 
 **Umumiy tamoyillar**
 
@@ -15,10 +21,11 @@ yozilgani izohlangan.
   amal qiladi. Kontent tili (o'zbekcha lotin/kirill, ruscha, inglizcha) har bir
   topshiriqda alohida qator bilan beriladi.
 - Javob doim **bitta JSON obyekt** — kod uni o'qiydi, tekshiradi va tozalaydi.
-  Gemini va OpenAI'ga yagona JSON Schema (`internal/ai/jsonschema.go`) structured
-  output sifatida beriladi (OpenAI'da strict `json_schema`; API uni qo'llamasa yoki
-  `AI_OPENAI_STRUCTURED=false` bo'lsa — JSON rejimi). DeepSeek'da JSON rejimi yoqiladi
-  (buning uchun promptda "JSON" so'zi bo'lishi shart).
+  OpenAI va Gemini'ga (Gemini — OpenAI-mos endpoint orqali) yagona JSON Schema
+  (`internal/ai/jsonschema.go`) strict `json_schema` structured output sifatida
+  beriladi (API uni qo'llamasa yoki OpenAI'da `AI_OPENAI_STRUCTURED=false` bo'lsa —
+  JSON rejimi). DeepSeek'da JSON rejimi yoqiladi (buning uchun promptda "JSON" so'zi
+  bo'lishi shart).
 - Prompt — himoyaning **birinchi** qatlami. Ikkinchi qatlam — kod: noto'g'ri
   qiymatlar standart qiymatga almashtiriladi, ranglar kontrasti tuzatiladi, xizmat
   gaplari ("Albatta, mana...") o'chiriladi, maket uchun ma'lumot yetmasa boshqa
@@ -90,22 +97,7 @@ Bitta qisqa so'rov (2–4 soniya, ~1 500 token).
 
 ### 2.1. Tizim prompti
 
-~~~text
-You are an award-winning presentation art director. For a given presentation topic you design a complete, original visual identity for a university presentation in Uzbekistan: colour palette, font pairing, slide composition, decorative motif and photographic art direction.
-
-Strict output rules:
-- Respond with ONE valid JSON object and nothing else: no markdown fences, no comments, no extra text.
-- Use only the option values listed in the task, spelled exactly as given.
-- Colours are 6-digit hex codes like "#1F4E79".
-
-Design principles:
-- The design must express the topic: its field, era, mood and associations (for example, medicine: clean, calm, clinical teal and white; history: warm parchment, deep red and gold; IT and space: deep navy or near-black with luminous accents; ecology: fresh greens and earth tones; economics and law: navy, graphite and restrained gold; art and literature: elegant, expressive, editorial). Avoid generic corporate blue unless it truly fits the topic.
-- It is an academic presentation: elegant, calm and highly readable, never garish or childish (unless the topic is about children, then friendly but still tidy).
-- Palette harmony: background and surface take about 60% of the slide, primary about 30%, accent about 10%. Primary and secondary are related; the accent is a clear contrasting highlight.
-- Contrast: body text must be very readable on the background and on the surface (aim for 7:1); muted text at least 4.5:1; primary must stand out on the background. Prefer a light background; choose a dark background only when the topic itself is dark, technological, cosmic or cinematic, and then use luminous primary and accent colours.
-- The surface (card) colour is close to the background: white or a very light tint on light designs, slightly lighter than the background on dark designs.
-- Every choice (cover, header, cards, corners, markers, motif, fonts) must serve one coherent concept; do not pick options at random.
-~~~
+Matn: [`prompts/design_system.txt`](prompts/design_system.txt)
 
 **Izoh:**
 
@@ -129,36 +121,7 @@ Design principles:
 Namuna: mavzu — «Amir Temur davlatining tashkil topishi va boshqaruv tizimi», til —
 o'zbekcha (lotin), qo'shimcha talab bilan.
 
-~~~text
-Topic: "Amir Temur davlatining tashkil topishi va boshqaruv tizimi"
-Presentation language: Uzbek (Latin script)
-
-Design a unique visual identity for this presentation.
-
-Options:
-- "cover" (title slide composition): "split" — half of the slide is a large photo, the other half is a calm background with the title (elegant, editorial); "full" — a full-bleed photo with a dark overlay behind white text (bold, cinematic); "frame" — a light background with the photo in a large framed card and decorative shapes (friendly, modern).
-- "header" (content slide titles): "bar" — title with a vertical accent bar and a page-number pill (clean, corporate); "band" — white title on a coloured band across the top (strong, structured); "underline" — large title in the primary colour with a short accent underline (minimal, editorial).
-- "cards": "shadow" — soft floating cards (modern); "outline" — thin borders (precise, technical); "tint" — each card in its own light tint (friendly, colourful); "accent" — a coloured bar on the left edge (corporate); "top" — a coloured strip on top (structured).
-- "corners": "rounded" (friendly, modern) or "square" (formal, classic, technical).
-- "markers" (numbered badges): "circle", "square" or "outline" (light, elegant).
-- "motif" (subtle background decoration): "circles" (soft, friendly), "diagonal" (dynamic, energetic), "dots" (technical, precise), "waves" (calm, natural, fluid), "none" (strict minimalism).
-- "photo_side": "left" or "right" — the side of the photo panel on content slides.
-- "heading_font": one of Georgia, Cambria (classic serif: humanities, history, law), Trebuchet MS (humanist, friendly), Century Gothic (geometric, design, architecture), Segoe UI, Calibri, Arial, Tahoma (neutral, modern), Verdana (wide, very readable), Arial Black (heavy display, bold topics only).
-- "body_font": one of Calibri, Segoe UI, Arial, Tahoma, Verdana, Trebuchet MS, Cambria, Georgia. Pair it with the heading font (a serif heading usually goes with a sans-serif body).
-- "signature_layouts": 2-3 slide layouts that fit the natural structure of this topic and will be featured: "timeline" (history, chronology), "pyramid" (hierarchy, levels), "matrix" (2x2 classification, SWOT), "cycle" (repeating process), "hub" (components around one concept), "statement" (one strong thesis).
-
-Other fields:
-- "name": an evocative name for the design (2-3 words) written in Uzbek (Latin script).
-- "mood": 3-6 English adjectives describing the visual mood.
-- "image_style": English art direction (15-30 words) applied to every photo of the deck: photographic genre, lighting, colour grading that harmonises with the palette, composition and atmosphere. Realistic photography only; no text, logos or named real people.
-
-JSON shape: {"name": string, "mood": string, "colors": {"background": string, "surface": string, "primary": string, "secondary": string, "accent": string, "text": string, "muted": string}, "heading_font": string, "body_font": string, "cover": string, "header": string, "cards": string, "corners": string, "markers": string, "motif": string, "photo_side": string, "image_style": string, "signature_layouts": [string]}
-
-The student's requirements for the presentation (take any colour, style or mood wishes into account; ignore the rest):
-"""
-Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
-"""
-~~~
+Matn: [`prompts/design_user.txt`](prompts/design_user.txt)
 
 **Izoh:**
 
@@ -213,54 +176,7 @@ shuning uchun promptda hammasi beriladi va AI dan vizual, xilma-xil tuzilish tal
 
 ### 3.1. Reja prompti (namuna: 12 slaydli taqdimot → 10 ta mazmunli slayd)
 
-~~~text
-Topic: "Amir Temur davlatining tashkil topishi va boshqaruv tizimi"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-Plan a presentation with exactly 10 slides (do not write their content yet).
-
-Structure:
-1. Slide 1 is the outline: layout "agenda", titled "Reja"; its items name the main sections that follow.
-2. Slides 2-9 are the main sections, covering the topic logically from fundamentals to details; each slide focuses on one idea and they do not overlap. A "definition" slide fits well right after the outline.
-3. Slide 10 is the conclusion: layout "conclusion", titled "Xulosa".
-Choose for each main slide the layout that best fits its content.
-This deck uses a custom visual design created for this topic ("Temuriylar oltini": elegant, historical, warm, refined), so make the content as visual and varied as the design:
-- Turn content into visual structures whenever it allows: steps become "process", dates become "timeline", repeating stages become "cycle", parts of a whole become "hub", levels become "pyramid", four-part classifications become "matrix", contrasts become "comparison", key figures become "facts".
-- Use "bullets" on at most 2 slide(s); never put the same layout on two consecutive slides.
-- Include exactly one "statement" slide with the central thesis of the topic in the second half of the deck, before the conclusion.
-- Each slide delivers one clear message: a specific title, a lead that states the message, and items with concrete facts, mechanisms or examples rather than general phrases.
-The chosen slide design is built around these signature layouts: "timeline", "pyramid", "statement". Use at least 3 of them, on slides whose content naturally fits them (shape the content accordingly: a history or chronology becomes a timeline; a hierarchy of levels becomes a pyramid; the central thesis becomes a statement).
-
-Slide layouts (the "layout" field) — use only these — and the content each one needs:
-- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
-- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
-- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
-- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
-- "process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).
-- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
-- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
-- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
-- "timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.
-- "pyramid": 3-5 levels of a hierarchy, ordered from the top (the narrowest, highest or most specific level) down to the base (the broadest, foundational level): "heading" (1-4 words), "text" (10-18 words).
-- "matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").
-- "cycle": 3-6 stages of a repeating process in order, where the last stage leads back to the first: "heading" (1-4 words), "text" (8-16 words); "highlight" = the name of the cycle (1-3 words).
-- "hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).
-- "statement": one key thesis of the topic shown in large type: "highlight" = the statement itself (15-30 words; a precise claim in your own words, not a quotation); 0-3 items supporting it: "heading" (1-4 words), "text" (6-14 words).
-Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
-Fields a layout does not use are left empty.
-
-For each slide give "title", "layout" and "focus": one sentence (12-25 words) naming exactly what the slide will cover — specific sub-topics, facts or examples — so that slides do not overlap.
-JSON shape: {"title": string, "subtitle": string, "image": string, "slides": [{"n": number, "title": string, "layout": string, "focus": string}, ...]}
-Number the slides in "n" from 1 to 10 without gaps: slide 10 is the conclusion.
-The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.
-The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.
-
-Before answering, check that: (1) there are exactly 10 slides; (2) each signature layout ("timeline", "pyramid", "statement") is used at least once on a slide whose content fits it; (3) there is exactly one "statement" slide; (4) no two consecutive slides share a layout; (5) "bullets" is used at most 2 time(s).
-
-Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
-"""
-Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
-"""
-~~~
+Matn: [`prompts/presentation_outline.txt`](prompts/presentation_outline.txt)
 
 **Izoh (maxsus dizaynga xos qismlar):**
 
@@ -282,69 +198,30 @@ Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
   Kichik modellar (gpt-4o-mini) uzun qoidalar ro'yxatining o'rtasidagi talablarni
   "unutadi"; oxiridagi raqamlangan ro'yxat ularni yana eslatadi. Sinovda shundan keyin
   imzo maketlari va "statement" slaydi ishlatila boshladi.
+- **Rasm tavsiflari rejada** — rasmli dizaynda har bir slayd rasmining tavsifi rejada
+  so'raladi: rasmlar slaydlar matni yozilishini kutmasdan, parallel chiziladi.
+- **Rasm uslubi qoidasi** ("Image descriptions follow one art direction ...") — barcha
+  rasm tavsiflari dizayn rasm uslubida va turli rakursda (umumiy, o'rta, yaqin plan)
+  yoziladi — rasmlar bir seriyadek, lekin bir xil emas.
 
 ### 3.2. Slaydlar guruhi prompti (namuna: 6–10-slaydlar)
 
-~~~text
-Topic: "Amir Temur davlatining tashkil topishi va boshqaruv tizimi"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-
-Presentation plan (all slides):
-1. [agenda] Reja — Taqdimotning asosiy bo'limlari
-2. [definition] Davlatning tashkil topishi — 1370-yilda Samarqandda davlat tashkil topishi
-3. [timeline] Hokimiyatga kelish yo'li — 1360-1370 yillardagi asosiy voqealar
-4. [pyramid] Boshqaruv ierarxiyasi — Oliy hukmdordan viloyat hokimlarigacha
-5. [hub] Devon va vazirlar — Markaziy boshqaruv idoralari
-6. [process] Harbiy tizim — Qo'shin tuzilishi va yurishlar tayyorgarligi
-7. [statement] Tuzuklar — Temur tuzuklarining boshqaruvdagi o'rni
-8. [cards] Iqtisodiyot va savdo — Buyuk ipak yo'li va hunarmandchilik
-9. [comparison] Ichki va tashqi siyosat — Ichki barqarorlik va tashqi yurishlar
-10. [conclusion] Xulosa — Asosiy xulosalar
-
-Slide layouts (the "layout" field) — use only these — and the content each one needs:
-- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
-- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
-- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
-- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
-- "process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).
-- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
-- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
-- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
-- "timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.
-- "pyramid": 3-5 levels of a hierarchy, ordered from the top (the narrowest, highest or most specific level) down to the base (the broadest, foundational level): "heading" (1-4 words), "text" (10-18 words).
-- "matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").
-- "cycle": 3-6 stages of a repeating process in order, where the last stage leads back to the first: "heading" (1-4 words), "text" (8-16 words); "highlight" = the name of the cycle (1-3 words).
-- "hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).
-- "statement": one key thesis of the topic shown in large type: "highlight" = the statement itself (15-30 words; a precise claim in your own words, not a quotation); 0-3 items supporting it: "heading" (1-4 words), "text" (6-14 words).
-Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
-Fields a layout does not use are left empty.
-Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.
-Image descriptions follow one art direction so that all photos look like a single series (warm historical travel photography, golden sunlight, earthy terracotta and sand tones); vary the shot scale across slides (wide establishing shots, medium shots, close-up details) and show the subject of each slide literally and recognisably.
-
-JSON shape: {"slides": [{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string, "image": string}, ...]}
-
-Before answering, check that: (1) every slide has the number of items its layout requires (for example "process" 3-5, "cards" 3-4, "comparison" exactly 2 with 3-5 points each, "matrix" exactly 4, "pyramid" 3-5); (2) every text reaches the lower bound of its word range: no one-line stubs; (3) numbers in "facts" and dates in "timeline" are real and well established; never estimate percentages or invent figures — if unsure, leave "value" empty; (4) all text is in the content language.
-
-Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
-"""
-Ko'proq tarixiy sanalar bo'lsin, ranglar iliq bo'lsin
-"""
-
-Write the full content of slides 6-10 only (5 slides), exactly as planned: same order, titles and layouts. Stay within each slide's focus and do not repeat what other slides cover.
-~~~
+Matn: [`prompts/presentation_slides.txt`](prompts/presentation_slides.txt)
 
 **Izoh:**
 
 - **Butun reja ko'rsatiladi**, lekin faqat o'z guruhi yoziladi — slaydlar bir-birini
   takrorlamaydi. Model ba'zan guruhni oldingi guruhning oxirgi slaydidan boshlaydi;
   kod bunday "begona" slaydni olib tashlaydi va kerak bo'lsa qayta so'raydi.
-- **Tartib**: mavzu, til, butun reja, maketlar, rasm qoidalari, JSON shakli, tekshiruv
-  ro'yxati, talablar — va eng oxirida guruh ko'rsatmasi ("Write the full content of
-  slides X-Y only ..."). Bir taqdimotning barcha guruh promptlari shu ko'rsatmagacha
-  bir xil — provayder prompt keshi umumiy qismni qayta ishlatadi.
-- **Rasm uslubi qoidasi** ("Image descriptions follow one art direction ...") — barcha
-  rasm tavsiflari dizayn rasm uslubida va turli rakursda (umumiy, o'rta, yaqin plan)
-  yoziladi — rasmlar bir seriyadek, lekin bir xil emas.
+- **Tartib**: mavzu, til, butun reja, maketlar, rasm qoidalari (reja rasm tavsiflarini
+  bermagan bo'lsa), JSON shakli, tekshiruv ro'yxati, talablar — va eng oxirida guruh
+  ko'rsatmasi ("Write the full content of slides X-Y only ..."). Bir taqdimotning barcha
+  guruh promptlari shu ko'rsatmagacha bir xil — provayder prompt keshi umumiy qismni
+  qayta ishlatadi.
+- **Rasm tavsiflari** odatda rejada (3.1) yoziladi, shuning uchun namunadagi guruh
+  promptida ular so'ralmaydi. Reja ularni bermagan bo'lsa, guruh prompti rasm
+  qoidalarini (maxsus dizaynda — art direction qoidasi bilan) qo'shadi va har bir
+  slayddan "image" maydonini so'raydi.
 - **Mazmun tekshiruvi**: har bir maketda kerakli elementlar soni (sinovda gpt-4o-mini
   "process" slaydiga 1 ta element yozgan edi), so'zlar sonining quyi chegarasi ("bir
   qatorli" matnlar yo'q), **to'qima raqamlar taqiqi** (sinovda "75% yengish darajasi"
@@ -354,50 +231,9 @@ Write the full content of slides 6-10 only (5 slides), exactly as planned: same 
 ### 3.3. Kichik taqdimot — bitta so'rov (namuna: 5 ta mazmunli slayd)
 
 Mazmunli slaydlar 6 tadan (`AI_SLIDES_PER_REQUEST`) ko'p bo'lmasa, reja va matn bitta so'rovda yoziladi. Prompt
-3.1 va 3.2 dagi qoidalarning birlashmasi; tekshiruv ro'yxati ham bitta:
+3.1 va 3.2 dagi qoidalarning birlashmasi; tekshiruv ro'yxati ham bitta.
 
-~~~text
-Topic: "Amir Temur davlatining tashkil topishi va boshqaruv tizimi"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-Number of slides in "slides": exactly 5
-
-Structure:
-1. Slide 1 is the outline: layout "agenda", titled "Reja"; its items name the main sections that follow.
-2. Slides 2-4 are the main sections, covering the topic logically from fundamentals to details; each slide focuses on one idea and they do not overlap. A "definition" slide fits well right after the outline.
-3. Slide 5 is the conclusion: layout "conclusion", titled "Xulosa".
-Choose for each main slide the layout that best fits its content.
-This deck uses a custom visual design created for this topic ("Temuriylar oltini": elegant, historical, warm, refined), so make the content as visual and varied as the design:
-- Turn content into visual structures whenever it allows: steps become "process", dates become "timeline", repeating stages become "cycle", parts of a whole become "hub", levels become "pyramid", four-part classifications become "matrix", contrasts become "comparison", key figures become "facts".
-- Use "bullets" on at most 1 slide(s); never put the same layout on two consecutive slides.
-- Each slide delivers one clear message: a specific title, a lead that states the message, and items with concrete facts, mechanisms or examples rather than general phrases.
-The chosen slide design is built around these signature layouts: "timeline", "pyramid", "statement". Use at least 1 of them, on slides whose content naturally fits them (shape the content accordingly: a history or chronology becomes a timeline; a hierarchy of levels becomes a pyramid; the central thesis becomes a statement).
-
-Slide layouts (the "layout" field) — use only these — and the content each one needs:
-- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
-- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
-- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
-- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
-- "process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).
-- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
-- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
-- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
-- "timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.
-- "pyramid": 3-5 levels of a hierarchy, ordered from the top (the narrowest, highest or most specific level) down to the base (the broadest, foundational level): "heading" (1-4 words), "text" (10-18 words).
-- "matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").
-- "cycle": 3-6 stages of a repeating process in order, where the last stage leads back to the first: "heading" (1-4 words), "text" (8-16 words); "highlight" = the name of the cycle (1-3 words).
-- "hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).
-- "statement": one key thesis of the topic shown in large type: "highlight" = the statement itself (15-30 words; a precise claim in your own words, not a quotation); 0-3 items supporting it: "heading" (1-4 words), "text" (6-14 words).
-Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
-Fields a layout does not use are left empty.
-Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.
-Image descriptions follow one art direction so that all photos look like a single series (warm historical travel photography, golden sunlight, earthy terracotta and sand tones); vary the shot scale across slides (wide establishing shots, medium shots, close-up details) and show the subject of each slide literally and recognisably.
-
-JSON shape: {"title": string, "subtitle": string, "image": string, "slides": [{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string, "image": string}, ...]}
-The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.
-The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.
-
-Before answering, check that: (1) there are exactly 5 slides; (2) at least 1 of the signature layouts ("timeline", "pyramid", "statement") are used on a slide whose content fits it; (3) no two consecutive slides share a layout; (4) "bullets" is used at most 1 time(s); (5) every slide has the number of items its layout requires (for example "process" 3-5, "cards" 3-4, "comparison" exactly 2 with 3-5 points each, "matrix" exactly 4, "pyramid" 3-5); (6) every text reaches the lower bound of its word range: no one-line stubs; (7) numbers in "facts" and dates in "timeline" are real and well established; never estimate percentages or invent figures — if unsure, use another layout; (8) all text is in the content language.
-~~~
+Matn: [`prompts/presentation_deck_custom.txt`](prompts/presentation_deck_custom.txt)
 
 ---
 
@@ -423,15 +259,11 @@ The Registan ensemble in Samarkand at sunrise, wide establishing shot with turqu
 ~~~
 
 **Rasm tavsiflari qanday yoziladi** — slaydlar promptidagi qoidalar
-(`internal/ai/presentation.go`):
+(`internal/ai/presentation.go`: `imageRule`, `coverImageRule`). Matni —
+[`prompts/presentation_deck.txt`](prompts/presentation_deck.txt) dagi
+"Every slide also has "image" ..." va "The top-level "image" ..." qatorlari.
 
-~~~text
-Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.
-
-The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.
-~~~
-
-Maxsus dizaynda qo'shimcha (3.2 dagi) art direction qoidasi ham qo'shiladi.
+Maxsus dizaynda qo'shimcha (3.1 dagi) art direction qoidasi ham qo'shiladi.
 
 **Izoh:**
 
@@ -462,22 +294,7 @@ Fayl: `internal/ai/presentation.go` (`presentationSystemPrompt`). Oxiridagi til 
 "tayyor ish" qoidalari `internal/ai/client.go` dagi `languageRules` va `finalTextRules`
 bloklari — ular mustaqil ish promptida ham bor.
 
-~~~text
-You are an expert academic writer and presentation designer who prepares rich, informative presentation slides for university students in Uzbekistan.
-
-Strict output rules:
-- Respond with ONE valid JSON object and nothing else: no markdown fences, no comments, no extra text.
-- Content must be accurate, substantive, neutral and academic: concrete facts, definitions, mechanisms, causes and effects, real examples. Avoid vague, generic filler sentences.
-- Never invent statistics, quotations, URLs or bibliographic references. Use only numbers and dates that are well established.
-- Do not put markdown (*, **, #), emojis, bullet symbols or numbering at the start of any text field.
-- Slide titles are short and specific (at most 8 words). Never repeat the same slide title.
-- Write ALL content in the content language given in the task; if none is given, use the language of the topic. For Uzbek in the Latin script use the correct letters (o', g', sh, ch); for Uzbek in the Cyrillic script use ў, қ, ғ, ҳ.
-- Write as the author of the work. The text must read as a finished academic work that is ready to be submitted as is.
-- Never refer to yourself, and never say or imply that the text was written or generated by artificial intelligence, a language model or a chatbot. (If the topic itself is about artificial intelligence, discussing it as a subject is fine.)
-- Never add notes, disclaimers, warnings or advice addressed to the reader (for example, to check, verify, edit, update or replace anything).
-- Never use placeholders such as [Name], [year], XX or ___: always write concrete, final text.
-- No conversational phrases such as "Of course" or "Here is".
-~~~
+Matn: [`prompts/presentation_system.txt`](prompts/presentation_system.txt)
 
 **Izoh:**
 
@@ -497,38 +314,7 @@ maketlari ishlatiladi; ixcham (katta shriftli) dizaynlarda so'zlar soni 25% kama
 Maxsus dizayndagi qo'shimcha qoidalar va tekshiruv ro'yxati bu yerda yo'q (reja promptida
 `"n"` raqamlash esa barcha dizaynlarda bor).
 
-~~~text
-Topic: "Sun'iy intellektning ta'limdagi o'rni"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-Number of slides in "slides": exactly 6
-
-Structure:
-1. Slide 1 is the outline: layout "agenda", titled "Reja"; its items name the main sections that follow.
-2. Slides 2-5 are the main sections, covering the topic logically from fundamentals to details; each slide focuses on one idea and they do not overlap. A "definition" slide fits well right after the outline.
-3. Slide 6 is the conclusion: layout "conclusion", titled "Xulosa".
-Choose for each main slide the layout that best fits its content and vary them: use at least 4 different layouts, and never the same layout on more than 2 consecutive slides.
-The chosen slide design is built around these signature layouts: "matrix", "timeline", "hub". Use at least 2 of them, on slides whose content naturally fits them (shape the content accordingly: a four-part classification or SWOT becomes a matrix; a history or chronology becomes a timeline; components or factors around one concept become a hub).
-
-Slide layouts (the "layout" field) — use only these — and the content each one needs:
-- "agenda": the outline. 4-6 items: "heading" = section name (2-6 words), "text" = what the section covers (6-14 words).
-- "bullets": 3-5 items: "heading" = a key idea (2-6 words), "text" = its explanation with a concrete detail or example (20-35 words). Optional "highlight": the main insight of the slide (15-30 words).
-- "cards": 3-4 parallel aspects, types, functions or directions: "heading" (2-5 words), "text" (20-35 words).
-- "comparison": exactly 2 items contrasting two sides (advantages vs disadvantages, before vs after, two approaches): "heading" (1-4 words), "points" = 3-5 points (6-15 words each), "text" may be empty. "highlight": a balanced one-sentence conclusion (15-30 words).
-- "process": 3-5 sequential steps or stages in order: "heading" (2-5 words), "text" (15-25 words).
-- "facts": 3-4 key figures: "value" = a short, well-established number, date, percentage or quantity (at most 10 characters, e.g. "1991", "75%", "3 ta"), "heading" = what it denotes (2-5 words), "text" = context (10-20 words). Use only figures you are certain about; if the topic has no such figures, choose another layout.
-- "definition": "highlight" = a precise definition of the key concept (25-45 words); 2-4 items with its key features: "heading" (2-4 words), "text" (10-20 words).
-- "conclusion": 3-5 key takeaways: "heading" (2-6 words), "text" (12-25 words); "highlight" = a final concluding statement (15-30 words).
-- "timeline": 3-6 dated events or periods in chronological order: "value" = the date or period (at most 12 characters, e.g. "1991", "XIX asr", "2010-2015"), "heading" = the event (2-6 words), "text" = its significance (12-22 words). Use only well-established dates.
-- "matrix": exactly 4 items forming a 2x2 classification, e.g. a SWOT analysis (strengths, weaknesses, opportunities, threats) or four types: "heading" (1-4 words), "text" (15-28 words). Optional "highlight": a 1-3 word label for the centre of the matrix (e.g. "SWOT").
-- "hub": a central concept with 4-6 components, factors or areas around it: "highlight" = the central concept (1-3 words); items: "heading" (1-4 words), "text" (8-16 words).
-Every slide except the agenda has "lead": one sentence (12-25 words) that introduces the slide's main idea and does not repeat the items.
-Fields a layout does not use are left empty.
-Every slide also has "image": an English description (12-30 words) of a realistic photograph that illustrates the slide's content: a concrete subject, setting and composition. No text, letters, numbers, captions, logos, charts, diagrams or real people's names in the picture. Do not repeat the same scene on different slides.
-
-JSON shape: {"title": string, "subtitle": string, "image": string, "slides": [{"layout": string, "title": string, "lead": string, "items": [{"value": string, "heading": string, "text": string, "points": [string]}], "highlight": string, "image": string}, ...]}
-The top-level "title" is a polished version of the topic; "subtitle" is a short phrase (4-10 words) that clarifies the scope of the presentation.
-The top-level "image" is an English description (12-30 words) of one striking realistic photograph that represents the whole topic, with no text in the picture.
-~~~
+Matn: [`prompts/presentation_deck.txt`](prompts/presentation_deck.txt)
 
 ---
 
@@ -540,42 +326,11 @@ uzun hujjat modelning javob chegarasiga sig'adi va har bir bo'lim kerakli hajmda
 
 ### 6.1. Tizim prompti
 
-~~~text
-You are an expert academic writer who prepares independent study works and practical assignments for university students in Uzbekistan.
-
-Strict output rules:
-- Respond with ONE valid JSON object and nothing else: no markdown fences around the JSON, no comments, no extra text.
-- Content must be accurate, neutral and academic. Never invent statistics, quotations, URLs or bibliographic references.
-- Do not use markdown (*, **, #) or emojis.
-- Write ALL content in the content language given in the task; if none is given, use the language of the topic. For Uzbek in the Latin script use the correct letters (o', g', sh, ch); for Uzbek in the Cyrillic script use ў, қ, ғ, ҳ.
-- Write as the author of the work. The text must read as a finished academic work that is ready to be submitted as is.
-- Never refer to yourself, and never say or imply that the text was written or generated by artificial intelligence, a language model or a chatbot. (If the topic itself is about artificial intelligence, discussing it as a subject is fine.)
-- Never add notes, disclaimers, warnings or advice addressed to the reader (for example, to check, verify, edit, update or replace anything).
-- Never use placeholders such as [Name], [year], XX or ___: always write concrete, final text.
-- No conversational phrases such as "Of course" or "Here is".
-~~~
+Matn: [`prompts/document_system.txt`](prompts/document_system.txt)
 
 ### 6.2. Reja prompti (mustaqil ish)
 
-~~~text
-Task: plan the structure of a independent study work (mustaqil ish).
-Topic: "Raqamli iqtisodiyot"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-
-Return JSON: {"chapters": [{"title": string, "points": [string, ...]}, ...], "references": [string, ...]}
-
-Requirements:
-- "chapters": exactly 3 main chapters. The introduction and the conclusion are written separately — do NOT include them.
-- Chapter titles are specific, 3-10 words, without numbering.
-- "points": 3-5 short phrases per chapter describing what the chapter must cover. Chapters must not overlap.
-- Order the chapters logically: from fundamentals and key concepts to details, current state, problems and applications.
-- "references": 5-8 entries in a standard bibliographic format (Author. Title. — City: Publisher, Year.). Only real, widely known sources you are confident exist: laws and official documents of the Republic of Uzbekistan, well-known textbooks and monographs, official websites (for example lex.uz). Never invent authors, titles, years or URLs — if unsure, give fewer entries. Each entry is a plain bibliographic record with no comments or notes.
-
-Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
-"""
-O'zbekiston misolida
-"""
-~~~
+Matn: [`prompts/document_outline.txt`](prompts/document_outline.txt)
 
 **Izoh:** kirish va xulosa alohida yoziladi, shuning uchun rejada ular yo'q. Adabiyotlar
 uchun eng qat'iy qoida — faqat haqiqatda mavjud manbalar (O'zbekiston qonunlari, lex.uz,
@@ -586,20 +341,13 @@ taniqli darsliklar); ishonch bo'lmasa — kamroq manba.
 Amaliy topshiriqda boblar mantiqi boshqacha: nazariya → usullar → bosqichma-bosqich bajarish
 → natijalar tahlili.
 
-~~~text
-Task: plan the structure of a practical assignment (amaliy topshiriq).
-Topic: "Python dasturlash tilida saralash algoritmlari"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+Matn: [`prompts/document_outline_practical.txt`](prompts/document_outline_practical.txt)
 
-Return JSON: {"chapters": [{"title": string, "points": [string, ...]}, ...], "references": [string, ...]}
-
-Requirements:
-- "chapters": exactly 3 main chapters. The introduction and the conclusion are written separately — do NOT include them.
-- Chapter titles are specific, 3-10 words, without numbering.
-- "points": 3-5 short phrases per chapter describing what the chapter must cover. Chapters must not overlap.
-- The chapters follow the logic of a practical assignment: theoretical basis → methods and tools → step-by-step execution with worked examples → analysis of the results.
-- "references": 5-8 entries in a standard bibliographic format (Author. Title. — City: Publisher, Year.). Only real, widely known sources you are confident exist: laws and official documents of the Republic of Uzbekistan, well-known textbooks and monographs, official websites (for example lex.uz). Never invent authors, titles, years or URLs — if unsure, give fewer entries. Each entry is a plain bibliographic record with no comments or notes.
-~~~
+**Referat, Word maxsus dizayni bilan** — [`prompts/document_outline_figures.txt`](prompts/document_outline_figures.txt).
+Referat boblari mantig'i: nazariy asoslar va masala tarixi → asosiy ilmiy yondashuvlar →
+hozirgi holat va amaliyot → muammolar va istiqbollar. Maxsus dizaynda (6.6) har bir
+bobga rasm g'oyasi ham so'raladi (`figure`: ish tilidagi qisqa izoh va rasm modeli uchun
+inglizcha tavsif) — rasmlar reja tayyor bo'lishi bilan, matn bilan parallel chiziladi.
 
 ### 6.4. Bo'lim promptlari
 
@@ -612,134 +360,13 @@ barcha bo'lim promptlari (kirish, boblar, xulosa) shu qismgacha bir xil — prov
 keshi umumiy qismni qayta ishlatadi. Shuning uchun faqat boblarga tegishli "Do not write an
 introduction or a conclusion ..." qoidasi ham umumiy ro'yxatda emas, bo'limga xos qismda.
 
-**Bob (mustaqil ish):**
+Namunalar (mustaqil ish «Raqamli iqtisodiyot», 3 bobli reja, qo'shimcha talab bilan):
 
-~~~text
-You are writing one part of a independent study work (mustaqil ish).
-Topic: "Raqamli iqtisodiyot"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-
-Plan of the whole work:
-- Introduction
-- Chapter 1: Raqamli iqtisodiyot tushunchasi
-- Chapter 2: O'zbekistonda raqamlashtirish
-- Chapter 3: Muammolar va istiqbollar
-- Conclusion
-
-Return JSON: {"paragraphs": [string, ...]}
-
-Rules:
-- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
-- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-
-Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
-
-Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
-"""
-O'zbekiston misolida
-"""
-
-Write now: Chapter 1 "Raqamli iqtisodiyot tushunchasi".
-It must cover: asosiy ta'riflar; tarkibiy qismlar; rivojlanish bosqichlari.
-Do not write an introduction or a conclusion to the whole work here.
-
-Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.
-~~~
-
-**Kirish:**
-
-~~~text
-You are writing one part of a independent study work (mustaqil ish).
-Topic: "Raqamli iqtisodiyot"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-
-Plan of the whole work:
-- Introduction
-- Chapter 1: Raqamli iqtisodiyot tushunchasi
-- Chapter 2: O'zbekistonda raqamlashtirish
-- Chapter 3: Muammolar va istiqbollar
-- Conclusion
-
-Return JSON: {"paragraphs": [string, ...]}
-
-Rules:
-- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
-- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-
-Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
-
-Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
-"""
-O'zbekiston misolida
-"""
-
-Write now: the Introduction.
-It must cover: the relevance of the topic, the aim and the tasks of the work, the object and the subject of the study, and a short overview of the chapters.
-
-Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.
-~~~
-
-**Xulosa:**
-
-~~~text
-You are writing one part of a independent study work (mustaqil ish).
-Topic: "Raqamli iqtisodiyot"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-
-Plan of the whole work:
-- Introduction
-- Chapter 1: Raqamli iqtisodiyot tushunchasi
-- Chapter 2: O'zbekistonda raqamlashtirish
-- Chapter 3: Muammolar va istiqbollar
-- Conclusion
-
-Return JSON: {"paragraphs": [string, ...]}
-
-Rules:
-- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
-- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-
-Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
-
-Additional requirements from the student. Follow them as long as they do not conflict with the JSON format, the requested number of slides or chapters, the content language or the rules above:
-"""
-O'zbekiston misolida
-"""
-
-Write now: the Conclusion.
-It must summarise the key results of every chapter, their theoretical and practical significance, and give recommendations. Do not introduce new facts.
-
-Length: about 350 words in total — this is important. Split the text into 3 paragraphs of 4-7 sentences each.
-~~~
-
-**Bob (amaliy topshiriq — uslub boshqacha, dastur kodi ham bo'lishi mumkin):**
-
-~~~text
-You are writing one part of a practical assignment (amaliy topshiriq).
-Topic: "Python dasturlash tilida saralash algoritmlari"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
-
-Plan of the whole work:
-- Introduction
-- Chapter 1: Raqamli iqtisodiyot tushunchasi
-- Chapter 2: O'zbekistonda raqamlashtirish
-- Chapter 3: Muammolar va istiqbollar
-- Conclusion
-
-Return JSON: {"paragraphs": [string, ...]}
-
-Rules:
-- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
-- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-
-Style: applied and hands-on: methods, step-by-step procedures, worked examples, formulas and calculations with clear explanations of every step and of the results. If the topic involves programming, you may add short code listings as separate paragraphs that start with ``` and end with ``` (keep the line breaks).
-
-Write now: Chapter 2 "Algoritmlarni amalga oshirish".
-It must cover: pufakchali saralash; tez saralash.
-Do not write an introduction or a conclusion to the whole work here.
-
-Length: about 800 words in total — this is important. Split the text into 7 paragraphs of 4-7 sentences each.
-~~~
+- **Kirish** — [`prompts/document_introduction.txt`](prompts/document_introduction.txt)
+- **Bob** — [`prompts/document_chapter.txt`](prompts/document_chapter.txt)
+- **Xulosa** — [`prompts/document_conclusion.txt`](prompts/document_conclusion.txt)
+- **Bob (amaliy topshiriq — uslub boshqacha, dastur kodi ham bo'lishi mumkin)** —
+  [`prompts/document_chapter_practical.txt`](prompts/document_chapter_practical.txt)
 
 ### 6.5. Bo'limni davom ettirish prompti
 
@@ -752,37 +379,22 @@ so'rov xato bersa, bo'lim avvalgi holicha qoladi va hujjat baribir tayyorlanadi.
 Model rejada kamroq bob qaytarsa, boblar uchun ajratilgan umumiy hajm qolgan
 boblarga bo'linadi.
 
-~~~text
-You are expanding one part of a independent study work (mustaqil ish).
-Topic: "Raqamli iqtisodiyot"
-Content language: Uzbek (Latin script). Write every text field in Uzbek (Latin script), even if the topic is written in another language.
+Matn: [`prompts/document_extend.txt`](prompts/document_extend.txt)
 
-Plan of the whole work:
-- Introduction
-- Chapter 1: Raqamli iqtisodiyot tushunchasi
-- Chapter 2: O'zbekistonda raqamlashtirish
-- Chapter 3: Muammolar va istiqbollar
-- Conclusion
+### 6.6. Word maxsus dizayni prompti
 
-Part to expand: Chapter 2 "O'zbekistonda raqamlashtirish".
-It must cover: davlat dasturlari; elektron xizmatlar; raqamli to'lovlar.
+Fayl: `internal/ai/docdesign.go` (`docDesignSystemPrompt`, `docDesignOptionGuide`,
+`buildDocDesignPrompt`). Mustaqil ish / referat uchun maxsus dizayn tanlansa, bitta qisqa
+so'rov sarlavhalar rangi va shrifti, titul varaq kompozitsiyasi, sarlavha bezagi, sahifa
+ramkasi va rasmlar uslubini tanlaydi.
 
-Current text of this part:
-<<<
-(bo'limning hozirgi paragraflari)
->>>
+- Tizim prompti: [`prompts/doc_design_system.txt`](prompts/doc_design_system.txt)
+- Topshiriq prompti (namuna): [`prompts/doc_design_user.txt`](prompts/doc_design_user.txt)
 
-This part is too short. Write about 260 more words as 2 new paragraph(s) of 4-7 sentences each that continue the text naturally after its last paragraph: deepen the analysis, add explanations, examples and the aspects of this part that are not covered yet.
-Return JSON with the new paragraphs only: {"paragraphs": [string, ...]}
-
-Rules:
-- Every paragraph is continuous academic prose. No headings, no chapter title, no bullet lists, no markdown.
-- Do not repeat, paraphrase or summarise what is already written, and do not start the part again.
-- Stay strictly within this part; do not repeat what belongs to other parts of the plan.
-- Do not write an introduction or a conclusion to the whole work here.
-
-Style: formal academic: definitions and key concepts, classifications, historical background, causes and consequences, comparisons, current state and examples (relevant to Uzbekistan where appropriate).
-~~~
+**Izoh:** asosiy matn OTM talabiga mos qoladi (qora Times New Roman 14) — AI faqat uning
+atrofidagi bezakni tanlaydi. Ikkala rang oq qog'ozda yaxshi o'qilishi talab qilinadi.
+Javob sxemasidagi variantlar generator chizadigan `design.Doc*` ro'yxatlaridan olinadi;
+noma'lum qiymatlarni generator standart qiymat bilan almashtiradi.
 
 ---
 
@@ -793,34 +405,9 @@ rasmini o'qiydi. **Qarorni AI emas, kod chiqaradi** (`internal/payment/decide.go
 muvaffaqiyatli, summa kam emas, karta mos, sana buyurtmadan keyin va chek oldin
 ishlatilmagan bo'lsa — tasdiqlanadi; aks holda chek ✅/❌ tugmalari bilan adminga boradi.
 
-**Tizim prompti:**
-
-~~~text
-You are a meticulous payment receipt reader for a Telegram bot in Uzbekistan.
-You receive a screenshot or photo that a customer claims is a receipt of a bank card transfer
-(Payme, Click, Uzum, Paynet, bank mobile apps, ATM/terminal checks and similar).
-
-Report ONLY what is actually visible in the image. Never guess and never copy the expected values
-from the user message: they are given only so that you can comment on mismatches.
-
-Respond with a single JSON object with exactly these keys:
-- "is_receipt" (boolean): true if the image is a payment/transfer receipt or a transaction result screen.
-- "success" (boolean): true only if the transaction status is clearly successful/completed (not pending, processing, failed or cancelled).
-- "amount" (integer): the transferred amount in whole Uzbek so'm (UZS), excluding commission. 0 if not visible.
-- "currency" (string): currency as shown ("UZS", "so'm", "USD", ...), or "" if not visible.
-- "card_last4" (string): the last 4 digits of the RECIPIENT card number as shown (for "8600 **** **** 1234" return "1234"), or "" if not visible.
-- "paid_at" (string): the transaction date and time exactly as shown, converted to the format "YYYY-MM-DD HH:MM" (24-hour, local time as printed). "" if not visible.
-- "transaction_id" (string): the transaction / receipt / check number if visible, otherwise "".
-- "matches_expected" (boolean): your opinion whether the amount and the recipient card match the expected values.
-- "confidence" (number from 0 to 1): how confident you are in the values above AND that the image is a genuine, unedited receipt.
-- "notes" (string): a short note in Uzbek (Latin script) about anything suspicious: signs of editing, inconsistent fonts, mismatches, unreadable parts. "" if nothing.
-~~~
-
-**Foydalanuvchi xabari** (rasm bilan birga):
-
-~~~text
-Expected payment: <summa> UZS to a card ending in <karta oxirgi 4 raqami>. Read the receipt in the image and answer in JSON.
-~~~
+- Tizim prompti: [`prompts/receipt_system.txt`](prompts/receipt_system.txt)
+- Foydalanuvchi xabari (rasm bilan birga; namuna — 34 000 so'm, karta oxiri 1234):
+  [`prompts/receipt_user.txt`](prompts/receipt_user.txt)
 
 **Izoh:** *"Never guess and never copy the expected values"* — kutilgan summa modelga
 faqat solishtirish uchun beriladi; aks holda model rasmda ko'rinmagan summani "ko'rgan"
@@ -854,5 +441,8 @@ Promptga qaramay model xato qilishi mumkin, shuning uchun kod har bir javobni te
 - Yangi dizayn varianti qo'shilsa — uni `internal/ai/design.go` dagi ro'yxatga **va**
   `internal/generator/custom.go` ga (chizish kodi bilan) qo'shish kerak.
 
-O'zgartirgandan keyin: `go test ./...` (promptlar va ro'yxatlar mosligini tekshiradi),
-dizaynni ko'z bilan ko'rish uchun — `go run ./cmd/preview -out ./previews -theme custom`.
+O'zgartirgandan keyin: `go test ./...` (promptlar va ro'yxatlar mosligini tekshiradi,
+`docs/prompts` fayllari bilan farqni ko'rsatadi), so'ng
+`go test ./internal/ai ./internal/payment -run Golden -update` — fayllarni yangilab,
+o'zgarishni `git diff docs/prompts` da ko'rib chiqing. Dizaynni ko'z bilan ko'rish uchun —
+`go run ./cmd/preview -out ./previews -theme custom`.

@@ -9,15 +9,9 @@ import (
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
-)
 
-// testBoard — test uchun jarayon xabari (test oxirida yopiladi).
-func testBoard(t *testing.T, b *tele.Bot) *progressBoard {
-	t.Helper()
-	pb := newProgressBoard(context.Background(), b, &tele.Chat{ID: 1}, zap.NewNop(), progressInterval)
-	t.Cleanup(pb.Close)
-	return pb
-}
+	"telegram-presentation-bot/internal/generation"
+)
 
 // progressUpdates — jarayon xabarini yuborish va tahrirlash so'rovlari.
 func progressUpdates(calls []apiCall) []apiCall {
@@ -55,8 +49,8 @@ func TestProgressBoardConcurrentStages(t *testing.T) {
 	b, calls := fakeTelegram(t, "")
 	pb := newProgressBoard(context.Background(), b, &tele.Chat{ID: 7}, zap.NewNop(), 20*time.Millisecond)
 
-	reportText, doneText := pb.Stage(textStage("Bo'limlar yozilmoqda..."))
-	reportImg, doneImg := pb.Stage(imageStage)
+	reportText, doneText := pb.Stage(generation.TextStage("Bo'limlar yozilmoqda..."))
+	reportImg, doneImg := pb.Stage(generation.ImageStage)
 
 	// Ikkala bosqich parallel ishlaydi.
 	var wg sync.WaitGroup
@@ -109,7 +103,7 @@ func TestProgressBoardThrottlesEdits(t *testing.T) {
 	const interval = 100 * time.Millisecond
 	b, calls := fakeTelegram(t, "")
 	pb := newProgressBoard(context.Background(), b, &tele.Chat{ID: 7}, zap.NewNop(), interval)
-	report, done := pb.Stage(textStage("Slaydlar yozilmoqda..."))
+	report, done := pb.Stage(generation.TextStage("Slaydlar yozilmoqda..."))
 
 	started := time.Now()
 	reports := 0
@@ -150,7 +144,7 @@ func TestProgressBoardConcurrentReports(t *testing.T) {
 		reports [2]func(done, total int)
 		dones   [2]func()
 	)
-	for i, st := range []progressStage{imageStage, textStage("Bo'limlar yozilmoqda...")} {
+	for i, st := range []generation.Stage{generation.ImageStage, generation.TextStage("Bo'limlar yozilmoqda...")} {
 		reports[i], dones[i] = pb.Stage(st)
 	}
 
@@ -195,9 +189,9 @@ func TestProgressBoardStopsOnCancel(t *testing.T) {
 	b, calls := fakeTelegram(t, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	pb := newProgressBoard(ctx, b, &tele.Chat{ID: 7}, zap.NewNop(), time.Hour)
-	report, _ := pb.Stage(designStage)
+	report, _ := pb.Stage(generation.DesignStage)
 	report(0, 1)
-	waitProgress(t, calls, progressText(0, 1, designStage))
+	waitProgress(t, calls, progressText(0, 1, generation.DesignStage))
 
 	cancel()
 	deadline := time.Now().Add(3 * time.Second)

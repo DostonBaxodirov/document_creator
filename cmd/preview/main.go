@@ -7,11 +7,11 @@
 //	go run ./cmd/preview -out ./previews -lang ru   # titul/yakuniy slayd yozuvlari ruscha
 //
 // Rasmli dizaynlarda sukut bo'yicha namunaviy (gradientli) rasmlar qo'yiladi.
-// Haqiqiy AI rasmlar bilan sinash uchun (.env dagi OPENAI_API_KEY /
-// GEMINI_API_KEY ishlatiladi, pullik — har bir rasm uchun bir necha sent):
+// Haqiqiy AI rasmlar bilan sinash uchun (.env dagi OPENAI_API_KEY,
+// OPENAI_IMAGE_MODEL va OPENAI_IMAGE_QUALITY ishlatiladi, pullik — har bir
+// rasm uchun bir necha sent):
 //
-//	go run ./cmd/preview -photos standard -theme okean   # arzon tarif (OpenAI)
-//	go run ./cmd/preview -photos premium -theme okean    # sifatli tarif (IMAGE_PREMIUM_PROVIDER)
+//	go run ./cmd/preview -photos -theme okean
 //
 // Har bir qatorda fayl yo'li va mavzu nomi (TAB bilan) chiqariladi.
 // Slaydlarni rasmga aylantirish (LibreOffice o'rnatilgan bo'lsa):
@@ -26,10 +26,16 @@
 //	go run ./cmd/preview -out ./previews -docs
 //
 // templates/doc_designs.png esa scripts/doc_design_preview.py bilan yangilanadi.
+//
+// Mavzularning aksent ranglari (JSON: {"mavzu": "#RRGGBB"}; design_preview.py
+// raqamli doiralarni shu ranglarda chizadi):
+//
+//	go run ./cmd/preview -accents
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -47,11 +53,19 @@ func main() {
 	tpl := flag.String("template", "templates/template.pptx", "asosiy .pptx paket")
 	out := flag.String("out", "previews", "natija papkasi")
 	only := flag.String("theme", "", "faqat shu mavzu (bo'sh — barchasi)")
-	photos := flag.String("photos", "", "haqiqiy AI rasmlar tarifi: standard yoki premium (bo'sh — namunaviy rasmlar)")
+	photos := flag.Bool("photos", false, "haqiqiy AI rasmlar (OpenAI; pullik); berilmasa — namunaviy rasmlar")
 	language := flag.String("lang", "", "yozuvlar tili: uz, uz-cyrl, ru, en (bo'sh — uz)")
 	docs := flag.Bool("docs", false, "Word dizaynlari namunalari (.docx): tayyor dizaynlar va maxsus dizayn namunalari")
+	accents := flag.Bool("accents", false, `mavzularning aksent ranglarini JSON ko'rinishida chiqarish: {"mavzu": "#RRGGBB"}`)
 	flag.Parse()
 
+	if *accents {
+		if err := printAccents(); err != nil {
+			fmt.Fprintln(os.Stderr, "preview:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *docs {
 		if err := runDocs(*out); err != nil {
 			fmt.Fprintln(os.Stderr, "preview:", err)
@@ -65,7 +79,7 @@ func main() {
 	}
 }
 
-func run(tpl, out, only, photos, language string) error {
+func run(tpl, out, only string, photos bool, language string) error {
 	ctx := context.Background()
 	if language != "" {
 		if _, ok := lang.Find(language); !ok {
@@ -81,20 +95,17 @@ func run(tpl, out, only, photos, language string) error {
 	}
 
 	var svc *images.Service
-	if photos != "" {
-		if !images.Tier(photos).Valid() {
-			return fmt.Errorf("-photos noto'g'ri: %q (standard yoki premium)", photos)
-		}
+	if photos {
 		aiCfg, imgCfg, err := config.LoadImages()
 		if err != nil {
 			return err
 		}
 		log, _ := zap.NewDevelopment()
-		if svc, err = images.New(ctx, aiCfg, imgCfg, log); err != nil {
+		if svc, err = images.New(aiCfg, imgCfg, log); err != nil {
 			return err
 		}
 		if !svc.Available() {
-			return fmt.Errorf("rasm provayderi ulanmagan: .env da OPENAI_API_KEY yoki GEMINI_API_KEY bering")
+			return fmt.Errorf("rasm provayderi ulanmagan: .env da OPENAI_API_KEY bering")
 		}
 	}
 
@@ -128,9 +139,9 @@ func run(tpl, out, only, photos, language string) error {
 			name += "-" + language
 		}
 		if svc != nil {
-			placed, total := addPhotos(ctx, svc, images.Tier(photos), &deck)
-			fmt.Fprintf(os.Stderr, "%s: %d/%d ta AI rasm (%s, %s)\n", t.ID, placed, total, photos, svc.Provider(images.Tier(photos)))
-			name += "-" + photos
+			placed, total, provider := addPhotos(ctx, svc, &deck)
+			fmt.Fprintf(os.Stderr, "%s: %d/%d ta AI rasm (%s)\n", t.ID, placed, total, provider)
+			name += photoSuffix
 		}
 		tmp, err := g.Build(ctx, deck)
 		if err != nil {
@@ -145,10 +156,15 @@ func run(tpl, out, only, photos, language string) error {
 	return nil
 }
 
+// photoSuffix — haqiqiy AI rasmli namuna fayli nomining qo'shimchasi
+// (namuna-<mavzu>-ai.pptx; scripts/design_preview.py shunga tayanadi).
+const photoSuffix = "-ai"
+
 // addPhotos namunaviy rasmlarni haqiqiy AI rasmlar bilan almashtiradi
 // (bot bilan bir xil: titul uchun yotiq, yon panel uchun tik, tepadagi
-// banner uchun yotiq rasm).
-func addPhotos(ctx context.Context, svc *images.Service, tier images.Tier, d *generator.Deck) (placed, total int) {
+// banner uchun yotiq rasm). provider — rasmni chizgan provayder nomi
+// ("-" — birorta ham rasm chizilmadi).
+func addPhotos(ctx context.Context, svc *images.Service, d *generator.Deck) (placed, total int, provider string) {
 	cover, descs := generator.SamplePhotoPrompts(d.Theme)
 	reqs := []images.Request{{Prompt: generator.PhotoPrompt(d.Theme, cover), Shape: images.Landscape}}
 	targets := []int{-1}
@@ -164,7 +180,8 @@ func addPhotos(ctx context.Context, svc *images.Service, tier images.Tier, d *ge
 			targets = append(targets, i)
 		}
 	}
-	for k, r := range svc.Generate(ctx, tier, reqs, nil) {
+	provider = "-"
+	for k, r := range svc.Generate(ctx, reqs, nil) {
 		pic, err := generator.NewPicture(r.Data)
 		if err != nil {
 			continue
@@ -175,8 +192,19 @@ func addPhotos(ctx context.Context, svc *images.Service, tier images.Tier, d *ge
 			d.Slides[targets[k]].Image = pic
 		}
 		placed++
+		provider = r.Provider
 	}
-	return placed, len(reqs)
+	return placed, len(reqs), provider
+}
+
+// printAccents har bir mavzuning aksent rangini JSON obyekt sifatida
+// chiqaradi: {"akademik": "#C9A227", ...} (scripts/design_preview.py uchun).
+func printAccents() error {
+	accents := make(map[string]string, len(generator.Themes()))
+	for _, t := range generator.Themes() {
+		accents[t.ID] = generator.ThemeAccent(t.ID)
+	}
+	return json.NewEncoder(os.Stdout).Encode(accents)
 }
 
 // runDocs har bir Word dizaynida namunaviy hujjat yaratadi: tayyor dizaynlar

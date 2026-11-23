@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"sync/atomic"
 
 	"go.uber.org/zap"
-	"google.golang.org/genai"
 
 	"telegram-presentation-bot/internal/config"
 	"telegram-presentation-bot/internal/httpx"
@@ -18,100 +16,15 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Google Gemini provayderi (rasmiy google.golang.org/genai SDK)
-// ---------------------------------------------------------------------------
-
-type geminiProvider struct {
-	client      *genai.Client
-	model       string
-	temperature *float32
-	maxTokens   int32 // 0 — modelning standart qiymati
-}
-
-func newGemini(ctx context.Context, cfg config.AIConfig) (*geminiProvider, error) {
-	c, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:     cfg.GeminiAPIKey,
-		Backend:    genai.BackendGeminiAPI,
-		HTTPClient: httpx.Client(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("gemini klientini yaratib bo'lmadi: %w", err)
-	}
-	return &geminiProvider{
-		client:      c,
-		model:       cfg.GeminiModel,
-		temperature: cfg.Temperature,
-		maxTokens:   int32(min(cfg.MaxTokens, math.MaxInt32)),
-	}, nil
-}
-
-func (g *geminiProvider) name() string { return "gemini/" + g.model }
-
-func (g *geminiProvider) complete(ctx context.Context, t task) (string, error) {
-	resp, err := g.client.Models.GenerateContent(ctx, g.model, genai.Text(t.user), &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(t.system, genai.RoleUser),
-		Temperature:       g.temperature,
-		MaxOutputTokens:   g.maxTokens,
-		// Structured output: model javobni aynan shu sxema bo'yicha JSON qilib qaytaradi.
-		ResponseMIMEType:   "application/json",
-		ResponseJsonSchema: geminiResponseSchema(t.schema),
-	})
-	if err != nil {
-		return "", classifyGeminiError(err)
-	}
-
-	if fb := resp.PromptFeedback; fb != nil && fb.BlockReason != "" {
-		return "", httpx.Permanent(fmt.Errorf("gemini so'rovni blokladi: %s", fb.BlockReason))
-	}
-
-	var reason genai.FinishReason
-	if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
-		reason = resp.Candidates[0].FinishReason
-	}
-	switch reason {
-	case genai.FinishReasonSafety:
-		return "", httpx.Permanent(errors.New("gemini javobi xavfsizlik filtri tomonidan bloklandi"))
-	case genai.FinishReasonMaxTokens:
-		// JSON yarmida qirqilgan — parse qilishga urinishning foydasi yo'q.
-		return "", errors.New("gemini javobi uzunlik chegarasida qirqildi (AI_MAX_TOKENS ni oshiring)")
-	}
-
-	text := resp.Text()
-	if strings.TrimSpace(text) == "" {
-		return "", fmt.Errorf("gemini bo'sh javob qaytardi (finish reason: %s)", reason)
-	}
-	return text, nil
-}
-
-// geminiResponseSchema sxemani Gemini uchun moslaydi (nil — sxemasiz).
-func geminiResponseSchema(s map[string]any) any {
-	if s == nil {
-		return nil
-	}
-	return geminiSchema(s)
-}
-
-// classifyGeminiError 4xx xatolarni (429 va 408 dan tashqari) doimiy deb belgilaydi.
-func classifyGeminiError(err error) error {
-	var apiErr genai.APIError
-	if errors.As(err, &apiErr) {
-		e := fmt.Errorf("gemini API xatosi %d: %s", apiErr.Code, apiErr.Message)
-		if httpx.IsPermanentStatus(apiErr.Code) {
-			return httpx.Permanent(e)
-		}
-		return e
-	}
-	return fmt.Errorf("gemini: %w", err)
-}
-
-// ---------------------------------------------------------------------------
 // OpenAI-mos provayder (Chat Completions REST API, qo'shimcha SDK talab qilmaydi).
 //
-// Bitta implementatsiya ikki xizmat uchun ishlatiladi:
+// Bitta implementatsiya uch xizmat uchun ishlatiladi:
 //   - OpenAI (yoki OPENAI_BASE_URL orqali boshqa mos xizmat);
 //   - DeepSeek (https://api.deepseek.com) — API OpenAI formatiga to'liq mos,
 //     farqi qo'shimcha "thinking" parametri, max_tokens maydon nomi va
-//     javob formati (DeepSeek faqat json_object rejimini qo'llaydi).
+//     javob formati (DeepSeek faqat json_object rejimini qo'llaydi);
+//   - Google Gemini — OpenAI-mos endpoint orqali (GEMINI_BASE_URL): javob
+//     formati json_schema (structured output), max_tokens maydon nomi.
 // ---------------------------------------------------------------------------
 
 // deepSeekDefaultMaxTokens — DeepSeek fikrlashsiz rejimda standart chegara 8K;
@@ -119,14 +32,14 @@ func classifyGeminiError(err error) error {
 const deepSeekDefaultMaxTokens = 16384
 
 type compatProvider struct {
-	label       string // logdagi nom: "openai" yoki "deepseek"
+	label       string // logdagi nom: "openai", "deepseek" yoki "gemini"
 	client      *openai.Client
 	model       string
 	temperature *float32
 	maxTokens   int
 	// maxTokensField — javob uzunligi parametri nomi: OpenAI'da
 	// "max_completion_tokens" (reasoning modellari faqat shuni qabul qiladi),
-	// DeepSeek'da — "max_tokens".
+	// DeepSeek va Gemini'da — "max_tokens".
 	maxTokensField string
 	extra          map[string]any // provayderga xos qo'shimcha parametrlar
 	// structured — Structured Outputs (response_format json_schema, strict)
@@ -173,6 +86,28 @@ func newDeepSeek(cfg config.AIConfig) *compatProvider {
 		extra:          map[string]any{"thinking": map[string]string{"type": thinking}},
 		log:            zap.NewNop(), // structured o'chiq — log kerak emas
 	}
+}
+
+// newGemini Google Gemini'ni uning OpenAI-mos endpoint'i
+// (https://generativelanguage.googleapis.com/v1beta/openai) orqali ulaydi:
+// kalit Bearer token sifatida yuboriladi. Javob formati doim json_schema
+// (structured output); API uni rad etsa, OpenAI'dagi kabi json_object
+// rejimiga o'tiladi.
+func newGemini(cfg config.AIConfig, log *zap.Logger) *compatProvider {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	p := &compatProvider{
+		label:          "gemini",
+		client:         openai.New(cfg.GeminiBaseURL, cfg.GeminiAPIKey, "gemini"),
+		model:          cfg.GeminiModel,
+		temperature:    cfg.Temperature,
+		maxTokens:      cfg.MaxTokens,
+		maxTokensField: "max_tokens",
+		log:            log,
+	}
+	p.structured.Store(true)
+	return p
 }
 
 func (o *compatProvider) name() string { return o.label + "/" + o.model }

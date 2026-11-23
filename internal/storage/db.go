@@ -5,9 +5,13 @@ package storage
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"time"
 
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -86,9 +90,46 @@ func open(ctx context.Context, cfg config.DBConfig, gormLog gormlogger.Interface
 	return db, nil
 }
 
-// Migrate jadvallarni modelga moslab yaratadi yoki yangilaydi.
+// migrationsFS — versiyali SQL migratsiyalar (goose formatida). Yangi
+// migratsiya: `goose -dir internal/storage/migrations -s create <nom> sql`.
+//
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// Migrate bazaga hali qo'llanmagan SQL migratsiyalarni (migrations/*.sql)
+// goose orqali qo'llaydi; qo'llanganlari goose_db_version jadvalida
+// saqlanadi. Bir vaqtda ishga tushgan ikki nusxa sxemani birga
+// o'zgartirmasligi uchun migratsiyalar PostgreSQL advisory lock ostida
+// bajariladi (ikkinchisi birinchisi tugashini kutadi).
+//
+// Kutish va migratsiyalar db.WithContext(ctx) bilan berilgan kontekstda
+// bajariladi: kontekst bekor qilinsa, Migrate xato bilan qaytadi.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Session{}, &User{}, &Order{}, &Payment{}, &Visit{}); err != nil {
+	ctx := db.Statement.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("storage: migratsiya xatosi: %w", err)
+	}
+	fsys, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("storage: migratsiya fayllarini o'qib bo'lmadi: %w", err)
+	}
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return fmt.Errorf("storage: migratsiya qulfini yaratib bo'lmadi: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, fsys,
+		goose.WithSessionLocker(locker),
+		// Faqat shu paketdagi SQL fayllar: global ro'yxatdagi Go migratsiyalar hisobga olinmaydi.
+		goose.WithDisableGlobalRegistry(true),
+	)
+	if err != nil {
+		return fmt.Errorf("storage: migratsiya xatosi: %w", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
 		return fmt.Errorf("storage: migratsiya xatosi: %w", err)
 	}
 	return nil
