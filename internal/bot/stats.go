@@ -166,13 +166,18 @@ func statsText(r statsReport) string {
 	var b strings.Builder
 	b.WriteString("👥 <b>Tashrif buyuruvchilar statistikasi</b>\n")
 	fmt.Fprintf(&b, "🕒 %s holatiga (Toshkent vaqti)\n\n", r.now.In(tz.Tashkent).Format(dateTimeLayout))
-	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.total))
+	fmt.Fprintf(&b, "👤 Jami foydalanuvchilar: <b>%s</b>\n", formatCount(r.all.NewUsers))
 	fmt.Fprintf(&b, "📦 Jami tayyor ishlar: <b>%s</b> ta (%s kishi)\n\n", formatCount(r.all.Delivered), formatCount(r.all.Customers))
 
 	if len(r.periods) > 0 {
 		const label, gap = 10, "  "
+		rows := []struct {
+			name string
+			val  func(storage.PeriodStats) int64
+		}{
 			{"Yangi", func(s storage.PeriodStats) int64 { return s.NewUsers }},
 			{"Faol", func(s storage.PeriodStats) int64 { return s.ActiveUsers }},
+			{"Ish olgan", func(s storage.PeriodStats) int64 { return s.Customers }},
 			{"Tayyor ish", func(s storage.PeriodStats) int64 { return s.Delivered }},
 		}
 		widths := make([]int, len(r.periods))

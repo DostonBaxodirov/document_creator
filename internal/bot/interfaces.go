@@ -50,8 +50,7 @@ type ReceiptVerifier interface {
 // StatsStore — tashriflar ombori (internal/storage.StatsRepository).
 type StatsStore interface {
 	RecordVisit(ctx context.Context, userID int64, at time.Time) error
-	TotalUsers(ctx context.Context) (int64, error)
-	PeriodStats(ctx context.Context, since *time.Time) (storage.PeriodStats, error)
+	Overview(ctx context.Context, sinces []time.Time) (all storage.PeriodStats, periods []storage.PeriodStats, err error)
 	DailyStats(ctx context.Context, from time.Time, days int) ([]storage.DayStats, error)
 	ListUsers(ctx context.Context, since *time.Time) ([]storage.UserSummary, error)
 }
